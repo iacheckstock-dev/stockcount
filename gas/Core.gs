@@ -483,7 +483,8 @@ var Core = (function () {
 
   /** ข้อความที่ใช้ทำ checksum ของ Master ที่ส่งลงเครื่อง (เรียงแน่นอน) */
   function deviceMasterRows(rows) {
-    return rows.filter(function (r) { return r.barcode; })
+    // รวมรหัสที่ไม่มีบาร์โค้ด (บาร์โค้ดว่าง) ด้วย เพื่อให้เครื่องป้อนเองได้ ยกเว้นรายการที่รอ Admin ตัดสิน
+    return rows.filter(function (r) { return r.barcode || r.source === 'NONE'; })
       .map(function (r) { return [r.barcode, r.material, r.custMat, r.name]; })
       .sort(function (a, b) { return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : (a[1] < b[1] ? -1 : 1); });
   }
@@ -497,12 +498,98 @@ var Core = (function () {
     return '﻿' + [header].concat(rows).map(function (r) { return r.map(esc).join(','); }).join('\r\n');
   }
 
+  // ---------- ไฟล์จากเครื่อง (เฟส 2) ----------
+
+  var EXPORT_COLS = ['Log_ID', 'Project_ID', 'Device_ID', 'Seq', 'Staff', 'Location', 'Barcode', 'Material', 'Qty', 'Type',
+    'Ref_ID', 'Reason', 'Note', 'Scan_Time'];
+
+  function csvSplit(line) {
+    var out = [], cur = '', q = false;
+    for (var i = 0; i < line.length; i++) {
+      var ch = line[i];
+      if (q) {
+        if (ch === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else q = false; }
+        else cur += ch;
+      } else if (ch === '"') q = true;
+      else if (ch === ',') { out.push(cur); cur = ''; }
+      else cur += ch;
+    }
+    out.push(cur);
+    return out;
+  }
+
+  function normLoc(v) {
+    var s = str(v).toUpperCase().replace(/^LOC:/, '');
+    var m = s.match(/^([A-Z]+)0*(\d+)$/);
+    return m ? m[1] + m[2] : s;
+  }
+
+  /**
+   * ไฟล์ export จาก TC21:
+   *   #STOCKCOUNT_EXPORT,v1,<deviceId>,<projectId>,<exportedAt>
+   *   Log_ID,Project_ID,...           (หัวตาราง)
+   *   ...รายการ...
+   *   #SUMMARY,<lines>,<qty>,<maxSeq>
+   */
+  function parseDeviceExport(text) {
+    var lines = String(text || '').replace(/^﻿/, '').split(/\r\n|\n|\r/).filter(function (l) { return l.trim() !== ''; });
+    if (!lines.length || lines[0].indexOf('#STOCKCOUNT_EXPORT') !== 0) return { ok: false, error: 'ไม่ใช่ไฟล์ export จาก TC21' };
+    var head = csvSplit(lines[0]);
+    var deviceId = head[2], projectId = head[3];
+    var cols = csvSplit(lines[1]);
+    var I = {};
+    cols.forEach(function (c, i) { I[c] = i; });
+    var missing = EXPORT_COLS.filter(function (c) { return I[c] === undefined; });
+    if (missing.length) return { ok: false, error: 'ไฟล์ขาดคอลัมน์: ' + missing.join(', ') };
+    var entries = [], summary = null;
+    for (var i = 2; i < lines.length; i++) {
+      if (lines[i].indexOf('#SUMMARY') === 0) {
+        var s = csvSplit(lines[i]);
+        summary = { lines: Number(s[1]), qty: Number(s[2]), maxSeq: Number(s[3]) };
+        continue;
+      }
+      var r = csvSplit(lines[i]);
+      entries.push({
+        logId: r[I.Log_ID], projectId: r[I.Project_ID], deviceId: r[I.Device_ID], seq: Number(r[I.Seq]), staff: r[I.Staff],
+        location: r[I.Location], barcode: r[I.Barcode], material: r[I.Material], qty: Number(r[I.Qty]), type: r[I.Type],
+        refId: r[I.Ref_ID], reason: r[I.Reason], note: r[I.Note], scanTime: r[I.Scan_Time]
+      });
+    }
+    if (!summary) return { ok: false, error: 'ไฟล์ไม่มีบรรทัดสรุปท้ายไฟล์ (อาจไม่ครบ)' };
+    var qty = Math.round(entries.reduce(function (a, e) { return a + (e.qty || 0); }, 0) * 1000) / 1000;
+    if (summary.lines !== entries.length || summary.qty !== qty) {
+      return { ok: false, error: 'ยอดในไฟล์ไม่ตรงกับบรรทัดสรุป (ไฟล์อาจไม่ครบ): ' + entries.length + '/' + summary.lines + ' รายการ' };
+    }
+    return { ok: true, kind: 'TC21', deviceId: deviceId, projectId: projectId, entries: entries, summary: summary };
+  }
+
+  /** ไฟล์ Dolphin เดิม 7 คอลัมน์: Location, Shelf, Barcode, Qty, User, Date, Premium (คั่น Tab) */
+  function parseDolphin(text, fileKey, projectId, lookup) {
+    var rows = parseTsv(text);
+    if (!rows.length || rows[0].length < 6) return { ok: false, error: 'ไม่ใช่ไฟล์ Dolphin 7 คอลัมน์' };
+    var entries = [];
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      var qty = num(r[3]);
+      if (!str(r[2])) continue;
+      var bc = normBarcode(r[2]);
+      entries.push({
+        logId: 'DOL-' + fileKey + '-' + ('00000' + (i + 1)).slice(-6), projectId: projectId, deviceId: 'DOLPHIN', seq: i + 1,
+        staff: str(r[4]).toUpperCase(), location: normLoc(r[1] || r[0]), barcode: bc, material: lookup && lookup[bc] || '',
+        qty: qty, type: 'SCAN', refId: '', reason: 'นำเข้าไฟล์ Dolphin', note: str(r[5]), scanTime: ''
+      });
+    }
+    if (!entries.length) return { ok: false, error: 'ไฟล์ไม่มีรายการ' };
+    return { ok: true, kind: 'DOLPHIN', deviceId: 'DOLPHIN', projectId: projectId, entries: entries };
+  }
+
   return {
     SAP_REQUIRED: SAP_REQUIRED, POS_REQUIRED: POS_REQUIRED, STATUS_TH: STATUS_TH, SOURCE_TH: SOURCE_TH,
     str: str, num: num, normBarcode: normBarcode, isZeroBarcode: isZeroBarcode, checkDigitOk: checkDigitOk,
     findHeader: findHeader, parseTsv: parseTsv, parseSap: parseSap, parsePos: parsePos,
     buildMaster: buildMaster, fileDateIssues: fileDateIssues, deviceMasterRows: deviceMasterRows,
-    decisionKey: decisionKey, toCsv: toCsv
+    decisionKey: decisionKey, toCsv: toCsv,
+    EXPORT_COLS: EXPORT_COLS, csvSplit: csvSplit, normLoc: normLoc, parseDeviceExport: parseDeviceExport, parseDolphin: parseDolphin
   };
 })();
 

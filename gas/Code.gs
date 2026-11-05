@@ -6,13 +6,19 @@
  * (API สำหรับ TC21 จะเพิ่มในเฟส 2 แยกต่างหาก และต้องใช้ device token)
  */
 
-var SCHEMA_VERSION = 1;
+var SCHEMA_VERSION = 2;
 
 var SHEETS = {
   Config: ['Key', 'Value', 'Note'],
   Staff: ['Staff_Code', 'Name', 'Role', 'Active'],
-  Devices: ['Device_ID', 'Name', 'Last_Seq', 'Last_Sync', 'Token_Hash', 'Active'],
-  Locations: ['Location', 'Zone', 'Status', 'Counters', 'Devices', 'Closed_Time', 'Device_Lines', 'Device_Qty'],
+  Devices: ['Device_ID', 'Name', 'Active', 'Last_Seq', 'Last_Sync', 'Gaps', 'App_Version', 'Last_Check_At', 'Last_Check',
+    'Paired_At', 'Token_Hash', 'Pair_Code', 'Pair_Expires', 'Pair_Fails'],
+  Locations: ['Location', 'Zone', 'Status', 'Open_By', 'Counters', 'Devices', 'Opened_At', 'Closed_Time', 'Last_Check', 'Edits',
+    'Updated_At'],
+  Loc_Checks: ['Time', 'Project_ID', 'Device_ID', 'Location', 'Event', 'Staff', 'Dev_Lines', 'Dev_Qty', 'Srv_Lines', 'Srv_Qty',
+    'Match', 'Up_To_Seq'],
+  Device_Checks: ['Time', 'Device_ID', 'Staff', 'App_Version', 'Result', 'Detail'],
+  Quarantine: ['Received_Time', 'Device_ID', 'Log_ID', 'Project_ID', 'Payload', 'Reason'],
   SAP_Snapshot: null,
   POS_Snapshot: null,
   Barcode_Map: ['Barcode', 'Material', 'Cust_Mat', 'Name', 'Source', 'Source_TH', 'Book_Qty', 'Book_Source', 'SAP_Qty',
@@ -38,8 +44,10 @@ var TEXT_COLS = {
   Device_Master: ['Barcode', 'Material', 'Cust_Mat'],
   Count_Log: ['Log_ID', 'Device_ID', 'Staff_Code', 'Location', 'Barcode', 'Material', 'Ref_ID'],
   Locations: ['Location'],
+  Loc_Checks: ['Device_ID', 'Location'],
+  Quarantine: ['Device_ID', 'Log_ID'],
   Staff: ['Staff_Code'],
-  Devices: ['Device_ID']
+  Devices: ['Device_ID', 'Pair_Code']
 };
 
 var CONFIG_DEFAULTS = [
@@ -56,7 +64,8 @@ var CONFIG_DEFAULTS = [
   ['MASTER_APPROVED_AT', '', ''], ['MASTER_APPROVED_BY', '', ''],
   ['MASTER_APPROVED_COUNT', '', 'จำนวนบาร์โค้ดที่ส่งลงเครื่อง'],
   ['MASTER_APPROVED_PROJECT', '', 'รอบนับที่อนุมัติ Master'],
-  ['MASTER_APPROVED_ACK', '', 'คำเตือนที่รับทราบแล้ว (คั่นด้วย ,)']
+  ['MASTER_APPROVED_ACK', '', 'คำเตือนที่รับทราบแล้ว (คั่นด้วย ,)'],
+  ['APP_URL', 'https://iacheckstock-dev.github.io/stockcount/app/', 'ที่อยู่เว็บแอป TC21 (GitHub Pages)']
 ];
 
 // ---------- เมนูและหน้า Admin ----------
@@ -90,10 +99,7 @@ function setupSheets() {
       created.push(name);
     }
     var header = SHEETS[name];
-    if (header && sh.getLastRow() === 0) {
-      sh.getRange(1, 1, 1, header.length).setValues([header]).setFontWeight('bold').setBackground('#f0efec');
-      sh.setFrozenRows(1);
-    }
+    if (header) migrateHeader_(sh, header);
     (TEXT_COLS[name] || []).forEach(function (col) {
       var c = header.indexOf(col) + 1;
       if (c > 0) sh.getRange(1, c, sh.getMaxRows(), 1).setNumberFormat('@');
@@ -121,10 +127,31 @@ function setupSheets() {
   return created;
 }
 
+/** ชีตว่าง: เขียนหัวตารางใหม่ทั้งแถว / มีข้อมูลแล้ว: เติมคอลัมน์ที่ขาดต่อท้าย (ไม่ย้ายข้อมูลเดิม) */
+function migrateHeader_(sh, header) {
+  if (sh.getLastRow() <= 1) {
+    if (sh.getMaxColumns() < header.length) sh.insertColumnsAfter(sh.getMaxColumns(), header.length - sh.getMaxColumns());
+    if (sh.getLastColumn() > header.length) sh.getRange(1, header.length + 1, 1, sh.getLastColumn() - header.length).clearContent();
+    sh.getRange(1, 1, 1, header.length).setValues([header]).setFontWeight('bold').setBackground('#f0efec');
+    sh.setFrozenRows(1);
+    return;
+  }
+  var cur = sh.getRange(1, 1, 1, sh.getLastColumn()).getDisplayValues()[0];
+  var add = header.filter(function (h) { return cur.indexOf(h) < 0; });
+  if (!add.length) return;
+  var start = cur.length + 1;
+  if (sh.getMaxColumns() < start + add.length - 1) sh.insertColumnsAfter(sh.getMaxColumns(), start + add.length - 1 - sh.getMaxColumns());
+  sh.getRange(1, start, 1, add.length).setValues([add]).setFontWeight('bold').setBackground('#f0efec');
+}
+
 function ensureSetup_() {
   var ss = SpreadsheetApp.getActive();
   var missing = Object.keys(SHEETS).some(function (n) { return !ss.getSheetByName(n); });
-  if (missing) setupSheets();
+  var cfg = readConfig_();
+  if (missing || Number(cfg.SCHEMA_VERSION || 0) < SCHEMA_VERSION) {
+    setupSheets();
+    setConfig_({ SCHEMA_VERSION: SCHEMA_VERSION });
+  }
 }
 
 // ---------- Config / Log ----------
@@ -165,7 +192,7 @@ function logAdmin_(action, target, detail) {
 }
 
 function withLock_(fn) {
-  var lock = LockService.getDocumentLock();
+  var lock = LockService.getScriptLock();
   if (!lock.tryLock(30000)) throw new Error('มีคนกำลังบันทึกข้อมูลอยู่ ลองใหม่อีกครั้ง');
   try { return fn(); } finally { lock.releaseLock(); }
 }
@@ -417,7 +444,7 @@ function apiApprove(seenHash, ackIds) {
     var sh = SpreadsheetApp.getActive().getSheetByName('Master_Check');
     sh.appendRow([now_(), 'APPROVE v' + version, m.hash, '', 'อนุมัติ Master', m.deviceRows.length, 'อนุมัติ',
       'รับทราบคำเตือน: ' + (warns.join(', ') || '-') + (m.hasSap ? '' : ' (ยอดชั่วคราวจาก POS)'), who_()]);
-    logAdmin_('APPROVE_MASTER', 'v' + version, m.hash + ', ' + m.deviceRows.length + ' บาร์โค้ด');
+    logAdmin_('APPROVE_MASTER', 'v' + version, m.hash + ', ' + m.deviceRows.length + ' รายการ');
     return apiGetState();
   });
 }
@@ -465,4 +492,116 @@ function resetRound_() {
     mc.appendRow([now_(), 'RESET', '', '', 'ล้างข้อมูลรอบ ' + (cfg.PROJECT_ID || ''), '', '', '', who_()]);
     logAdmin_('RESET_ROUND', cfg.PROJECT_ID || '-', 'ล้างไฟล์นำเข้า, Barcode_Map, การตัดสิน และ Master ที่อนุมัติ (Admin_Log/Master_Check/Drive คงไว้)');
   });
+}
+
+// ---------- เครื่อง TC21 (หน้า Admin) ----------
+
+function apiDevicesState() {
+  ensureSetup_();
+  var cfg = readConfig_();
+  var t = table_('Devices');
+  var devices = t.rows.filter(function (r) { return r[t.idx.Device_ID]; }).map(function (r) {
+    var d = rowObj_(t, r);
+    var pairLive = d.Pair_Code && Number(d.Pair_Expires) > Date.now();
+    return {
+      id: d.Device_ID, name: d.Name, active: d.Active === 'Y', paired: !!d.Token_Hash, lastSeq: d.Last_Seq, lastSync: d.Last_Sync,
+      gaps: d.Gaps, appVersion: d.App_Version, lastCheckAt: d.Last_Check_At, lastCheck: d.Last_Check, pairedAt: d.Paired_At,
+      pairCode: pairLive ? d.Pair_Code : '', pairExpires: pairLive ? Number(d.Pair_Expires) : 0
+    };
+  });
+  var staff = table_('Staff');
+  var q = readRaw_('Quarantine');
+  var locs = table_('Locations');
+  return {
+    apiUrl: safeServiceUrl_(),
+    appUrl: cfg.APP_URL,
+    projectId: cfg.PROJECT_ID,
+    devices: devices,
+    staff: staff.rows.map(function (r) { return rowObj_(staff, r); }).filter(function (s) { return s.Staff_Code; })
+      .map(function (s) { return { code: normStaff_(s.Staff_Code), name: s.Name, role: s.Role, active: String(s.Active).toUpperCase() !== 'N' }; }),
+    quarantine: Math.max(0, q.length - 1),
+    locations: locs.rows.filter(function (r) { return r[0]; }).map(function (r) { return rowObj_(locs, r); }),
+    imports: readRaw_('Import_Files').slice(1).slice(-20).reverse()
+  };
+}
+
+function safeServiceUrl_() {
+  try { return ScriptApp.getService().getUrl() || ''; } catch (e) { return ''; }
+}
+
+function apiSeedDevices(count, prefix) {
+  return withLock_(function () {
+    count = Math.min(Math.max(parseInt(count, 10) || 0, 1), 30);
+    prefix = String(prefix || 'TC21').toUpperCase().replace(/[^A-Z0-9]/g, '') || 'TC21';
+    var t = table_('Devices');
+    var added = [];
+    for (var n = 1; n <= count; n++) {
+      var id = prefix + '-' + ('0' + n).slice(-2);
+      if (findDevice_(t, id) >= 0) continue;
+      putRow_(t, -1, { Device_ID: id, Name: id, Active: 'Y', Last_Seq: 0, Pair_Fails: 0 });
+      added.push(id);
+    }
+    if (added.length) logAdmin_('DEVICE_ADD', added.join(', '), 'เพิ่มเครื่อง ' + added.length + ' เครื่อง');
+    return apiDevicesState();
+  });
+}
+
+/** สร้างรหัสจับคู่ 6 หลัก ใช้ได้ 30 นาที ครั้งเดียว; จับคู่ใหม่จะทำให้ token เดิมของเครื่องนั้นใช้ไม่ได้ */
+function apiPairCode(deviceId) {
+  return withLock_(function () {
+    var t = table_('Devices');
+    var i = findDevice_(t, deviceId);
+    if (i < 0) throw new Error('ไม่พบเครื่อง ' + deviceId);
+    var code = String(Math.floor(100000 + Math.random() * 900000));
+    putRow_(t, i, { Pair_Code: code, Pair_Expires: Date.now() + PAIR_MINUTES * 60000, Pair_Fails: 0, Active: 'Y' });
+    logAdmin_('DEVICE_PAIR_CODE', deviceId, 'สร้างรหัสจับคู่ (หมดอายุใน ' + PAIR_MINUTES + ' นาที)');
+    return apiDevicesState();
+  });
+}
+
+function apiSetDeviceActive(deviceId, active) {
+  return withLock_(function () {
+    var t = table_('Devices');
+    var i = findDevice_(t, deviceId);
+    if (i < 0) throw new Error('ไม่พบเครื่อง ' + deviceId);
+    var upd = { Active: active ? 'Y' : 'N' };
+    if (!active) { upd.Token_Hash = ''; upd.Pair_Code = ''; upd.Pair_Expires = ''; }
+    putRow_(t, i, upd);
+    logAdmin_(active ? 'DEVICE_ENABLE' : 'DEVICE_REVOKE', deviceId, active ? 'เปิดใช้งาน' : 'ยกเลิกเครื่อง (token เดิมใช้ไม่ได้)');
+    return apiDevicesState();
+  });
+}
+
+/** นำเข้าไฟล์จากเครื่อง (TC21 export หรือ Dolphin 7 คอลัมน์) — รับเฉพาะรายการที่ยังไม่มี */
+function apiImportDeviceFile(text, fileName) {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) throw new Error('มีเครื่องกำลังส่งข้อมูลอยู่ ลองใหม่อีกครั้ง');
+  try {
+    var cfg = readConfig_();
+    var checksum = sha_(text).slice(0, 16);
+    var parsed;
+    if (String(text).indexOf('#STOCKCOUNT_EXPORT') === 0 || String(text).replace(/^﻿/, '').indexOf('#STOCKCOUNT_EXPORT') === 0) {
+      parsed = Core.parseDeviceExport(text);
+    } else {
+      var lookup = {};
+      readRaw_('Device_Master').slice(1).forEach(function (r) { if (r[0]) lookup[r[0]] = r[1]; });
+      parsed = Core.parseDolphin(text, checksum.slice(0, 8), cfg.PROJECT_ID, lookup);
+    }
+    if (!parsed.ok) throw new Error(parsed.error);
+    var prev = readRaw_('Import_Files').slice(1).filter(function (r) { return r[2] === checksum; });
+    var res = ingest_(parsed.deviceId, parsed.entries, [], 'FILE', null);
+    var existing = res.duplicate.length;
+    appendRows_(SpreadsheetApp.getActive().getSheetByName('Import_Files'),
+      [[now_(), fileName || '', checksum, parsed.entries.length, existing, res.accepted.length, who_()]]);
+    logAdmin_('IMPORT_FILE', fileName || '', parsed.kind + ' ' + parsed.deviceId + ': ในไฟล์ ' + parsed.entries.length + ' รายการ, มีแล้ว ' + existing +
+      ', เพิ่มใหม่ ' + res.accepted.length + (res.quarantined.length ? ', แยกไว้ (รอบอื่น) ' + res.quarantined.length : '') +
+      (res.rejected.length ? ', ไม่รับ ' + res.rejected.length : ''));
+    return {
+      kind: parsed.kind, deviceId: parsed.deviceId, projectId: parsed.projectId, total: parsed.entries.length, existing: existing,
+      added: res.accepted.length, quarantined: res.quarantined.length, rejected: res.rejected, importedBefore: prev.length > 0,
+      state: apiDevicesState()
+    };
+  } finally {
+    lock.releaseLock();
+  }
 }

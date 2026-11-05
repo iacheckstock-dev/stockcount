@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#111111">
+<title>ตรวจนับสต๊อก</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="topbar">
+  <div id="tbLoc">—</div>
+  <div id="tbRight">
+    <div id="tbStaff">-</div>
+    <div id="tbSync"><span id="netDot" class="dot"></span><span id="syncText">-</span></div>
+  </div>
+</div>
+<div id="banner" class="hidden"></div>
+
+<!-- ตั้งค่าเครื่อง / จับคู่ -->
+<section id="v-setup" class="view">
+  <h2>ตั้งค่าเครื่อง</h2>
+  <p class="muted">ทำครั้งเดียวต่อเครื่อง ขอรหัสจับคู่จากหัวหน้าทีมตรวจสอบ (หน้า Admin → เครื่อง TC21)</p>
+  <label>รหัสเครื่อง (ยิงสติกเกอร์ DEV: ได้)</label>
+  <input id="setDevice" class="inp" placeholder="TC21-01" autocomplete="off" autocapitalize="characters">
+  <label>รหัสจับคู่ 6 หลัก</label>
+  <input id="setCode" class="inp" inputmode="numeric" maxlength="6" autocomplete="off">
+  <details><summary>ที่อยู่เซิร์ฟเวอร์</summary>
+    <input id="setApi" class="inp small" placeholder="https://script.google.com/macros/s/.../exec">
+  </details>
+  <button class="btn big" id="btnPair">จับคู่เครื่อง</button>
+  <p id="setupMsg" class="msg"></p>
+</section>
+
+<!-- ตรวจความพร้อม -->
+<section id="v-ready" class="view">
+  <h2>ตรวจความพร้อมเครื่อง</h2>
+  <div id="readyHead" class="muted"></div>
+  <ul id="readyList" class="checks"></ul>
+  <div id="readyActions">
+    <button class="btn sec" id="btnSound">ทดสอบเสียง เขียว / เหลือง / แดง</button>
+    <label class="tick"><input type="checkbox" id="ckSound"> ได้ยินครบทั้ง 3 เสียง</label>
+    <label class="tick"><input type="checkbox" id="ckPin"> ปักหมุดหน้าจอแล้ว (ปุ่มสี่เหลี่ยม → ปักหมุด)</label>
+    <p class="muted">ยิงบัตรผู้ตรวจสอบ (EMP:) 1 ครั้ง เพื่อทดสอบ DataWedge และเข้างาน</p>
+  </div>
+  <button class="btn sec" id="btnReload">โหลดรายการบาร์โค้ดลงเครื่องใหม่</button>
+  <button class="btn big" id="btnRunCheck">ตรวจความพร้อม</button>
+  <button class="btn big ok hidden" id="btnStart">เริ่มนับ</button>
+</section>
+
+<!-- หน้านับ -->
+<section id="v-count" class="view">
+  <div id="card" class="card idle">
+    <div id="cardTitle">ยิงป้าย Location เพื่อเริ่ม</div>
+    <div id="cardSub"></div>
+    <div id="cardQty"></div>
+  </div>
+  <div class="totals">
+    <div><div class="lbl">ยอดรวม Location</div><div id="locTotal" class="num">0</div><div id="locSku" class="muted">0 SKU</div></div>
+    <div><div class="lbl">ทั้งเครื่อง (รอบนี้)</div><div id="devTotal" class="num small">0</div></div>
+  </div>
+  <div class="qtyrow"><span>จำนวนต่อการยิง</span><span id="qtyVal">1</span></div>
+  <div class="keypad" id="keypad">
+    <button>1</button><button>2</button><button>3</button>
+    <button>4</button><button>5</button><button>6</button>
+    <button>7</button><button>8</button><button>9</button>
+    <button data-k="C">C</button><button>0</button><button data-k="B">⌫</button>
+  </div>
+  <div class="actions">
+    <button class="btn sec" id="btnUndo">ยกเลิกล่าสุด</button>
+    <button class="btn sec" id="btnLoc">ดู/แก้ Location</button>
+    <button class="btn sec" id="btnManual">ป้อนเอง</button>
+    <button class="btn" id="btnClose">ปิด Location</button>
+  </div>
+  <div class="actions two">
+    <button class="btn ghost" id="btnStatus">สถานะ / Export</button>
+    <button class="btn ghost" id="btnTypeLoc">พิมพ์ Location</button>
+  </div>
+</section>
+
+<!-- ดู/แก้ Location -->
+<section id="v-loc" class="view">
+  <div class="lochead"><div id="locName" class="bigloc"></div><div><span id="locSum"></span></div></div>
+  <div id="locEdited" class="muted"></div>
+  <ul id="locItems" class="items"></ul>
+  <div class="actions">
+    <button class="btn sec" id="btnLocBack">ยิงเพิ่ม SKU</button>
+    <button class="btn sec" id="btnLocUndo">ย้อนการแก้ล่าสุด</button>
+    <button class="btn danger" id="btnLocClear">ล้าง Location นับใหม่</button>
+  </div>
+</section>
+
+<!-- ป้อนเอง -->
+<section id="v-manual" class="view">
+  <h2>ป้อนเอง</h2>
+  <input id="manQ" class="inp" placeholder="Cust-mat / รหัสสินค้า / บาร์โค้ด" autocomplete="off" autocapitalize="characters">
+  <ul id="manList" class="items"></ul>
+  <button class="btn sec" id="btnManBack">กลับหน้านับ</button>
+</section>
+
+<!-- สถานะ / Export -->
+<section id="v-status" class="view">
+  <h2>สถานะเครื่อง</h2>
+  <div id="statusKv" class="kv"></div>
+  <button class="btn big" id="btnSyncNow">ส่งข้อมูลตอนนี้</button>
+  <button class="btn sec" id="btnExport">Export ไฟล์ทั้งรอบ (.csv)</button>
+  <button class="btn sec" id="btnRecheck">ตรวจความพร้อมใหม่</button>
+  <button class="btn sec" id="btnStatusBack">กลับหน้านับ</button>
+  <details><summary>ขั้นสูง</summary>
+    <button class="btn ghost" id="btnClearOld">ล้างข้อมูลรอบเก่าที่ส่งครบแล้ว</button>
+    <button class="btn ghost" id="btnUnpair">ยกเลิกการจับคู่เครื่องนี้</button>
+  </details>
+</section>
+
+<!-- กล่องยืนยัน -->
+<div id="modal" class="hidden"><div class="box">
+  <div id="mTitle"></div>
+  <div id="mBody"></div>
+  <input id="mInput" class="inp hidden" inputmode="numeric" autocomplete="off">
+  <div id="mPreview"></div>
+  <div class="mbtns"><button class="btn sec" id="mNo">ยกเลิก</button><button class="btn" id="mYes">ยืนยัน</button></div>
+</div></div>
+<div id="toast" class="hidden"></div>
+
+<script src="db.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

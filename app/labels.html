@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<title>พิมพ์ป้าย — ระบบตรวจนับ</title>
+<style>
+  @page { size: A4; margin: 8mm 6mm; }
+  body { font-family: "Sarabun", "Noto Sans Thai", system-ui, sans-serif; margin: 0; }
+  .bar { padding: 10px 14px; background: #f6f5f2; border-bottom: 1px solid #ddd; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .bar button { font: inherit; padding: 6px 14px; border-radius: 6px; border: 1px solid #111; background: #111; color: #fff; cursor: pointer; }
+  .sheet { display: grid; grid-template-columns: repeat(3, 66mm); grid-auto-rows: 38mm; gap: 0 0; justify-content: center; padding: 4mm 0; }
+  .lbl { border: 0.2mm dashed #bbb; display: flex; flex-direction: column; align-items: center; justify-content: center; overflow: hidden; break-inside: avoid; padding: 1mm; }
+  .lbl .big { font-size: 15mm; font-weight: 800; line-height: 1; letter-spacing: 0.5mm; }
+  .lbl .mid { font-size: 6mm; font-weight: 700; line-height: 1.1; text-align: center; }
+  .lbl .small { font-size: 3mm; color: #333; }
+  .lbl svg { height: 11mm; display: block; margin-top: 1.5mm; }
+  @media print { .bar { display: none; } .lbl { border-color: #ddd; } }
+</style>
+</head>
+<body>
+<div class="bar"><b id="title">ป้าย</b><span id="count"></span><button onclick="window.print()">พิมพ์</button>
+  <span style="color:#666;font-size:13px">ตั้งค่าพิมพ์: ขนาดจริง (100%) ไม่ย่อ — ทดสอบยิงด้วย TC21 ก่อนพิมพ์ทั้งชุด</span></div>
+<div class="sheet" id="sheet"></div>
+<script src="code128.js"></script>
+<script>
+(function () {
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  var p = {};
+  location.hash.slice(1).split('&').forEach(function (kv) { var i = kv.indexOf('='); if (i > 0) p[kv.slice(0, i)] = decodeURIComponent(kv.slice(i + 1)); });
+  var type = (p.type || 'LOC').toUpperCase(), labels = [];
+  if (type === 'LOC') {
+    var zones = (p.zones || 'A').toUpperCase().split(',').map(function (z) { return z.replace(/[^A-Z]/g, ''); }).filter(String);
+    var from = Math.max(1, parseInt(p.from, 10) || 1), to = Math.min(999, parseInt(p.to, 10) || from);
+    zones.forEach(function (z) { for (var n = from; n <= to; n++) labels.push({ code: 'LOC:' + z + n, big: z + n, small: 'Location' }); });
+  } else if (type === 'EMP') {
+    (p.items || '').split(';').filter(String).forEach(function (it) {
+      var a = it.split('|'); labels.push({ code: 'EMP:' + a[0].toUpperCase(), mid: a[1] || a[0], small: a[0].toUpperCase() });
+    });
+  } else if (type === 'DEV') {
+    (p.items || '').split(';').filter(String).forEach(function (id) { labels.push({ code: 'DEV:' + id.toUpperCase(), mid: id.toUpperCase(), small: 'สติกเกอร์เครื่อง' }); });
+  }
+  document.getElementById('title').textContent = { LOC: 'ป้าย Location', EMP: 'บัตรผู้ตรวจสอบ', DEV: 'สติกเกอร์เครื่อง' }[type] || type;
+  document.getElementById('count').textContent = labels.length + ' ป้าย (' + Math.ceil(labels.length / 21) + ' แผ่น A4)';
+  document.getElementById('sheet').innerHTML = labels.map(function (l) {
+    var mods;
+    try { mods = Code128.modules(l.code).length + 20; }
+    catch (e) { return '<div class="lbl"><div class="mid" style="color:#b42318">พิมพ์ไม่ได้</div><div class="small">' + esc(l.code) + '<br>รหัสต้องเป็นอักษรอังกฤษ/ตัวเลขเท่านั้น</div></div>'; }
+    var w = Math.min(60, mods * 0.33);            // โมดูลประมาณ 0.33 มม. อ่านง่ายด้วย SE4100
+    return '<div class="lbl">' + (l.big ? '<div class="big">' + esc(l.big) + '</div>' : '<div class="mid">' + esc(l.mid) + '</div>') +
+      Code128.svg(l.code, { module: 2, height: 60 }).replace('<svg ', '<svg style="width:' + w.toFixed(1) + 'mm" preserveAspectRatio="none" ') +
+      '<div class="small">' + esc(l.code) + '</div></div>';
+  }).join('');
+})();
+</script>
+</body>
+</html>

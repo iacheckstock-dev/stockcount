@@ -27,8 +27,8 @@
   .ok { background:var(--okbg); color:var(--ok); } .warn { background:var(--warnbg); color:var(--warn); }
   .bad { background:var(--badbg); color:var(--bad); } .info { background:var(--accbg); color:var(--acc); }
   .big { font-size:22px; font-weight:600; }
-  button.btn { font:inherit; padding:7px 14px; border-radius:6px; border:1px solid #111; background:#111; color:#fff; cursor:pointer; }
-  button.btn.sec { background:#fff; color:#111; border-color:var(--line); }
+  .btn { display:inline-block; font:inherit; padding:7px 14px; border-radius:6px; border:1px solid #111; background:#111; color:#fff; cursor:pointer; }
+  .btn.sec { background:#fff; color:#111; border-color:var(--line); }
   button.btn:disabled { opacity:.4; cursor:not-allowed; }
   input[type=text], input[type=date], input[type=search], select { font:inherit; padding:6px 8px; border:1px solid var(--line); border-radius:6px; }
   table { border-collapse:collapse; width:100%; font-size:13px; }
@@ -63,6 +63,7 @@
   <button data-t="checks">ตรวจความพร้อม</button>
   <button data-t="conflicts">ขัดแย้ง<span class="badge" id="confBadge" style="display:none"></span></button>
   <button data-t="compare">เทียบ SAP กับ POS</button>
+  <button data-t="devices">เครื่อง TC21</button>
   <button data-t="log">บันทึก Admin</button>
 </nav>
 <main>
@@ -116,6 +117,15 @@
       </div>
     </div>
     <p class="muted">ระบบไม่แก้ไฟล์ต้นฉบับ เก็บสำเนาไว้ในชีต SAP_Snapshot / POS_Snapshot และในโฟลเดอร์ Drive ของระบบ</p>
+    <div class="card" style="margin-top:12px">
+      <h3>ไฟล์จากเครื่อง (TC21 export หรือ Dolphin 7 คอลัมน์)</h3>
+      <div class="drop">
+        <input type="file" id="devFile" accept=".csv,.txt">
+        <p class="muted">ใช้เมื่อเครื่องส่งข้อมูลไม่ได้ ระบบรับเฉพาะรายการที่ยังไม่มี นำเข้าไฟล์เดิมซ้ำได้ ไม่นับเกิน</p>
+        <button class="btn" onclick="importDevFile()">นำเข้าไฟล์จากเครื่อง</button>
+        <div id="importResult" style="margin-top:8px"></div>
+      </div>
+    </div>
   </section>
 
   <!-- ตรวจความพร้อม -->
@@ -138,6 +148,31 @@
     </div>
     <div class="muted" id="cmpInfo"></div>
     <div class="scroll"><table id="cmpTbl"></table></div>
+  </section>
+
+  <!-- เครื่อง TC21 -->
+  <section id="devices">
+    <div class="grid">
+      <div class="card">
+        <h3>ที่อยู่ระบบ</h3>
+        <div class="kv" id="urlKv"></div>
+      </div>
+      <div class="card">
+        <h3>พิมพ์ป้าย</h3>
+        <div class="row">โซน <input type="text" id="lblZones" value="A,B,C,S" size="8"> เลข <input type="text" id="lblFrom" value="1" size="2"> ถึง <input type="text" id="lblTo" value="60" size="3"></div>
+        <div class="row" id="lblLinks"></div>
+        <div class="muted">เปิดหน้าป้ายในแท็บใหม่ แล้วสั่งพิมพ์ (Ctrl+P) ลงกระดาษ A4 / สติกเกอร์</div>
+      </div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn sec" onclick="seedDevices()">สร้างรหัสเครื่อง TC21-01 ถึง</button>
+      <input type="text" id="seedN" value="5" size="2"> เครื่อง
+      <button class="btn sec" onclick="loadDevices()">รีเฟรช</button>
+      <span class="muted" id="qInfo"></span>
+    </div>
+    <div class="scroll"><table id="devTbl"></table></div>
+    <h3 style="margin-top:16px;font-size:14px">Location</h3>
+    <div class="scroll" style="max-height:300px"><table id="locTbl"></table></div>
   </section>
 
   <!-- บันทึก -->
@@ -173,6 +208,7 @@ document.querySelectorAll('#nav button').forEach(function (b) {
     document.querySelectorAll('#nav button').forEach(function (x) { x.classList.toggle('on', x === b); });
     document.querySelectorAll('main section').forEach(function (s) { s.classList.toggle('on', s.id === b.dataset.t); });
     if (b.dataset.t === 'compare' && !CMP) loadCompare();
+    if (b.dataset.t === 'devices') loadDevices();
   };
 });
 
@@ -215,7 +251,7 @@ function renderApprove(m, s) {
   var a = m.approved, h = '';
   if (a.hash) {
     h += '<p>' + (a.current ? '<span class="pill ok">อนุมัติแล้ว ตรงกับข้อมูลปัจจุบัน</span>' : '<span class="pill warn">ข้อมูลเปลี่ยนหลังอนุมัติ ต้องอนุมัติใหม่ก่อนเครื่องโหลด</span>') +
-      ' <span class="muted">v' + esc(a.version) + ' · ' + esc(a.count) + ' บาร์โค้ด · ' + esc(a.by) + ' · ' + esc(a.at) + ' · <span class="mono">' + esc(a.hash) + '</span></span></p>';
+      ' <span class="muted">v' + esc(a.version) + ' · ' + esc(a.count) + ' รายการ · ' + esc(a.by) + ' · ' + esc(a.at) + ' · <span class="mono">' + esc(a.hash) + '</span></span></p>';
   } else {
     h += '<p><span class="pill warn">ยังไม่เคยอนุมัติ</span></p>';
   }
@@ -253,7 +289,7 @@ function renderApprove(m, s) {
           esc(c.title) + ' <b>' + c.count + '</b>' + (c.note ? ' <span class="muted">— ' + esc(c.note) + '</span>' : '') + '</label>';
       }).join('');
     }
-    h += '<div class="row"><button class="btn" id="approveBtn" onclick="approve()"' + (warns.length ? ' disabled' : '') + '>อนุมัติ Master (' + fmt(m.deviceCount) + ' บาร์โค้ด)</button>' +
+    h += '<div class="row"><button class="btn" id="approveBtn" onclick="approve()"' + (warns.length ? ' disabled' : '') + '>อนุมัติ Master (' + fmt(m.deviceCount) + ' รายการ)</button>' +
       '<span class="muted mono">' + esc(m.hash) + '</span></div>';
   }
   $('approveBox').innerHTML = h;
@@ -389,6 +425,73 @@ function exportCompare(exceptionsOnly) {
   var wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, exceptionsOnly ? 'SAP_exceptions' : 'SAP_vs_POS');
   XLSX.writeFile(wb, (S.round.projectId || 'stockcount') + (exceptionsOnly ? '_SAP_exceptions' : '_SAP_vs_POS') + '.xlsx');
+}
+
+// ---------- เครื่อง TC21 ----------
+var DEV = null;
+function loadDevices() { call('apiDevicesState', [], renderDevices); }
+function renderDevices(d) {
+  DEV = d;
+  $('urlKv').innerHTML = kv([
+    ['API (Web app)', d.apiUrl ? '<span class="mono" style="word-break:break-all">' + esc(d.apiUrl) + '</span>' : '<span class="pill warn">ยังไม่ได้ Deploy เป็น Web app</span>'],
+    ['เว็บแอป TC21', '<a href="' + esc(d.appUrl) + '" target="_blank">' + esc(d.appUrl) + '</a>'],
+    ['รอบปัจจุบัน', esc(d.projectId || '-')]
+  ], true);
+  $('qInfo').textContent = d.quarantine ? 'มีข้อมูลรอบอื่นแยกไว้ ' + d.quarantine + ' รายการ (ชีต Quarantine)' : '';
+  var now = Date.now();
+  $('devTbl').innerHTML = '<tr><th>เครื่อง</th><th>สถานะ</th><th>ส่งล่าสุด</th><th class="n">Seq ล่าสุด</th><th class="n">Seq ขาด</th><th>ตรวจความพร้อม</th><th>เวอร์ชันแอป</th><th>จับคู่</th><th></th></tr>' +
+    d.devices.map(function (x) {
+      var st = !x.active ? '<span class="pill bad">ปิดใช้งาน</span>' : x.paired ? '<span class="pill ok">จับคู่แล้ว</span>' : '<span class="pill warn">ยังไม่จับคู่</span>';
+      var pair = x.pairCode ? '<span class="big mono">' + x.pairCode + '</span><br><span class="muted">หมดอายุใน ' + Math.max(0, Math.round((x.pairExpires - now) / 60000)) + ' นาที</span>' : '';
+      return '<tr><td><b>' + esc(x.id) + '</b></td><td>' + st + '</td><td>' + esc(x.lastSync) + '</td><td class="n">' + esc(x.lastSeq) + '</td><td class="n">' +
+        (Number(x.gaps) ? '<span class="pill bad">' + esc(x.gaps) + '</span>' : esc(x.gaps || '')) + '</td><td>' + esc(x.lastCheck) + ' <span class="muted">' + esc(x.lastCheckAt) + '</span></td><td>' + esc(x.appVersion) +
+        '</td><td>' + pair + '</td><td><button class="btn sec" onclick="pairCode(\'' + x.id + '\')">' + (x.paired ? 'จับคู่ใหม่' : 'สร้างรหัสจับคู่') + '</button> ' +
+        (x.active ? '<button class="btn sec" onclick="setActive(\'' + x.id + '\', false)">ยกเลิกเครื่อง</button>' : '<button class="btn sec" onclick="setActive(\'' + x.id + '\', true)">เปิดใช้</button>') + '</td></tr>';
+    }).join('');
+  $('locTbl').innerHTML = '<tr><th>Location</th><th>สถานะ</th><th>เปิดโดย</th><th>คนนับ</th><th>เครื่อง</th><th>ปิดเมื่อ</th><th>ตรวจยอดกับเครื่อง</th><th class="n">แก้</th></tr>' +
+    (d.locations.length ? d.locations.map(function (l) {
+      var m = l.Last_Check === 'OK' ? '<span class="pill ok">✓ ตรง</span>' : l.Last_Check === 'MISMATCH' ? '<span class="pill bad">ไม่ตรง</span>' : l.Last_Check === 'WAIT' ? '<span class="pill warn">รอข้อมูล</span>' : '';
+      return '<tr><td><b>' + esc(l.Location) + '</b></td><td>' + esc(l.Status) + '</td><td>' + esc(l.Open_By) + '</td><td>' + esc(l.Counters) + '</td><td>' + esc(l.Devices) +
+        '</td><td>' + esc(l.Closed_Time) + '</td><td>' + m + '</td><td class="n">' + esc(l.Edits) + '</td></tr>';
+    }).join('') : '<tr><td colspan="8" class="muted">ยังไม่มี Location</td></tr>');
+  renderLabelLinks();
+}
+function renderLabelLinks() {
+  if (!DEV) return;
+  var base = DEV.appUrl.replace(/\/?$/, '/') + 'labels.html';
+  var zones = $('lblZones').value.toUpperCase().replace(/[^A-Z,]/g, '');
+  var loc = base + '#type=LOC&zones=' + encodeURIComponent(zones) + '&from=' + encodeURIComponent($('lblFrom').value) + '&to=' + encodeURIComponent($('lblTo').value);
+  var emp = base + '#type=EMP&items=' + encodeURIComponent(DEV.staff.filter(function (s) { return s.active; }).map(function (s) { return s.code + '|' + s.name; }).join(';'));
+  var dev = base + '#type=DEV&items=' + encodeURIComponent(DEV.devices.map(function (x) { return x.id; }).join(';'));
+  $('lblLinks').innerHTML = '<a class="btn sec" style="text-decoration:none" target="_blank" href="' + esc(loc) + '">ป้าย Location</a>' +
+    '<a class="btn sec" style="text-decoration:none" target="_blank" href="' + esc(emp) + '">บัตรผู้ตรวจสอบ (' + DEV.staff.filter(function (s) { return s.active; }).length + ')</a>' +
+    '<a class="btn sec" style="text-decoration:none" target="_blank" href="' + esc(dev) + '">สติกเกอร์เครื่อง</a>';
+}
+['lblZones', 'lblFrom', 'lblTo'].forEach(function (id) { $(id).addEventListener('input', renderLabelLinks); });
+function seedDevices() { call('apiSeedDevices', [$('seedN').value, 'TC21'], function (d) { renderDevices(d); toast('สร้างรหัสเครื่องแล้ว'); }); }
+function pairCode(id) {
+  if (!confirm('สร้างรหัสจับคู่ใหม่ให้ ' + id + '?\nถ้าเครื่องนี้เคยจับคู่แล้ว ต้องจับคู่ใหม่บนเครื่องด้วยรหัสนี้')) return;
+  call('apiPairCode', [id], function (d) { renderDevices(d); toast('รหัสจับคู่ ' + id + ' ใช้ได้ 30 นาที'); });
+}
+function setActive(id, on) {
+  if (!on && !confirm('ยกเลิกเครื่อง ' + id + '?\nเครื่องจะส่งข้อมูลไม่ได้จนกว่าจะจับคู่ใหม่ (ข้อมูลในเครื่องไม่หาย export เป็นไฟล์ได้)')) return;
+  call('apiSetDeviceActive', [id, on], renderDevices);
+}
+function importDevFile() {
+  var file = $('devFile').files[0];
+  if (!file) { toast('เลือกไฟล์ก่อน', true); return; }
+  busy(true, 'กำลังอ่านไฟล์…');
+  file.arrayBuffer().then(function (buf) {
+    var text;
+    try { text = new TextDecoder('utf-8', { fatal: true }).decode(buf); } catch (e) { text = new TextDecoder('windows-874').decode(buf); }
+    call('apiImportDeviceFile', [text, file.name], function (r) {
+      $('devFile').value = '';
+      $('importResult').innerHTML = '<span class="pill ' + (r.added ? 'ok' : 'info') + '">' + esc(r.kind) + ' ' + esc(r.deviceId) + '</span> ในไฟล์ ' + fmt(r.total) +
+        ' รายการ: มีแล้ว ' + fmt(r.existing) + ', เพิ่มใหม่ <b>' + fmt(r.added) + '</b>' + (r.quarantined ? ', แยกไว้ (รอบอื่น) ' + fmt(r.quarantined) : '') +
+        (r.rejected.length ? ', <span class="pill bad">ไม่รับ ' + r.rejected.length + '</span>' : '') + (r.importedBefore ? ' <span class="muted">(ไฟล์นี้เคยนำเข้าแล้ว)</span>' : '');
+      DEV = r.state; load();
+    });
+  });
 }
 
 load();
