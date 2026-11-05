@@ -107,6 +107,19 @@ assert.strictEqual(cmp.length, 2330);
 assert.ok(sheets.Admin_Log.data.length >= 5);
 console.log('Admin_Log:'); sheets.Admin_Log.data.slice(1).forEach(r => console.log('  ' + r.slice(2).join(' | ')));
 console.log('ไฟล์ที่เก็บใน Drive:', ctx._files.join(', '));
+// ล้างรอบแล้วเริ่มใหม่
+run('resetRound_()');
+s = run('apiGetState()');
+assert.ok(!s.master.hasPos && !s.master.hasSap && !s.round.projectId && s.round.status === 'NONE');
+assert.ok(!s.master.approved.hash);
+assert.strictEqual(sheets.Barcode_Map.data.length, 1);
+assert.ok(sheets.Admin_Log.data.some(r => r[2] === 'RESET_ROUND'));
+s = run('apiOpenRound("2026Q4", "2026-11-04")');
+s = run('apiUpload("POS", _pos, { fileName: "Stock_Shop_POS.xls", fileDate: "2026-11-04" })');
+assert.strictEqual(s.master.deviceCount, 2318);
+run('setConfig_({ ROUND_STATUS: "COUNTING" })');
+assert.throws(() => run('resetRound_()'), /เริ่มนับแล้ว/);
+console.log('ล้างรอบ: ผ่าน (และกันการล้างหลังเริ่มนับ)');
 console.log('\nจำลอง Apps Script ผ่านครบ flow');
 if (process.env.DUMP) {
   // ใส่ขัดแย้งตัวอย่างหนึ่งรายการเพื่อดูหน้าจอ

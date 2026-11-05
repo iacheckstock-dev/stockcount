@@ -65,6 +65,7 @@ function onOpen() {
     .addItem('เปิดหน้า Admin', 'openAdmin')
     .addSeparator()
     .addItem('ตั้งค่าชีต (ครั้งแรก / ซ่อมชีตที่หาย)', 'setupSheets')
+    .addItem('ล้างข้อมูลรอบนี้ เริ่มใหม่ (ก่อนเริ่มนับเท่านั้น)', 'resetRoundMenu')
     .addToUi();
 }
 
@@ -379,5 +380,50 @@ function apiApprove(seenHash, ackIds) {
       'รับทราบคำเตือน: ' + (warns.join(', ') || '-') + (m.hasSap ? '' : ' (ยอดชั่วคราวจาก POS)'), who_()]);
     logAdmin_('APPROVE_MASTER', 'v' + version, m.hash + ', ' + m.deviceRows.length + ' บาร์โค้ด');
     return apiGetState();
+  });
+}
+
+// ---------- ล้างข้อมูลรอบ (ใช้ได้เฉพาะก่อนเริ่มนับ) ----------
+
+var RESET_CONFIG_KEYS = ['PROJECT_ID', 'COUNT_DATE', 'SAP_FILE_NAME', 'SAP_FILE_DATE', 'SAP_UPLOADED_AT', 'SAP_UPLOADED_BY',
+  'SAP_D1_CONFIRMED', 'POS_FILE_NAME', 'POS_FILE_DATE', 'POS_UPLOADED_AT', 'POS_UPLOADED_BY', 'MASTER_APPROVED_HASH',
+  'MASTER_APPROVED_AT', 'MASTER_APPROVED_BY', 'MASTER_APPROVED_COUNT'];
+
+function resetRoundMenu() {
+  var ui = SpreadsheetApp.getUi();
+  var cfg = readConfig_();
+  var res = ui.prompt('ล้างข้อมูลรอบ ' + (cfg.PROJECT_ID || '(ยังไม่เปิดรอบ)'),
+    'จะล้าง: ไฟล์ SAP/POS ที่นำเข้า, Barcode_Map, การตัดสินขัดแย้ง, Master ที่อนุมัติ และข้อมูลรอบ\n' +
+    'ไม่ล้าง: Admin_Log, Master_Check และสำเนาไฟล์ใน Drive (เก็บเป็นหลักฐาน)\n\nพิมพ์ RESET เพื่อยืนยัน',
+    ui.ButtonSet.OK_CANCEL);
+  if (res.getSelectedButton() !== ui.Button.OK) return;
+  if (res.getResponseText().trim().toUpperCase() !== 'RESET') { ui.alert('ยกเลิก: ไม่ได้พิมพ์ RESET'); return; }
+  try {
+    resetRound_();
+    ui.alert('ล้างข้อมูลรอบเรียบร้อย เปิดหน้า Admin แล้วเริ่มเปิดรอบใหม่ได้');
+  } catch (e) {
+    ui.alert(e.message);
+  }
+}
+
+function resetRound_() {
+  return withLock_(function () {
+    var cfg = readConfig_();
+    var st = cfg.ROUND_STATUS || 'NONE';
+    if (st !== 'NONE' && st !== 'SETUP') {
+      throw new Error('ล้างไม่ได้: รอบ ' + cfg.PROJECT_ID + ' เริ่มนับแล้ว (' + st + ') ข้อมูลการนับต้องเก็บไว้ ให้ปิดรอบตามขั้นตอนแทน');
+    }
+    var log = SpreadsheetApp.getActive().getSheetByName('Count_Log');
+    if (log && log.getLastRow() > 1) throw new Error('ล้างไม่ได้: มีข้อมูลใน Count_Log แล้ว');
+
+    ['SAP_Snapshot', 'POS_Snapshot'].forEach(function (n) { SpreadsheetApp.getActive().getSheetByName(n).clearContents(); });
+    ['Barcode_Map', 'SAP_POS_Compare', 'Device_Master', 'Map_Decisions'].forEach(function (n) { writeTable_(n, SHEETS[n], []); });
+    var blank = {};
+    RESET_CONFIG_KEYS.forEach(function (k) { blank[k] = ''; });
+    blank.ROUND_STATUS = 'NONE';
+    setConfig_(blank);
+    var mc = SpreadsheetApp.getActive().getSheetByName('Master_Check');
+    mc.appendRow([now_(), 'RESET', '', '', 'ล้างข้อมูลรอบ ' + (cfg.PROJECT_ID || ''), '', '', '', who_()]);
+    logAdmin_('RESET_ROUND', cfg.PROJECT_ID || '-', 'ล้างไฟล์นำเข้า, Barcode_Map, การตัดสิน และ Master ที่อนุมัติ (Admin_Log/Master_Check/Drive คงไว้)');
   });
 }
