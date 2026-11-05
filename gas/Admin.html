@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html>
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+  :root { --bg:#fff; --mut:#6b6b6b; --line:#e3e1dc; --soft:#f6f5f2; --ok:#1f7a3a; --okbg:#e5f4e4; --warn:#9a5b00; --warnbg:#f9eeda;
+          --bad:#b42318; --badbg:#fbebeb; --acc:#1d4ed8; --accbg:#e7f1fb; }
+  * { box-sizing: border-box; }
+  body { font-family: "Sarabun", "Noto Sans Thai", system-ui, sans-serif; font-size: 14px; color:#1c1c1c; margin:0; background:var(--bg); }
+  header { display:flex; align-items:center; gap:16px; padding:10px 16px; border-bottom:1px solid var(--line); position:sticky; top:0; background:#fff; z-index:5; }
+  header h1 { font-size:16px; margin:0; }
+  header .who { margin-left:auto; color:var(--mut); font-size:12px; }
+  nav { display:flex; gap:4px; padding:8px 16px 0; border-bottom:1px solid var(--line); }
+  nav button { border:0; background:none; padding:8px 12px; cursor:pointer; font:inherit; color:var(--mut); border-bottom:2px solid transparent; }
+  nav button.on { color:#111; border-bottom-color:#111; font-weight:600; }
+  nav .badge { display:inline-block; min-width:18px; padding:0 5px; margin-left:4px; border-radius:9px; font-size:11px; background:var(--badbg); color:var(--bad); }
+  main { padding:16px; }
+  section { display:none; } section.on { display:block; }
+  .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap:12px; }
+  .card { border:1px solid var(--line); border-radius:8px; padding:12px 14px; }
+  .card h3 { margin:0 0 8px; font-size:14px; }
+  .kv { display:grid; grid-template-columns: 130px 1fr; gap:3px 8px; font-size:13px; }
+  .kv div:nth-child(odd) { color:var(--mut); }
+  .pill { display:inline-block; padding:1px 8px; border-radius:10px; font-size:12px; }
+  .ok { background:var(--okbg); color:var(--ok); } .warn { background:var(--warnbg); color:var(--warn); }
+  .bad { background:var(--badbg); color:var(--bad); } .info { background:var(--accbg); color:var(--acc); }
+  .big { font-size:22px; font-weight:600; }
+  button.btn { font:inherit; padding:7px 14px; border-radius:6px; border:1px solid #111; background:#111; color:#fff; cursor:pointer; }
+  button.btn.sec { background:#fff; color:#111; border-color:var(--line); }
+  button.btn:disabled { opacity:.4; cursor:not-allowed; }
+  input[type=text], input[type=date], input[type=search], select { font:inherit; padding:6px 8px; border:1px solid var(--line); border-radius:6px; }
+  table { border-collapse:collapse; width:100%; font-size:13px; }
+  th, td { text-align:left; padding:5px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { background:var(--soft); position:sticky; top:0; font-weight:600; }
+  td.n { text-align:right; font-variant-numeric: tabular-nums; }
+  .mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size:12px; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:8px 0; }
+  .drop { border:1.5px dashed var(--line); border-radius:8px; padding:14px; }
+  .muted { color:var(--mut); font-size:12px; }
+  .scroll { max-height:560px; overflow:auto; border:1px solid var(--line); border-radius:6px; }
+  details summary { cursor:pointer; color:var(--acc); font-size:12px; }
+  #toast { position:fixed; bottom:16px; left:50%; transform:translateX(-50%); padding:10px 16px; border-radius:8px; background:#111; color:#fff; display:none; max-width:80%; z-index:10; }
+  #toast.err { background:var(--bad); }
+  #busy { position:fixed; inset:0; background:rgba(255,255,255,.6); display:none; align-items:center; justify-content:center; z-index:9; font-size:15px; }
+  .chips button { font:inherit; font-size:12px; padding:3px 10px; border-radius:12px; border:1px solid var(--line); background:#fff; cursor:pointer; }
+  .chips button.on { background:#111; color:#fff; border-color:#111; }
+  .conf { border:1px solid var(--line); border-radius:8px; padding:10px 12px; margin-bottom:10px; }
+  .conf label { display:block; margin:3px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>ระบบตรวจนับ — Admin</h1>
+  <span id="roundTag" class="pill info">-</span>
+  <span id="provTag" class="pill warn" style="display:none">ยอดชั่วคราว (POS)</span>
+  <span class="who" id="who"></span>
+</header>
+<nav id="nav">
+  <button data-t="overview" class="on">ภาพรวมและอนุมัติ</button>
+  <button data-t="upload">นำเข้าไฟล์</button>
+  <button data-t="checks">ตรวจความพร้อม</button>
+  <button data-t="conflicts">ขัดแย้ง<span class="badge" id="confBadge" style="display:none"></span></button>
+  <button data-t="compare">เทียบ SAP กับ POS</button>
+  <button data-t="log">บันทึก Admin</button>
+</nav>
+<main>
+  <!-- ภาพรวม -->
+  <section id="overview" class="on">
+    <div class="grid">
+      <div class="card">
+        <h3>รอบนับ</h3>
+        <div class="kv" id="roundKv"></div>
+        <div class="row" style="margin-top:10px">
+          <input type="text" id="pid" placeholder="2026Q4" size="10">
+          <input type="date" id="cdate">
+          <button class="btn sec" onclick="openRound()">เปิด/แก้รอบ</button>
+        </div>
+        <div class="muted">วันนับ D เทียบกับยอด SAP สิ้นวัน D−1</div>
+      </div>
+      <div class="card">
+        <h3>ไฟล์ที่นำเข้า</h3>
+        <div class="kv" id="filesKv"></div>
+      </div>
+      <div class="card">
+        <h3>ตัวเลขสรุป</h3>
+        <div class="kv" id="statsKv"></div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <h3>อนุมัติ Master (รายการบาร์โค้ดที่ส่งลงเครื่อง)</h3>
+      <div id="approveBox"></div>
+    </div>
+  </section>
+
+  <!-- นำเข้าไฟล์ -->
+  <section id="upload">
+    <div class="grid">
+      <div class="card">
+        <h3>POS — Stock_Shop (.xls)</h3>
+        <div class="drop">
+          <input type="file" id="posFile" accept=".xls,.xlsx,.txt,.csv">
+          <p class="muted">ใช้สร้างรายการบาร์โค้ดตอนเช้าวันนับ ใช้ไฟล์ล่าสุดที่มีได้</p>
+          <button class="btn" onclick="upload('POS')">อัปโหลด POS</button>
+        </div>
+      </div>
+      <div class="card">
+        <h3>SAP — ZMMD002A (.xls ที่เป็นข้อความคั่น Tab)</h3>
+        <div class="drop">
+          <input type="file" id="sapFile" accept=".xls,.xlsx,.txt,.csv">
+          <label style="display:block;margin:8px 0"><input type="checkbox" id="d1"> บัญชียืนยันยอดขาย D−1 ใน SAP แล้ว</label>
+          <p class="muted">ยอดหลัก = Qty-UR รวมทุก Plant อัปโหลดทีหลังได้ ส่วนต่างจะคำนวณใหม่ทันที</p>
+          <button class="btn" onclick="upload('SAP')">อัปโหลด SAP</button>
+        </div>
+      </div>
+    </div>
+    <p class="muted">ระบบไม่แก้ไฟล์ต้นฉบับ เก็บสำเนาไว้ในชีต SAP_Snapshot / POS_Snapshot และในโฟลเดอร์ Drive ของระบบ</p>
+  </section>
+
+  <!-- ตรวจความพร้อม -->
+  <section id="checks">
+    <table id="checkTbl"></table>
+  </section>
+
+  <!-- ขัดแย้ง -->
+  <section id="conflicts">
+    <div id="confList"></div>
+  </section>
+
+  <!-- เทียบ SAP กับ POS -->
+  <section id="compare">
+    <div class="row">
+      <div class="chips" id="chips"></div>
+      <input type="search" id="q" placeholder="ค้นหา Material / Cust-mat / บาร์โค้ด" oninput="renderCompare()" style="min-width:260px">
+      <button class="btn sec" onclick="exportCompare(false)">Export ที่กรองอยู่ (.xlsx)</button>
+      <button class="btn sec" onclick="exportCompare(true)">Export ข้อยกเว้นส่งทีม SAP</button>
+    </div>
+    <div class="muted" id="cmpInfo"></div>
+    <div class="scroll"><table id="cmpTbl"></table></div>
+  </section>
+
+  <!-- บันทึก -->
+  <section id="log">
+    <div class="scroll"><table id="logTbl"></table></div>
+  </section>
+</main>
+<div id="busy">กำลังทำงาน…</div>
+<div id="toast"></div>
+
+<script>
+var S = null;            // state ล่าสุดจากเซิร์ฟเวอร์
+var CMP = null;          // ตารางเทียบ
+var cmpFilter = 'ALL';
+var STATUS = { MATCH:['ตรง','ok'], QTY_DIFF:['ยอดต่าง','bad'], ONLY_SAP:['มีเฉพาะ SAP','warn'], ONLY_POS:['มีเฉพาะ POS','info'],
+  FILLED:['เติมบาร์โค้ด','warn'], CONFLICT:['ขัดแย้ง','bad'], NO_SAP:['ยังไม่มี SAP','warn'] };
+
+function $(id) { return document.getElementById(id); }
+function esc(s) { return String(s === null || s === undefined ? '' : s).replace(/[&<>"]/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+function fmt(n) { return n === '' || n === null || n === undefined ? '' : Number(n).toLocaleString('th-TH', { maximumFractionDigits: 2 }); }
+function toast(msg, err) { var t = $('toast'); t.textContent = msg; t.className = err ? 'err' : ''; t.style.display = 'block'; clearTimeout(t._h); t._h = setTimeout(function () { t.style.display = 'none'; }, err ? 8000 : 3500); }
+function busy(on, msg) { $('busy').style.display = on ? 'flex' : 'none'; if (msg) $('busy').textContent = msg; }
+
+function call(fn, args, ok) {
+  busy(true);
+  google.script.run
+    .withSuccessHandler(function (r) { busy(false); ok && ok(r); })
+    .withFailureHandler(function (e) { busy(false); toast(e && e.message ? e.message : String(e), true); })[fn].apply(null, args || []);
+}
+
+document.querySelectorAll('#nav button').forEach(function (b) {
+  b.onclick = function () {
+    document.querySelectorAll('#nav button').forEach(function (x) { x.classList.toggle('on', x === b); });
+    document.querySelectorAll('main section').forEach(function (s) { s.classList.toggle('on', s.id === b.dataset.t); });
+    if (b.dataset.t === 'compare' && !CMP) loadCompare();
+  };
+});
+
+function load() { call('apiGetState', [], render); }
+function setState(s) { S = s; CMP = null; render(s); if ($('compare').classList.contains('on')) loadCompare(); }
+
+function render(s) {
+  S = s;
+  $('who').textContent = s.user;
+  var r = s.round;
+  $('roundTag').textContent = r.projectId ? r.projectId + ' · นับ ' + r.countDate + ' · ' + r.status : 'ยังไม่เปิดรอบ';
+  $('provTag').style.display = s.master.hasPos && !s.master.hasSap ? '' : 'none';
+  $('pid').value = r.projectId || defaultPid(); $('cdate').value = r.countDate || '';
+  $('roundKv').innerHTML = kv([['รหัสรอบ', r.projectId || '-'], ['วันนับ (D)', r.countDate || '-'], ['ยอดตามบัญชี ณ', r.countDate ? 'สิ้นวัน ' + prevDay(r.countDate) : '-'], ['สถานะ', r.status]]);
+  var f = s.files;
+  $('filesKv').innerHTML = kv([
+    ['POS', f.pos.name ? esc(f.pos.name) + '<br><span class="muted">ไฟล์ลงวันที่ ' + esc(f.pos.date) + ' · อัปโหลด ' + esc(f.pos.at) + '</span>' : '<span class="pill bad">ยังไม่มี</span>'],
+    ['SAP', f.sap.name ? esc(f.sap.name) + '<br><span class="muted">ไฟล์ลงวันที่ ' + esc(f.sap.date) + ' · อัปโหลด ' + esc(f.sap.at) + '</span>' : '<span class="pill warn">ยังไม่มี (ใช้ยอด POS ชั่วคราว)</span>']
+  ], true);
+  var st = s.master.stats;
+  $('statsKv').innerHTML = kv([
+    ['รหัสทั้งหมด', fmt(st.materials)], ['SAP / POS', fmt(st.sapMaterials) + ' / ' + fmt(st.posItems)],
+    ['จับคู่ได้', fmt(st.matched)], ['บาร์โค้ดส่งลงเครื่อง', fmt(st.barcodes)],
+    ['ยอด SAP (ชิ้น)', s.master.hasSap ? fmt(st.sapQtyTotal) : '-'], ['ยอด POS (ชิ้น)', fmt(st.posQtyTotal)],
+    ['มูลค่าตามบัญชี', s.master.hasSap ? fmt(st.sapValueTotal) + ' บาท' : '-'], ['สถานะพิเศษ IT/QI/BL', fmt(st.specialStatus) + ' รหัส']
+  ], true);
+  renderApprove(s.master);
+  renderChecks(s.master.checks);
+  renderConflicts(s.master);
+  var b = $('confBadge'); b.textContent = s.master.pendingConflicts; b.style.display = s.master.pendingConflicts ? '' : 'none';
+  $('logTbl').innerHTML = '<tr><th>เวลา</th><th>ผู้ทำ</th><th>การกระทำ</th><th>สิ่งที่ถูกกระทำ</th><th>รายละเอียด</th></tr>' +
+    s.log.map(function (l) { return '<tr>' + l.map(function (c) { return '<td>' + esc(c) + '</td>'; }).join('') + '</tr>'; }).join('');
+}
+
+function kv(pairs, raw) { return pairs.map(function (p) { return '<div>' + esc(p[0]) + '</div><div>' + (raw ? p[1] : esc(p[1])) + '</div>'; }).join(''); }
+function prevDay(d) { var x = new Date(d + 'T00:00:00Z'); x.setUTCDate(x.getUTCDate() - 1); return x.toISOString().slice(0, 10); }
+function defaultPid() { var d = new Date(); return d.getFullYear() + 'Q' + (Math.floor(d.getMonth() / 3) + 1); }
+
+function renderApprove(m) {
+  var a = m.approved, h = '';
+  if (a.hash) {
+    h += '<p>' + (a.current ? '<span class="pill ok">อนุมัติแล้ว ตรงกับข้อมูลปัจจุบัน</span>' : '<span class="pill warn">ข้อมูลเปลี่ยนหลังอนุมัติ ต้องอนุมัติใหม่ก่อนเครื่องโหลด</span>') +
+      ' <span class="muted">v' + esc(a.version) + ' · ' + esc(a.count) + ' บาร์โค้ด · ' + esc(a.by) + ' · ' + esc(a.at) + ' · <span class="mono">' + esc(a.hash) + '</span></span></p>';
+  } else {
+    h += '<p><span class="pill warn">ยังไม่เคยอนุมัติ</span></p>';
+  }
+  if (a.current) { $('approveBox').innerHTML = h; return; }
+  var blocks = m.checks.filter(function (c) { return c.level === 'BLOCK' && !c.pass; });
+  var warns = m.checks.filter(function (c) { return c.level === 'WARN' && !c.pass; });
+  if (blocks.length) {
+    h += '<p><span class="pill bad">อนุมัติไม่ได้</span> ต้องแก้ก่อน: ' + blocks.map(function (c) { return esc(c.title) + ' (' + c.count + ')'; }).join(', ') + '</p>';
+  } else {
+    if (warns.length) {
+      h += '<p class="muted">กดรับทราบคำเตือนทุกข้อก่อนอนุมัติ</p>' + warns.map(function (c) {
+        return '<label style="display:block;margin:4px 0"><input type="checkbox" class="ack" value="' + c.id + '" onchange="ackChanged()"> ' +
+          esc(c.title) + ' <b>' + c.count + '</b>' + (c.note ? ' <span class="muted">— ' + esc(c.note) + '</span>' : '') + '</label>';
+      }).join('');
+    }
+    h += '<div class="row"><button class="btn" id="approveBtn" onclick="approve()"' + (warns.length ? ' disabled' : '') + '>อนุมัติ Master (' + fmt(m.deviceCount) + ' บาร์โค้ด)</button>' +
+      '<span class="muted mono">' + esc(m.hash) + '</span></div>';
+  }
+  $('approveBox').innerHTML = h;
+}
+function ackChanged() {
+  var all = document.querySelectorAll('.ack'), ok = true;
+  all.forEach(function (x) { if (!x.checked) ok = false; });
+  $('approveBtn').disabled = !ok;
+}
+function approve() {
+  var ids = []; document.querySelectorAll('.ack').forEach(function (x) { if (x.checked) ids.push(x.value); });
+  if (!confirm('อนุมัติ Master นี้ให้เครื่องโหลดใช้งาน?')) return;
+  call('apiApprove', [S.master.hash, ids], function (s) { setState(s); toast('อนุมัติแล้ว'); });
+}
+
+function renderChecks(checks) {
+  $('checkTbl').innerHTML = '<tr><th>รายการตรวจ</th><th>ระดับ</th><th class="n">จำนวน</th><th>ผล</th><th>หมายเหตุ / รายการ</th></tr>' +
+    checks.map(function (c) {
+      var res = c.pass ? '<span class="pill ok">ผ่าน</span>' : c.level === 'BLOCK' ? '<span class="pill bad">บล็อก</span>' : '<span class="pill warn">เตือน</span>';
+      var items = c.items && c.items.length && !c.pass ? '<details><summary>ดูรายการ (' + c.items.length + (c.count > c.items.length ? ' จาก ' + c.count : '') + ')</summary><div class="mono">' +
+        c.items.map(esc).join('<br>') + '</div></details>' : '';
+      return '<tr><td>' + esc(c.title) + '</td><td>' + (c.level === 'BLOCK' ? 'บล็อก' : 'เตือน') + '</td><td class="n">' + c.count + '</td><td>' + res + '</td><td>' + esc(c.note) + items + '</td></tr>';
+    }).join('');
+}
+
+function renderConflicts(m) {
+  if (!m.conflicts.length) { $('confList').innerHTML = '<p class="muted">ไม่มีรายการขัดแย้ง</p>'; return; }
+  $('confList').innerHTML = m.conflicts.map(function (c, i) {
+    var decided = c.decision !== null && c.options.some(function (o) { return o.value === c.decision; });
+    return '<div class="conf"><div><b>' + esc(c.title) + '</b> ' + (decided ? '<span class="pill ok">ตัดสินแล้ว</span>' : '<span class="pill bad">รอตัดสิน</span>') + '</div>' +
+      '<div class="mono" style="margin:4px 0">' + esc(c.material) + ' · ' + esc(c.detail) + '</div>' +
+      c.options.map(function (o) {
+        return '<label><input type="radio" name="cf' + i + '" value="' + esc(o.value) + '"' + (c.decision === o.value ? ' checked' : '') + '> ' + esc(o.label) + '</label>';
+      }).join('') +
+      '<div class="row"><button class="btn sec" onclick="decide(' + i + ')">บันทึกการตัดสิน</button></div></div>';
+  }).join('');
+}
+function decide(i) {
+  var c = S.master.conflicts[i];
+  var sel = document.querySelector('input[name=cf' + i + ']:checked');
+  if (!sel) { toast('เลือกตัวเลือกก่อน', true); return; }
+  call('apiDecide', [c.key, sel.value], function (s) { setState(s); toast('บันทึกแล้ว'); });
+}
+
+function openRound() {
+  call('apiOpenRound', [$('pid').value, $('cdate').value], function (s) { setState(s); toast('บันทึกรอบแล้ว'); });
+}
+
+// ---------- อ่านไฟล์ในเบราว์เซอร์ ----------
+function readTable(file) {
+  return file.arrayBuffer().then(function (buf) {
+    var b = new Uint8Array(buf);
+    var isOle = b[0] === 0xD0 && b[1] === 0xCF && b[2] === 0x11 && b[3] === 0xE0;
+    var isZip = b[0] === 0x50 && b[1] === 0x4B;
+    if (isOle || isZip) {
+      var wb = XLSX.read(buf, { type: 'array' });
+      return XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: '' });
+    }
+    var text;
+    try { text = new TextDecoder('utf-8', { fatal: true }).decode(buf); }
+    catch (e) { text = new TextDecoder('windows-874').decode(buf); }   // ไฟล์ SAP ภาษาไทย (TIS-620)
+    var lines = text.replace(/^﻿/, '').split(/\r\n|\n|\r/).filter(function (l) { return l.replace(/[\t,]/g, '').trim(); });
+    var sep = lines.length && lines[0].indexOf('\t') >= 0 ? '\t' : ',';
+    return lines.map(function (l) { return l.split(sep); });
+  });
+}
+function ymd(ms) { var d = new Date(ms); return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
+
+function upload(kind) {
+  var input = $(kind === 'SAP' ? 'sapFile' : 'posFile');
+  var file = input.files[0];
+  if (!file) { toast('เลือกไฟล์ก่อน', true); return; }
+  if (kind === 'SAP' && !$('d1').checked) { toast('ต้องติ๊กยืนยันว่าบัญชีปิดยอด D−1 แล้ว', true); return; }
+  busy(true, 'กำลังอ่านไฟล์…');
+  readTable(file).then(function (rows) {
+    busy(true, 'กำลังส่ง ' + rows.length + ' แถว…');
+    call('apiUpload', [kind, rows, { fileName: file.name, fileDate: ymd(file.lastModified), d1Confirmed: kind === 'SAP' ? $('d1').checked : false }], function (s) {
+      setState(s); input.value = ''; if (kind === 'SAP') $('d1').checked = false;
+      toast('อัปโหลด ' + kind + ' แล้ว');
+    });
+  }).catch(function (e) { busy(false); toast('อ่านไฟล์ไม่ได้: ' + e.message, true); });
+}
+
+// ---------- ตารางเทียบ ----------
+function loadCompare() { call('apiGetCompare', [], function (c) { CMP = c; renderChips(); renderCompare(); }); }
+function renderChips() {
+  var cnt = { ALL: CMP.length, SPECIAL: 0 };
+  CMP.forEach(function (r) { cnt[r.status] = (cnt[r.status] || 0) + 1; if (r.sapIT || r.sapQI || r.sapBL) cnt.SPECIAL++; });
+  var list = [['ALL', 'ทั้งหมด']].concat(Object.keys(STATUS).filter(function (k) { return cnt[k]; }).map(function (k) { return [k, STATUS[k][0]]; }));
+  if (cnt.SPECIAL) list.push(['SPECIAL', 'สถานะพิเศษ SAP']);
+  $('chips').innerHTML = list.map(function (x) {
+    return '<button class="' + (cmpFilter === x[0] ? 'on' : '') + '" onclick="cmpFilter=\'' + x[0] + '\';renderChips();renderCompare()">' + x[1] + ' ' + fmt(cnt[x[0]] || 0) + '</button>';
+  }).join(' ');
+}
+function filtered() {
+  var q = $('q').value.trim().toUpperCase();
+  return CMP.filter(function (r) {
+    if (cmpFilter === 'SPECIAL') { if (!(r.sapIT || r.sapQI || r.sapBL)) return false; }
+    else if (cmpFilter !== 'ALL' && r.status !== cmpFilter) return false;
+    if (!q) return true;
+    return (r.material + ' ' + r.custMat + ' ' + r.sapBarcodes + ' ' + r.posBarcode + ' ' + r.name).toUpperCase().indexOf(q) >= 0;
+  });
+}
+function renderCompare() {
+  if (!CMP) return;
+  var rows = filtered(), shown = rows.slice(0, 500);
+  $('cmpInfo').textContent = 'แสดง ' + fmt(shown.length) + ' จาก ' + fmt(rows.length) + ' รายการ' + (rows.length > 500 ? ' (ใช้ค้นหาหรือ Export เพื่อดูทั้งหมด)' : '');
+  $('cmpTbl').innerHTML = '<tr><th>Material</th><th>Cust-mat</th><th>ชื่อ</th><th>สถานะ</th><th>บาร์โค้ด SAP</th><th>บาร์โค้ด POS</th><th>ใช้จริง</th><th class="n">SAP</th><th class="n">POS</th><th class="n">ต่าง</th><th class="n">IT/QI/BL</th></tr>' +
+    shown.map(function (r) {
+      var s = STATUS[r.status] || [r.status, ''];
+      var sp = r.sapIT || r.sapQI || r.sapBL ? [r.sapIT, r.sapQI, r.sapBL].join('/') : '';
+      return '<tr><td class="mono">' + esc(r.material) + '</td><td class="mono">' + esc(r.custMat) + '</td><td>' + esc(r.name) + (r.custMismatch ? ' <span class="pill warn">Cust-mat ไม่ตรง</span>' : '') +
+        '</td><td><span class="pill ' + s[1] + '">' + s[0] + '</span></td><td class="mono">' + esc(r.sapBarcodes) + '</td><td class="mono">' + esc(r.posBarcode) +
+        '</td><td class="mono">' + esc(r.finalBarcodes) + '</td><td class="n">' + fmt(r.sapQty) + '</td><td class="n">' + fmt(r.posQty) + '</td><td class="n">' + fmt(r.diff) + '</td><td class="n">' + sp + '</td></tr>';
+    }).join('');
+}
+function exportCompare(exceptionsOnly) {
+  if (!CMP) return;
+  var rows = exceptionsOnly ? CMP.filter(function (r) { return r.status === 'FILLED' || r.status === 'CONFLICT' || r.custMismatch || /0000/.test(r.sapBarcodes); }) : filtered();
+  var head = ['Material', 'Cust-mat', 'Name', 'Status', 'SAP_Barcode', 'POS_Barcode', 'Final_Barcode', 'SAP_Qty', 'POS_Qty', 'Diff', 'SAP_IT', 'SAP_QI', 'SAP_BL'];
+  var body = rows.map(function (r) { return [r.material, r.custMat, r.name, r.statusTh, r.sapBarcodes, r.posBarcode, r.finalBarcodes, r.sapQty, r.posQty, r.diff, r.sapIT, r.sapQI, r.sapBL]; });
+  // xlsx: Material / บาร์โค้ด เป็นข้อความ ไม่กลายเป็น 8.85E+12 เมื่อเปิดใน Excel
+  var ws = XLSX.utils.aoa_to_sheet([head].concat(body));
+  ws['!cols'] = head.map(function (h, i) { return { wch: i < 3 || /Barcode/.test(h) ? 18 : 10 }; });
+  var wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, exceptionsOnly ? 'SAP_exceptions' : 'SAP_vs_POS');
+  XLSX.writeFile(wb, (S.round.projectId || 'stockcount') + (exceptionsOnly ? '_SAP_exceptions' : '_SAP_vs_POS') + '.xlsx');
+}
+
+load();
+</script>
+</body>
+</html>

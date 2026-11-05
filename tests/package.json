@@ -1,0 +1,12 @@
+{
+  "name": "stockcount-tests",
+  "private": true,
+  "description": "ชุดทดสอบตรรกะฝั่ง Apps Script",
+  "scripts": {
+    "test": "node run.js",
+    "mock": "node gas-mock.js"
+  },
+  "dependencies": {
+    "xlsx": "^0.18.5"
+  }
+}
