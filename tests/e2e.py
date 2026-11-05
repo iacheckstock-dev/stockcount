@@ -32,8 +32,8 @@ with sync_playwright() as p:
     pg = ctx.new_page()
     errors = []
     pg.on('pageerror', lambda e: errors.append(str(e)))
-    def scan(code):
-        pg.locator('#topbar').click()  # ให้โฟกัสอยู่ที่หน้า ไม่ใช่ช่องกรอก
+    def scan(code, click=True):
+        if click: pg.locator('#topbar').click()  # ให้โฟกัสอยู่ที่หน้า ไม่ใช่ช่องกรอก
         pg.keyboard.type(code, delay=5); pg.keyboard.press('Enter'); pg.wait_for_timeout(250)
     def shot(name): pg.screenshot(path=f'{SHOT}/{name}.png')
 
@@ -53,8 +53,9 @@ with sync_playwright() as p:
 
     print('ตรวจความพร้อม')
     scan('EMP:EMP-XX'); check('ไม่พบรหัสผู้ตรวจสอบ' in pg.inner_text('#toast'), 'บัตรที่ไม่มีในระบบ → ปฏิเสธ')
-    scan('EMP:EMP-NU'); pg.wait_for_timeout(300)
-    pg.check('#ckSound'); pg.wait_for_timeout(300); pg.check('#ckPin')
+    pg.check('#ckSound'); pg.wait_for_timeout(300); pg.check('#ckPin'); pg.wait_for_timeout(300)
+    scan('EMP:EMP-NU', click=False)   # ยิงต่อทันทีหลังติ๊ก (โฟกัสเคยค้างที่ช่องติ๊ก)
+    pg.wait_for_timeout(300)
     pg.wait_for_function("/พร้อมนับ ✓/.test(document.querySelector('#readyHead').textContent)", timeout=10000)
     shot('03-ready-pass')
     check(pg.is_visible('#btnStart'), 'ผ่านทุกข้อ ขึ้นปุ่มเริ่มนับ')

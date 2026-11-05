@@ -1,5 +1,5 @@
 /* Service worker: เก็บหน้าแอปไว้ในเครื่อง เปิดได้แม้ไม่มีเน็ต (ข้อมูลการนับอยู่ใน IndexedDB ไม่ใช่ที่นี่) */
-var CACHE = 'stockcount-2.0.0';
+var CACHE = 'stockcount-2.0.1';
 var FILES = ['./', 'index.html', 'app.js', 'db.js', 'style.css', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', function (e) {

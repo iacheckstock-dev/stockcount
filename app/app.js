@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2.0.0';
+  var APP_VERSION = '2.0.1';
   var BATCH = 20;
   var SYNC_EVERY = 2500;
   var STALE_MIN = 30;
@@ -362,8 +362,11 @@
   // ---------- การยิง ----------
   var buf = '', bufAt = 0;
   document.addEventListener('keydown', function (e) {
-    var tag = (e.target && e.target.tagName) || '';
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || !$('modal').classList.contains('hidden')) return;
+    // ข้ามเฉพาะตอนพิมพ์ในช่องข้อความ; ช่องติ๊ก/ปุ่มที่ค้างโฟกัสอยู่ต้องไม่กินการยิง
+    var t = e.target || {}, tag = t.tagName || '';
+    var typing = tag === 'TEXTAREA' || (tag === 'INPUT' && !/^(checkbox|radio|button|submit)$/i.test(t.type || ''));
+    if (typing || !$('modal').classList.contains('hidden')) return;
+    if (tag === 'INPUT' || tag === 'BUTTON') { if (e.key === ' ' || e.key === 'Enter') e.preventDefault(); }
     if (e.key === 'Enter') { var code = buf; buf = ''; if (code) handleScan(code); e.preventDefault(); return; }
     if (e.key && e.key.length === 1) {
       if (Date.now() - bufAt > 800) buf = '';
@@ -808,7 +811,7 @@
   }
 
   $('btnSound').onclick = function () { SOUND.ok(); setTimeout(SOUND.warn, 600); setTimeout(SOUND.bad, 1400); };
-  $('ckSound').onchange = $('ckPin').onchange = function () { runChecks(true); };
+  $('ckSound').onchange = $('ckPin').onchange = function () { this.blur(); runChecks(true); };
   $('btnRunCheck').onclick = function () { runChecks(false); };
   $('btnReload').onclick = function () {
     $('readyHead').textContent = 'กำลังโหลดรายการบาร์โค้ด…';

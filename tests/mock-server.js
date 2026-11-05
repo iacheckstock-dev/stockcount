@@ -40,7 +40,7 @@ http.createServer((req, res) => {
       if (url.pathname === '/debug/loccheck') return send(200, env.sheets.Loc_Checks.data);
       if (url.pathname === '/debug/offline') { offline = url.searchParams.get('on') === '1'; return send(200, { offline }); }
       if (url.pathname === '/debug/import') return send(200, run('apiImportDeviceFile(_t, "e2e.csv")', { _t: body }));
-      if (url.pathname === '/app/config.json') return send(200, { apiUrl: 'http://localhost:' + PORT + '/api', appVersion: '2.0.0' });
+      if (url.pathname === '/app/config.json') return send(200, { apiUrl: 'http://localhost:' + PORT + '/api', appVersion: '2.0.1' });
       if (url.pathname.startsWith('/app/')) {
         let f = path.join(APP, url.pathname.slice(5) || 'index.html');
         if (fs.existsSync(f) && fs.statSync(f).isDirectory()) f = path.join(f, 'index.html');
