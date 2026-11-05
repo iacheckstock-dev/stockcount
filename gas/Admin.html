@@ -284,9 +284,12 @@ function openRound() {
 function readTable(file) {
   return file.arrayBuffer().then(function (buf) {
     var b = new Uint8Array(buf);
-    var isOle = b[0] === 0xD0 && b[1] === 0xCF && b[2] === 0x11 && b[3] === 0xE0;
-    var isZip = b[0] === 0x50 && b[1] === 0x4B;
-    if (isOle || isZip) {
+    // ไฟล์ Excel ทุกแบบ (OLE .xls, .xlsx, BIFF แบบเก่าที่ POS export ออกมา) มีไบต์ 0x00 อยู่ต้นไฟล์
+    // ส่วนไฟล์ข้อความ (SAP คั่น Tab) ไม่มี จึงใช้แยกชนิดไฟล์โดยไม่สนนามสกุล
+    var head = b.subarray(0, Math.min(b.length, 2048));
+    var isBinary = Array.prototype.indexOf.call(head, 0) >= 0;
+    var isHtml = /^\s*</.test(String.fromCharCode.apply(null, b.subarray(0, 64)));
+    if (isBinary || isHtml) {
       var wb = XLSX.read(buf, { type: 'array' });
       return XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: '' });
     }
