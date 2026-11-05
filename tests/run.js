@@ -71,7 +71,7 @@ test('รวมยอดทุก Plant และยอดหลัก = Qty-UR'
   assert.deepStrictEqual(sap.plants, ['8111', '8164']);
 });
 test('กรณีต่าง ๆ ตามตาราง Barcode_Map', () => {
-  const m = Core.buildMaster(Core.parseSap(baseSap()), Core.parsePos(basePos()), {}, {});
+  const m = Core.buildMaster(Core.parseSap(baseSap()), Core.parsePos(basePos()), {}, { projectId: 'T' });
   const by = mat => m.compare.find(c => c.material === mat);
   assert.strictEqual(by('MAT-A').status, 'MATCH');
   assert.strictEqual(by('MAT-FILL').status, 'FILLED');
@@ -84,37 +84,42 @@ test('กรณีต่าง ๆ ตามตาราง Barcode_Map', () => 
   assert.deepStrictEqual(m.special, ['MAT-SPEC']);
 });
 test('Admin ตัดสินขัดแย้งแล้วอนุมัติได้', () => {
-  const m = Core.buildMaster(Core.parseSap(baseSap()), Core.parsePos(basePos()), { 'BC_DIFF|MAT-DIFF': 'ALL' }, {});
+  const m = Core.buildMaster(Core.parseSap(baseSap()), Core.parsePos(basePos()), { 'BC_DIFF|MAT-DIFF': 'ALL' }, { projectId: 'T' });
   assert.ok(m.canApprove);
   assert.strictEqual(m.rows.filter(r => r.material === 'MAT-DIFF').length, 2);
 });
 test('บาร์โค้ดเดียวชี้สองรหัส → บล็อกจนกว่าจะเลือก', () => {
   const pos = basePos(); pos.push(posRow('MAT-DUPBC', '8850136212080', 'CX', 1));
-  let m = Core.buildMaster(Core.parseSap(baseSap()), Core.parsePos(pos), { 'BC_DIFF|MAT-DIFF': 'ALL' }, {});
+  let m = Core.buildMaster(Core.parseSap(baseSap()), Core.parsePos(pos), { 'BC_DIFF|MAT-DIFF': 'ALL' }, { projectId: 'T' });
   assert.ok(m.conflicts.some(c => c.type === 'BC_MULTI'));
   assert.ok(!m.canApprove);
   m = Core.buildMaster(Core.parseSap(baseSap()), Core.parsePos(pos),
-    { 'BC_DIFF|MAT-DIFF': 'ALL', 'BC_MULTI|8850136212080': 'MAT-A' }, {});
+    { 'BC_DIFF|MAT-DIFF': 'ALL', 'BC_MULTI|8850136212080': 'MAT-A' }, { projectId: 'T' });
   assert.ok(m.canApprove);
   assert.strictEqual(m.rows.find(r => r.material === 'MAT-DUPBC').barcode, '');
 });
 test('Item_No ซ้ำใน POS → บล็อก', () => {
   const pos = basePos(); pos.push(posRow('MAT-A', '8850136212080', 'CA', 1));
-  const m = Core.buildMaster(Core.parseSap(baseSap()), Core.parsePos(pos), { 'BC_DIFF|MAT-DIFF': 'ALL' }, {});
+  const m = Core.buildMaster(Core.parseSap(baseSap()), Core.parsePos(pos), { 'BC_DIFF|MAT-DIFF': 'ALL' }, { projectId: 'T' });
   assert.strictEqual(m.checks.find(c => c.id === 'POS_DUP').count, 1);
   assert.ok(!m.canApprove);
 });
 test('เช้าวันนับยังไม่มี SAP → ใช้ POS ชั่วคราวและอนุมัติได้', () => {
-  const m = Core.buildMaster(null, Core.parsePos(basePos()), {}, {});
+  const m = Core.buildMaster(null, Core.parsePos(basePos()), {}, { projectId: 'T' });
   assert.ok(m.canApprove);
   assert.strictEqual(m.rows.find(r => r.material === 'MAT-A').bookSource, 'POS');
   assert.ok(!m.checks.find(c => c.id === 'SAP_LOADED').pass);
 });
 test('Cust-mat ไม่ตรงและ SAP ไม่มีบาร์โค้ด → ต้องตัดสิน', () => {
   const pos = basePos(); pos[2] = posRow('MAT-FILL', '2101000044679', 'OTHER', 3);
-  const m = Core.buildMaster(Core.parseSap(baseSap()), Core.parsePos(pos), { 'BC_DIFF|MAT-DIFF': 'ALL' }, {});
+  const m = Core.buildMaster(Core.parseSap(baseSap()), Core.parsePos(pos), { 'BC_DIFF|MAT-DIFF': 'ALL' }, { projectId: 'T' });
   assert.ok(m.conflicts.some(c => c.type === 'FILL_CUSTMAT'));
   assert.ok(!m.canApprove);
+});
+test('ยังไม่เปิดรอบ → อนุมัติไม่ได้', () => {
+  const m = Core.buildMaster(null, Core.parsePos(basePos()), {}, {});
+  assert.ok(!m.canApprove);
+  assert.ok(!m.checks.find(c => c.id === 'ROUND_OPEN').pass);
 });
 test('เตือนวันที่ไฟล์', () => {
   const r = Core.fileDateIssues({ countDate: '2026-11-04', sapFileDate: '2026-11-04', posFileDate: '2026-10-28' });
@@ -130,7 +135,7 @@ if (SAP_FILE && POS_FILE) {
   const sap = Core.parseSap(Core.parseTsv(sapText));
   const wb = XLSX.readFile(POS_FILE);
   const pos = Core.parsePos(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: '' }));
-  const m = Core.buildMaster(sap, pos, {}, { countDate: '2026-11-04', sapFileDate: '2026-11-04', posFileDate: '2026-11-04' });
+  const m = Core.buildMaster(sap, pos, {}, { projectId: '2026Q4', countDate: '2026-11-04', sapFileDate: '2026-11-04', posFileDate: '2026-11-04' });
   const ck = id => m.checks.find(c => c.id === id);
   console.log('    สรุป:', JSON.stringify(m.stats));
   console.log('    สถานะ:', JSON.stringify(m.counts));

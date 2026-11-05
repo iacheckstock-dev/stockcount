@@ -54,7 +54,9 @@ var CONFIG_DEFAULTS = [
   ['MASTER_APPROVED_HASH', '', 'checksum ของ Device_Master ที่อนุมัติ'],
   ['MASTER_APPROVED_VERSION', 0, 'เลขครั้งที่อนุมัติ'],
   ['MASTER_APPROVED_AT', '', ''], ['MASTER_APPROVED_BY', '', ''],
-  ['MASTER_APPROVED_COUNT', '', 'จำนวนบาร์โค้ดที่ส่งลงเครื่อง']
+  ['MASTER_APPROVED_COUNT', '', 'จำนวนบาร์โค้ดที่ส่งลงเครื่อง'],
+  ['MASTER_APPROVED_PROJECT', '', 'รอบนับที่อนุมัติ Master'],
+  ['MASTER_APPROVED_ACK', '', 'คำเตือนที่รับทราบแล้ว (คั่นด้วย ,)']
 ];
 
 // ---------- เมนูและหน้า Admin ----------
@@ -214,7 +216,7 @@ function computeMaster_() {
   var sap = sapRows.length ? Core.parseSap(sapRows) : null;
   var pos = posRows.length ? Core.parsePos(posRows) : null;
   var m = Core.buildMaster(sap, pos, readDecisions_(), {
-    countDate: cfg.COUNT_DATE, sapFileDate: cfg.SAP_FILE_DATE, posFileDate: cfg.POS_FILE_DATE
+    projectId: cfg.PROJECT_ID, countDate: cfg.COUNT_DATE, sapFileDate: cfg.SAP_FILE_DATE, posFileDate: cfg.POS_FILE_DATE
   });
   m.deviceRows = Core.deviceMasterRows(m.rows);
   // checksum คิดจากคู่ บาร์โค้ด→Material เท่านั้น ชื่อสินค้าที่เปลี่ยนตอนอัปโหลด SAP ไม่ทำให้ต้องอนุมัติใหม่
@@ -263,11 +265,47 @@ function apiGetState() {
       approved: {
         hash: cfg.MASTER_APPROVED_HASH, version: cfg.MASTER_APPROVED_VERSION, at: cfg.MASTER_APPROVED_AT,
         by: cfg.MASTER_APPROVED_BY, count: cfg.MASTER_APPROVED_COUNT,
-        current: !!cfg.MASTER_APPROVED_HASH && cfg.MASTER_APPROVED_HASH === m.hash
-      }
+        project: cfg.MASTER_APPROVED_PROJECT, current: approvedCurrent_(cfg, m),
+        ackIds: ackList_(cfg)
+      },
+      // คำเตือนที่เกิดหลังอนุมัติ (เช่น อัปโหลด SAP ทีหลังแล้วพบรหัสที่ต้องเติมบาร์โค้ด) ยังไม่มีใครรับทราบ
+      newWarnings: approvedCurrent_(cfg, m) ? m.checks.filter(function (c) {
+        return c.level === 'WARN' && !c.pass && ackList_(cfg).indexOf(c.id) < 0;
+      }) : []
     },
     log: log.slice(1).slice(-50).reverse()
   };
+}
+
+function ackList_(cfg) {
+  return String(cfg.MASTER_APPROVED_ACK || '').split(',').filter(String);
+}
+
+/** อนุมัติแล้วและยังใช้ได้: คู่บาร์โค้ด→รหัสไม่เปลี่ยน และเป็นรอบเดียวกัน */
+function approvedCurrent_(cfg, m) {
+  return !!cfg.MASTER_APPROVED_HASH && cfg.MASTER_APPROVED_HASH === m.hash && cfg.MASTER_APPROVED_PROJECT === cfg.PROJECT_ID;
+}
+
+/** รับทราบคำเตือนที่เกิดหลังอนุมัติ (ไม่เปลี่ยน Master ที่อนุมัติ) */
+function apiAckWarnings(ids) {
+  return withLock_(function () {
+    var m = computeMaster_();
+    var cfg = m.cfg;
+    if (!approvedCurrent_(cfg, m)) throw new Error('Master ยังไม่ได้อนุมัติหรือมีการเปลี่ยนแปลง ให้อนุมัติใหม่แทน');
+    var open = m.checks.filter(function (c) { return c.level === 'WARN' && !c.pass; });
+    ids = (ids || []).filter(function (id) { return open.some(function (c) { return c.id === id; }); });
+    if (!ids.length) throw new Error('ไม่มีคำเตือนที่เลือก');
+    var acked = ackList_(cfg);
+    ids.forEach(function (id) { if (acked.indexOf(id) < 0) acked.push(id); });
+    setConfig_({ MASTER_APPROVED_ACK: acked.join(',') });
+    var t = now_(), by = who_();
+    var sh = SpreadsheetApp.getActive().getSheetByName('Master_Check');
+    open.filter(function (c) { return ids.indexOf(c.id) >= 0; }).forEach(function (c) {
+      sh.appendRow([t, 'ACK หลังอนุมัติ v' + cfg.MASTER_APPROVED_VERSION, m.hash, c.level, c.title, c.count, 'รับทราบ', c.note, by]);
+    });
+    logAdmin_('ACK_WARNING', 'v' + cfg.MASTER_APPROVED_VERSION, ids.join(', '));
+    return apiGetState();
+  });
 }
 
 function apiGetCompare() {
@@ -373,7 +411,8 @@ function apiApprove(seenHash, ackIds) {
     var version = (parseInt(cfg.MASTER_APPROVED_VERSION, 10) || 0) + 1;
     setConfig_({
       MASTER_APPROVED_HASH: m.hash, MASTER_APPROVED_VERSION: version, MASTER_APPROVED_AT: now_(),
-      MASTER_APPROVED_BY: who_(), MASTER_APPROVED_COUNT: m.deviceRows.length
+      MASTER_APPROVED_BY: who_(), MASTER_APPROVED_COUNT: m.deviceRows.length,
+      MASTER_APPROVED_PROJECT: cfg.PROJECT_ID, MASTER_APPROVED_ACK: warns.join(',')
     });
     var sh = SpreadsheetApp.getActive().getSheetByName('Master_Check');
     sh.appendRow([now_(), 'APPROVE v' + version, m.hash, '', 'อนุมัติ Master', m.deviceRows.length, 'อนุมัติ',
@@ -387,7 +426,7 @@ function apiApprove(seenHash, ackIds) {
 
 var RESET_CONFIG_KEYS = ['PROJECT_ID', 'COUNT_DATE', 'SAP_FILE_NAME', 'SAP_FILE_DATE', 'SAP_UPLOADED_AT', 'SAP_UPLOADED_BY',
   'SAP_D1_CONFIRMED', 'POS_FILE_NAME', 'POS_FILE_DATE', 'POS_UPLOADED_AT', 'POS_UPLOADED_BY', 'MASTER_APPROVED_HASH',
-  'MASTER_APPROVED_AT', 'MASTER_APPROVED_BY', 'MASTER_APPROVED_COUNT'];
+  'MASTER_APPROVED_AT', 'MASTER_APPROVED_BY', 'MASTER_APPROVED_COUNT', 'MASTER_APPROVED_PROJECT', 'MASTER_APPROVED_ACK'];
 
 function resetRoundMenu() {
   var ui = SpreadsheetApp.getUi();

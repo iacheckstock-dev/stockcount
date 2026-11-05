@@ -426,7 +426,9 @@ var Core = (function () {
     function chk(id, level, title, count, items, note) {
       checks.push({ id: id, level: level, title: title, count: count, pass: count === 0, items: (items || []).slice(0, 200), note: note || '' });
     }
-    chk('POS_LOADED', 'BLOCK', 'มีไฟล์ POS (แหล่งบาร์โค้ด)', hasPos ? 0 : 1, [], hasPos ? pos.rowCount + ' แถว' : 'ยังไม่ได้อัปโหลด POS');
+    chk('ROUND_OPEN', 'BLOCK', meta.projectId ? 'รอบนับ ' + meta.projectId : 'ยังไม่เปิดรอบนับ', meta.projectId ? 0 : 1, [],
+      meta.projectId ? 'วันนับ ' + (meta.countDate || '-') : 'Master ต้องผูกกับรอบนับ เปิดรอบก่อนอนุมัติ');
+    chk('POS_LOADED', 'BLOCK', hasPos ? 'ไฟล์ POS (แหล่งบาร์โค้ด)' : 'ยังไม่มีไฟล์ POS', hasPos ? 0 : 1, [], hasPos ? pos.rowCount + ' แถว' : 'อัปโหลด POS ในแท็บนำเข้าไฟล์');
     chk('POS_DUP', 'BLOCK', 'Item_No ซ้ำใน POS', hasPos ? pos.duplicates.length : 0, hasPos ? pos.duplicates : []);
     chk('CONFLICT', 'BLOCK', 'บาร์โค้ดขัดแย้งที่ยังไม่ตัดสิน', pendingConflicts.length,
       pendingConflicts.map(function (c) { return c.detail; }));

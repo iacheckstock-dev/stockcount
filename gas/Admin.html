@@ -199,7 +199,7 @@ function render(s) {
     ['ยอด SAP (ชิ้น)', s.master.hasSap ? fmt(st.sapQtyTotal) : '-'], ['ยอด POS (ชิ้น)', fmt(st.posQtyTotal)],
     ['มูลค่าตามบัญชี', s.master.hasSap ? fmt(st.sapValueTotal) + ' บาท' : '-'], ['สถานะพิเศษ IT/QI/BL', fmt(st.specialStatus) + ' รหัส']
   ], true);
-  renderApprove(s.master);
+  renderApprove(s.master, s);
   renderChecks(s.master.checks);
   renderConflicts(s.master);
   var b = $('confBadge'); b.textContent = s.master.pendingConflicts; b.style.display = s.master.pendingConflicts ? '' : 'none';
@@ -211,7 +211,7 @@ function kv(pairs, raw) { return pairs.map(function (p) { return '<div>' + esc(p
 function prevDay(d) { var x = new Date(d + 'T00:00:00Z'); x.setUTCDate(x.getUTCDate() - 1); return x.toISOString().slice(0, 10); }
 function defaultPid() { var d = new Date(); return d.getFullYear() + 'Q' + (Math.floor(d.getMonth() / 3) + 1); }
 
-function renderApprove(m) {
+function renderApprove(m, s) {
   var a = m.approved, h = '';
   if (a.hash) {
     h += '<p>' + (a.current ? '<span class="pill ok">อนุมัติแล้ว ตรงกับข้อมูลปัจจุบัน</span>' : '<span class="pill warn">ข้อมูลเปลี่ยนหลังอนุมัติ ต้องอนุมัติใหม่ก่อนเครื่องโหลด</span>') +
@@ -219,7 +219,26 @@ function renderApprove(m) {
   } else {
     h += '<p><span class="pill warn">ยังไม่เคยอนุมัติ</span></p>';
   }
-  if (a.current) { $('approveBox').innerHTML = h; return; }
+  if (a.current) {
+    if (m.newWarnings && m.newWarnings.length) {
+      h += '<div class="card" style="background:var(--warnbg);border-color:#ecd3a5"><b>มีคำเตือนใหม่หลังอนุมัติ</b> <span class="muted">(Master ที่อนุมัติไม่เปลี่ยน แต่ควรรับทราบไว้)</span>' +
+        m.newWarnings.map(function (c) {
+          return '<label style="display:block;margin:4px 0"><input type="checkbox" class="nack" value="' + c.id + '"> ' + esc(c.title) + ' <b>' + c.count + '</b>' +
+            (c.note ? ' <span class="muted">— ' + esc(c.note) + '</span>' : '') + '</label>';
+        }).join('') + '<div class="row"><button class="btn sec" onclick="ackNew()">รับทราบที่เลือก</button></div></div>';
+    }
+    m.checks.filter(function (c) { return c.level === 'INFO' && !c.pass; }).forEach(function (c) {
+      h += '<p><span class="pill info">' + esc(c.title) + '</span> <span class="muted">' + esc(c.note) + '</span></p>';
+    });
+    $('approveBox').innerHTML = h; return;
+  }
+  // ยังไม่เริ่มใส่ข้อมูล: บอกขั้นถัดไปแทนข้อความ "อนุมัติไม่ได้"
+  if (!s.round.projectId || !m.hasPos) {
+    h += '<p><span class="pill info">ขั้นถัดไป</span> ' + (!s.round.projectId
+      ? 'เปิดรอบนับ: กรอกรหัสรอบและวันนับในกล่อง "รอบนับ" แล้วกด เปิด/แก้รอบ'
+      : 'อัปโหลดไฟล์ POS ในแท็บ "นำเข้าไฟล์" (SAP อัปโหลดทีหลังได้)') + '</p>';
+    $('approveBox').innerHTML = h; return;
+  }
   var blocks = m.checks.filter(function (c) { return c.level === 'BLOCK' && !c.pass; });
   var warns = m.checks.filter(function (c) { return c.level === 'WARN' && !c.pass; });
   m.checks.filter(function (c) { return c.level === 'INFO' && !c.pass; }).forEach(function (c) {
@@ -243,6 +262,11 @@ function ackChanged() {
   var all = document.querySelectorAll('.ack'), ok = true;
   all.forEach(function (x) { if (!x.checked) ok = false; });
   $('approveBtn').disabled = !ok;
+}
+function ackNew() {
+  var ids = []; document.querySelectorAll('.nack').forEach(function (x) { if (x.checked) ids.push(x.value); });
+  if (!ids.length) { toast('เลือกคำเตือนที่จะรับทราบก่อน', true); return; }
+  call('apiAckWarnings', [ids], function (s) { setState(s); toast('บันทึกการรับทราบแล้ว'); });
 }
 function approve() {
   var ids = []; document.querySelectorAll('.ack').forEach(function (x) { if (x.checked) ids.push(x.value); });
