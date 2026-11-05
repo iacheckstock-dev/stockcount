@@ -36,6 +36,9 @@
    - สิทธิ์ที่ขอ: แก้ไข Google Sheets และสร้างไฟล์ใน Google Drive (เก็บสำเนาไฟล์ที่นำเข้า)
 4. รอจนบรรทัดล่างขึ้น "การดำเนินการเสร็จสมบูรณ์" แล้วกลับไปที่แท็บ Sheets
 
+> หรือรีโหลดหน้า Sheets แล้วกดเมนู **ระบบตรวจนับ → ตั้งค่าชีต (ครั้งแรก / ซ่อมชีตที่หาย)** ได้ผลเหมือนกัน
+> ต้องทำเองครั้งแรกครั้งเดียว เพราะ Google ต้องให้เจ้าของบัญชีกดอนุญาตสิทธิ์ก่อน ระบบสร้างให้อัตโนมัติไม่ได้
+
 ผลที่ควรเห็น: มีชีต 16 ชีต (Config, Staff, Devices, Locations, SAP_Snapshot, POS_Snapshot, Barcode_Map, Map_Decisions,
 SAP_POS_Compare, Master_Check, Device_Master, Count_Log, Import_Files, Dash_Data, Count_History, Admin_Log)
 และใน Google Drive มีโฟลเดอร์ `StockCount_Master_Files`
