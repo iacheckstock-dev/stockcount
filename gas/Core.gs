@@ -430,8 +430,9 @@ var Core = (function () {
     chk('POS_DUP', 'BLOCK', 'Item_No ซ้ำใน POS', hasPos ? pos.duplicates.length : 0, hasPos ? pos.duplicates : []);
     chk('CONFLICT', 'BLOCK', 'บาร์โค้ดขัดแย้งที่ยังไม่ตัดสิน', pendingConflicts.length,
       pendingConflicts.map(function (c) { return c.detail; }));
-    chk('SAP_LOADED', 'WARN', 'มียอด SAP แล้ว', hasSap ? 0 : 1, [],
-      hasSap ? sap.rowCount + ' แถว, Plant ' + sap.plants.join('/') : 'ยังไม่มี SAP ใช้ยอด POS เป็นยอดชั่วคราว');
+    // ไม่มี SAP ไม่กระทบรายการบาร์โค้ดที่ส่งลงเครื่อง จึงเป็นข้อมูลแจ้ง (INFO) ไม่ต้องกดรับทราบตอนอนุมัติ
+    chk('SAP_LOADED', 'INFO', hasSap ? 'ยอด SAP' : 'ยังไม่มียอด SAP', hasSap ? 0 : 1, [],
+      hasSap ? sap.rowCount + ' แถว, Plant ' + sap.plants.join('/') : 'ใช้ยอด POS เป็นยอดชั่วคราว อัปโหลด SAP หลังบัญชียืนยันยอด D−1 ได้ ไม่ต้องอนุมัติใหม่');
     chk('POS_FILL', 'WARN', 'SAP ไม่มีบาร์โค้ด (เติมจาก POS)', filled.length, filled.map(function (m) {
       var p = P[m]; return m + ' → ' + (p ? p.barcode : '');
     }), 'ใส่ในตารางข้อยกเว้นเพื่อแจ้งทีม SAP');

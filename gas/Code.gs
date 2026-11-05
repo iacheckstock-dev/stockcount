@@ -236,7 +236,7 @@ function persistMaster_(m, reason) {
   var sh = SpreadsheetApp.getActive().getSheetByName('Master_Check');
   var t = now_(), by = who_();
   var rows = m.checks.map(function (c) {
-    return [t, 'CHECK: ' + reason, m.hash, c.level, c.title, c.count, c.pass ? 'ผ่าน' : (c.level === 'BLOCK' ? 'บล็อก' : 'เตือน'), c.note, by];
+    return [t, 'CHECK: ' + reason, m.hash, c.level, c.title, c.count, c.pass ? 'ผ่าน' : ({ BLOCK: 'บล็อก', WARN: 'เตือน', INFO: 'แจ้งให้ทราบ' }[c.level] || c.level), c.note, by];
   });
   sh.getRange(sh.getLastRow() + 1, 1, rows.length, rows[0].length).setValues(rows);
 }

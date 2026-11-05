@@ -222,6 +222,9 @@ function renderApprove(m) {
   if (a.current) { $('approveBox').innerHTML = h; return; }
   var blocks = m.checks.filter(function (c) { return c.level === 'BLOCK' && !c.pass; });
   var warns = m.checks.filter(function (c) { return c.level === 'WARN' && !c.pass; });
+  m.checks.filter(function (c) { return c.level === 'INFO' && !c.pass; }).forEach(function (c) {
+    h += '<p><span class="pill info">' + esc(c.title) + '</span> <span class="muted">' + esc(c.note) + '</span></p>';
+  });
   if (blocks.length) {
     h += '<p><span class="pill bad">อนุมัติไม่ได้</span> ต้องแก้ก่อน: ' + blocks.map(function (c) { return esc(c.title) + ' (' + c.count + ')'; }).join(', ') + '</p>';
   } else {
@@ -250,10 +253,10 @@ function approve() {
 function renderChecks(checks) {
   $('checkTbl').innerHTML = '<tr><th>รายการตรวจ</th><th>ระดับ</th><th class="n">จำนวน</th><th>ผล</th><th>หมายเหตุ / รายการ</th></tr>' +
     checks.map(function (c) {
-      var res = c.pass ? '<span class="pill ok">ผ่าน</span>' : c.level === 'BLOCK' ? '<span class="pill bad">บล็อก</span>' : '<span class="pill warn">เตือน</span>';
+      var res = c.pass ? '<span class="pill ok">ผ่าน</span>' : c.level === 'BLOCK' ? '<span class="pill bad">บล็อก</span>' : c.level === 'INFO' ? '<span class="pill info">แจ้งให้ทราบ</span>' : '<span class="pill warn">เตือน</span>';
       var items = c.items && c.items.length && !c.pass ? '<details><summary>ดูรายการ (' + c.items.length + (c.count > c.items.length ? ' จาก ' + c.count : '') + ')</summary><div class="mono">' +
         c.items.map(esc).join('<br>') + '</div></details>' : '';
-      return '<tr><td>' + esc(c.title) + '</td><td>' + (c.level === 'BLOCK' ? 'บล็อก' : 'เตือน') + '</td><td class="n">' + c.count + '</td><td>' + res + '</td><td>' + esc(c.note) + items + '</td></tr>';
+      return '<tr><td>' + esc(c.title) + '</td><td>' + ({ BLOCK: 'บล็อก', WARN: 'เตือน', INFO: 'ข้อมูล' }[c.level] || c.level) + '</td><td class="n">' + c.count + '</td><td>' + res + '</td><td>' + esc(c.note) + items + '</td></tr>';
     }).join('');
 }
 
