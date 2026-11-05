@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2.0.1';
+  var APP_VERSION = '2.0.2';
   var BATCH = 20;
   var SYNC_EVERY = 2500;
   var STALE_MIN = 30;
@@ -746,7 +746,7 @@
         var boot = S.boot;
         // 1 เวอร์ชันแอป
         if (!S.latestVersion) add('แอปเป็นเวอร์ชันล่าสุด', 'WARN', 'ตรวจไม่ได้ (ออฟไลน์) ใช้เวอร์ชัน ' + APP_VERSION);
-        else if (S.latestVersion !== APP_VERSION) add('แอปเป็นเวอร์ชันล่าสุด', 'FAIL', 'มีเวอร์ชัน ' + S.latestVersion + ' — ปิดแอปแล้วเปิดใหม่ (ต่อเน็ต) เพื่ออัปเดต');
+        else if (S.latestVersion !== APP_VERSION) add('แอปเป็นเวอร์ชันล่าสุด', 'FAIL', 'มีเวอร์ชัน ' + S.latestVersion + ' (เครื่องนี้ ' + APP_VERSION + ') — กดปุ่ม "อัปเดตแอปตอนนี้" ด้านล่าง');
         else add('แอปเป็นเวอร์ชันล่าสุด', 'OK', APP_VERSION);
         // 2 จับคู่
         add('เครื่องผูกรหัสเครื่องแล้ว', S.cfg.token ? 'OK' : 'FAIL', S.cfg.deviceId || '');
@@ -808,7 +808,18 @@
       return '<li><span class="r ' + i.result + '">' + sym[i.result] + '</span><span class="t">' + esc(i.title) + (i.hint ? '<div class="h">' + esc(i.hint) + '</div>' : '') + '</span></li>';
     }).join('');
     $('btnStart').classList.toggle('hidden', !pass);
+    $('btnUpdate').classList.toggle('hidden', !(S.latestVersion && S.latestVersion !== APP_VERSION));
   }
+
+  /** อัปเดตแอป: ล้างสำเนาหน้าแอป (ไม่แตะข้อมูลการนับใน IndexedDB) แล้วโหลดใหม่จากเซิร์ฟเวอร์ */
+  function updateApp() {
+    var jobs = [];
+    if (window.caches) jobs.push(caches.keys().then(function (ks) { return Promise.all(ks.map(function (k) { return caches.delete(k); })); }));
+    if (navigator.serviceWorker) jobs.push(navigator.serviceWorker.getRegistrations().then(function (rs) { return Promise.all(rs.map(function (r) { return r.update().catch(function () {}); })); }));
+    toast('กำลังอัปเดตแอป…');
+    Promise.all(jobs).catch(function () {}).then(function () { location.replace('./?v=' + Date.now()); });
+  }
+  $('btnUpdate').onclick = updateApp;
 
   $('btnSound').onclick = function () { SOUND.ok(); setTimeout(SOUND.warn, 600); setTimeout(SOUND.bad, 1400); };
   $('ckSound').onchange = $('ckPin').onchange = function () { this.blur(); runChecks(true); };

@@ -129,6 +129,16 @@ with sync_playwright() as p:
     shot('10-reload')
     check(not errors, 'ไม่มี JavaScript error: ' + '; '.join(errors))
 
+    print('อัปเดตแอป')
+    get('/debug/version?v=9.9.9')
+    pg.click('#btnStatus'); pg.click('#btnRecheck'); pg.wait_for_selector('#btnUpdate:not(.hidden)', timeout=15000)
+    check('9.9.9' in pg.inner_text('#readyList'), 'มีเวอร์ชันใหม่ → ขึ้น ✗ พร้อมปุ่ม "อัปเดตแอปตอนนี้"')
+    shot('11-update')
+    pg.click('#btnUpdate'); pg.wait_for_load_state('load'); pg.wait_for_timeout(1500)
+    get('/debug/version?v=2.0.2')
+    pg.wait_for_selector('.view.on', timeout=10000)
+    check('สแกน 33' in pg.inner_text('#syncText'), 'หลังกดอัปเดต แอปโหลดใหม่ ข้อมูลในเครื่องยังครบ 33 รายการ')
+
     print('เครื่องถูกล้างข้อมูล Chrome แล้วจับคู่ใหม่')
     ctx2 = b.new_context(viewport={'width': 480, 'height': 860})
     ctx2.add_init_script("navigator.storage.persist = () => Promise.resolve(true); navigator.storage.persisted = () => Promise.resolve(true);")

@@ -1,9 +1,16 @@
-/* Service worker: เก็บหน้าแอปไว้ในเครื่อง เปิดได้แม้ไม่มีเน็ต (ข้อมูลการนับอยู่ใน IndexedDB ไม่ใช่ที่นี่) */
-var CACHE = 'stockcount-2.0.1';
+/* Service worker
+ * - หน้าแอป (HTML/JS/CSS): ดึงจากเน็ตก่อนเสมอ (ตรวจกับเซิร์ฟเวอร์ด้วย ETag) แล้วเก็บสำเนาไว้ ถ้าออฟไลน์ใช้สำเนาในเครื่อง
+ *   → อัปเดตแอปได้ทันทีที่เปิดใหม่ ไม่ค้างเวอร์ชันเก่าจากแคชของ GitHub Pages
+ * - ข้อมูลการนับอยู่ใน IndexedDB ไม่ใช่ที่นี่ ล้าง cache นี้ได้โดยข้อมูลไม่หาย
+ */
+var CACHE = 'stockcount-2.0.2';
 var FILES = ['./', 'index.html', 'app.js', 'db.js', 'style.css', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', function (e) {
-  e.waitUntil(caches.open(CACHE).then(function (c) { return c.addAll(FILES); }).then(function () { return self.skipWaiting(); }));
+  e.waitUntil(caches.open(CACHE).then(function (c) {
+    // cache: 'reload' = ไม่เอาไฟล์จากแคช HTTP ของเบราว์เซอร์ ได้ไฟล์ล่าสุดจากเซิร์ฟเวอร์จริง
+    return Promise.all(FILES.map(function (f) { return fetch(new Request(f, { cache: 'reload' })).then(function (r) { if (r.ok) return c.put(f, r); }); }));
+  }).then(function () { return self.skipWaiting(); }));
 });
 
 self.addEventListener('activate', function (e) {
@@ -13,11 +20,17 @@ self.addEventListener('activate', function (e) {
 });
 
 self.addEventListener('fetch', function (e) {
-  var url = new URL(e.request.url);
-  if (e.request.method !== 'GET' || url.origin !== self.location.origin) return;     // API ไป Google ตรง ไม่ผ่าน cache
-  if (url.pathname.endsWith('config.json')) {                                          // config: เอาจากเน็ตก่อน
-    e.respondWith(fetch(e.request).catch(function () { return caches.match(e.request, { ignoreSearch: true }); }));
-    return;
-  }
-  e.respondWith(caches.match(e.request, { ignoreSearch: true }).then(function (hit) { return hit || fetch(e.request); }));
+  var req = e.request, url = new URL(req.url);
+  if (req.method !== 'GET' || url.origin !== self.location.origin) return;   // API ไป Google ตรง
+  e.respondWith(
+    fetch(req, { cache: 'no-cache' }).then(function (res) {
+      if (res.ok && !url.pathname.endsWith('config.json')) {
+        var copy = res.clone();
+        caches.open(CACHE).then(function (c) { c.put(req, copy); });
+      }
+      return res;
+    }).catch(function () {
+      return caches.match(req, { ignoreSearch: true }).then(function (hit) { return hit || caches.match('index.html'); });
+    })
+  );
 });
