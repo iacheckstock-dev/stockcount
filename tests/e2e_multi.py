@@ -1,0 +1,176 @@
+"""
+E2E สองเครื่องนับ Location เดียวกัน (v2.2.0) — ต้องรัน tests/mock-server.js ใหม่ (ข้อมูลสะอาด) ที่ PORT
+python3 tests/e2e_multi.py
+นาย ค (TC21-02) = ผู้ดูแล D80 · นาย ก (TC21-03) = ผู้ช่วย
+"""
+import json, os, urllib.request
+from playwright.sync_api import sync_playwright
+
+PORT = int(os.environ.get('PORT', 8787))
+BASE = f'http://localhost:{PORT}'
+SHOT = os.environ.get('SHOTS', '/tmp/e2e')
+CHROME = os.environ.get('CHROME', '/usr/bin/google-chrome')
+ok = 0
+def check(cond, msg):
+    global ok
+    if not cond: raise AssertionError(msg)
+    ok += 1; print('  ✓', msg)
+def get(path):
+    return json.loads(urllib.request.urlopen(BASE + path).read())
+def loc(name):
+    return next((l for l in get('/debug/locations')['locations'] if l['Location'] == name), {})
+
+BC1, MAT1 = '8858684826179', 'A112101UT0450XK'
+BC2 = '8858153867481'
+
+with sync_playwright() as p:
+    b = p.chromium.launch(executable_path=CHROME)
+    errors = []
+
+    def device(dev, emp):
+        ctx = b.new_context(viewport={'width': 360, 'height': 568}, device_scale_factor=2)
+        ctx.add_init_script("navigator.storage.persist = () => Promise.resolve(true); navigator.storage.persisted = () => Promise.resolve(true);")
+        pg = ctx.new_page()
+        pg.on('pageerror', lambda e: errors.append(dev + ': ' + str(e)))
+        pg.goto(BASE + '/app/'); pg.wait_for_selector('#v-setup.on')
+        pg.fill('#setDevice', dev); pg.fill('#setCode', get('/debug/paircode?d=' + dev)['pairCode']); pg.click('#btnPair')
+        pg.wait_for_function("/พร้อม/.test(document.querySelector('#readyHead').textContent)", timeout=20000)
+        for c in ('#ckSound', '#ckPin', '#ckRotate'): pg.check(c); pg.wait_for_timeout(250)
+        scan(pg, 'EMP:' + emp)
+        pg.wait_for_function("/พร้อมนับ ✓/.test(document.querySelector('#readyHead').textContent)", timeout=10000)
+        pg.click('#btnStart'); pg.wait_for_selector('#v-count.on')
+        return pg
+
+    def scan(pg, code):
+        pg.locator('#topbar').click(position={'x': 200, 'y': 10})
+        pg.keyboard.type(code, delay=5); pg.keyboard.press('Enter'); pg.wait_for_timeout(300)
+
+    def synced(pg):
+        pg.wait_for_function("/ค้าง 0/.test(document.querySelector('#syncText').textContent) && window.__SC.S.events.length === 0", timeout=20000)
+
+    def modal(pg, timeout=6000):
+        pg.wait_for_selector('#modal:not(.hidden)', timeout=timeout)
+        return pg.inner_text('#mTitle') + ' | ' + pg.inner_text('#mBody')
+
+    def yes(pg): pg.click('#mYes'); pg.wait_for_timeout(300)
+    def no(pg): pg.click('#mNo'); pg.wait_for_timeout(300)
+
+    print('ตั้งค่า 2 เครื่อง')
+    C = device('TC21-02', 'EMP-NU')     # ผู้ดูแล
+    K = device('TC21-03', 'EMP-AOY')    # ผู้ช่วย
+    check(True, 'TC21-02 (นุ่น) และ TC21-03 (อ้อย) พร้อมนับ')
+
+    print('เปิด / เข้าร่วม')
+    scan(C, 'LOC:D80'); C.wait_for_timeout(1500)
+    check(C.is_hidden('#modal'), 'ผู้ดูแลเปิด D80: ไม่มีคำถามใด ๆ (เช็กเบื้องหลังเงียบ)')
+    scan(C, BC1); scan(C, BC1); synced(C)
+    scan(K, 'LOC:D80')
+    t = modal(K)
+    check('ดูแลโดย นุ่น' in t and 'ผู้ช่วย' in t, 'เครื่องที่สองยิง D80 → ถามเข้าร่วม: ' + t.replace('\n', ' '))
+    K.screenshot(path=f'{SHOT}/m01-join-prompt.png')
+    yes(K)
+    check(K.inner_text('#tbRole') == 'ผู้ช่วย' and 'ส่ง' in K.inner_text('#btnClose'), 'ผู้ช่วย: แถบบนขึ้น "ผู้ช่วย" ปุ่มขวาล่างเป็น "ส่งงาน"')
+    for _ in range(3): scan(K, BC1)
+    synced(K)
+    K.click('#btnLoc'); K.wait_for_selector('#v-loc.on'); K.wait_for_timeout(1200)
+    check(K.is_hidden('#btnLocClear') and 'ดูยอดได้อย่างเดียว' in K.inner_text('#locEdited'), 'ผู้ช่วยดู Location ได้ แก้/ล้างไม่ได้')
+    check(K.inner_text('#locSum').startswith('5 ชิ้น'), 'ผู้ช่วยเห็นยอดรวมทุกเครื่อง 5 (ของฉัน 3 + ผู้ดูแล 2)')
+    K.locator('#locItems li').first.click(); K.wait_for_timeout(200)
+    check('แก้ยอดไม่ได้' in K.inner_text('#toast'), 'ผู้ช่วยแตะ SKU → แจ้งให้ผู้ดูแลแก้')
+    K.click('#btnLocBack')
+
+    print('ผู้ดูแลรอผู้ช่วยส่งงาน')
+    C.click('#btnLoc'); C.wait_for_selector('#v-loc.on'); C.wait_for_timeout(1500)
+    mem = C.inner_text('#locMembers')
+    check('ผู้ช่วย อ้อย (TC21-03)' in mem and 'กำลังนับ' in mem, 'ผู้ดูแลเห็นผู้ช่วยและสถานะ: ' + mem.replace('\n', ' | '))
+    check(C.inner_text('#locSum').startswith('5 ชิ้น') and 'ส่งงาน' in C.inner_text('#locEdited'), 'ยอดรวม 5 · ' + C.inner_text('#locEdited'))
+    C.screenshot(path=f'{SHOT}/m02-owner-waiting.png')
+    C.locator('#locItems li').first.click()
+    t = modal(C)
+    check('ได้เมื่อผู้ช่วยส่งงานครบ' in t and 'อ้อย' in t, 'ผู้ดูแลแก้ยอดไม่ได้ระหว่างผู้ช่วยยังนับ: ' + t.replace('\n', ' '))
+    yes(C)
+    C.click('#btnLocBack'); C.wait_for_timeout(300)
+    C.wait_for_function("document.querySelector('#locTotal').textContent === '5'", timeout=5000)
+    check('ของฉัน 2' in C.inner_text('#locSku'), 'หน้านับผู้ดูแล: ยอดรวมทุกเครื่อง 5 · ' + C.inner_text('#locSku'))
+    C.screenshot(path=f'{SHOT}/m03-owner-count.png')
+    C.click('#btnClose'); t = modal(C)
+    check('ปิด Location ได้เมื่อ' in t, 'ปิด Location ไม่ได้จนกว่าผู้ช่วยส่งงาน')
+    yes(C)
+
+    print('ผู้ช่วยไปช่วยที่อื่น (ลืมกดส่งงาน) แล้วกลับมา')
+    scan(K, 'LOC:D85'); K.wait_for_timeout(1500)
+    check('ส่งงาน D80 ให้อัตโนมัติแล้ว' in K.inner_text('#card'), 'ยิงป้าย D85 → ส่งงาน D80 อัตโนมัติ: ' + K.inner_text('#card').replace('\n', ' | '))
+    check(K.is_hidden('#modal') and K.inner_text('#tbRole') == '', 'D85 ไม่มีใครเปิด → เป็นผู้ดูแลเอง ไม่มีคำถาม')
+    scan(K, BC2); synced(K)
+    C.click('#btnLoc'); C.wait_for_selector('#v-loc.on'); C.wait_for_timeout(1500)
+    check('ส่งงานแล้ว ✓' in C.inner_text('#locMembers'), 'ผู้ดูแลเห็น อ้อย ส่งงานแล้ว ✓')
+    C.locator('#locItems li', has_text='UT0450XK').click(); modal(C)
+    check('ของฉัน 2 + เครื่องอื่น 3 = 5' in C.inner_text('#mBody'), 'แก้ยอดจากยอดรวมทุกเครื่อง (2 + 3 = 5)')
+    C.fill('#mInput', '4'); yes(C); C.wait_for_timeout(300)
+    check(C.inner_text('#locSum').startswith('4 ชิ้น'), 'แก้เป็น 4 (ไม่ใช่หักจากยอดของเครื่องตัวเอง)')
+    C.click('#btnLocBack')
+
+    scan(K, 'LOC:D80'); t = modal(K)
+    check('กลับไปช่วย D80 อีกครั้ง' in t and 'ส่งงานไปแล้ว 3' in t and 'นุ่น (TC21-02)' in t, 'กลับไป D80 → ถามยืนยัน พร้อมยอดที่ส่งไปแล้ว: ' + t.replace('\n', ' '))
+    yes(K); K.wait_for_timeout(1500)
+    check(K.is_hidden('#modal') and K.inner_text('#tbRole') == 'ผู้ช่วย', 'กลับเป็นผู้ช่วย D80 (D85 พักไว้)')
+    scan(K, BC1); synced(K)
+    K.click('#btnClose'); t = modal(K)
+    check('ของฉัน' in t and '4' in t, 'กดส่งงาน: แสดงยอดสะสมของฉัน 4 (3 + 1)')
+    yes(K); t = modal(K)
+    check('D85' in t and 'พักไว้' in t, 'หลังส่งงาน เสนอกลับไปนับต่อ D85 (พักไว้)')
+    K.screenshot(path=f'{SHOT}/m04-offer-paused.png')
+    yes(K); K.wait_for_timeout(1500)
+    check(K.inner_text('#tbLoc') == 'D85', 'กลับไปที่ D85')
+    synced(K)
+
+    print('ผู้ดูแลปิด')
+    C.wait_for_timeout(500); C.click('#btnClose'); t = modal(C, 8000)
+    check('ปิด D80' in t and '5' in t and 'รวม 2 เครื่อง' in t, 'ผู้ช่วยส่งงานครบ → ปิดได้ ยอดรวม 5: ' + t.replace('\n', ' '))
+    yes(C); synced(C); C.wait_for_timeout(500)
+    l = loc('D80')
+    check(l['Status'] == 'ปิดแล้ว' and l['Flag'] == '', 'เซิร์ฟเวอร์: D80 ปิดแล้ว ไม่มีธงตรวจซ้ำ · ' + l['Members'])
+
+    print('ผู้ช่วยยิง Location ที่ปิดแล้ว (Control 10)')
+    scan(K, 'LOC:D80'); modal(K); yes(K)
+    t = modal(K)
+    check('D80 ปิดแล้ว' in t, 'ไม่รับการยิง ให้ผู้ดูแลเปิดแก้ไขก่อน: ' + t.replace('\n', ' '))
+    yes(K)
+    scan(K, BC1)
+    check('ยิงป้าย Location ก่อน' in K.inner_text('#card'), 'ยิงสินค้าต่อ → ไม่บันทึก (ไม่ได้อยู่ใน Location)')
+
+    print('Location ที่นับแล้ว / ไปที่ Location')
+    K.click('#btnMenu'); K.click('#menu button[data-m=locs]'); K.wait_for_selector('#v-locs.on'); K.wait_for_timeout(1500)
+    txt = K.inner_text('#locsList')
+    check('D80' in txt and 'ส่งงานแล้ว' in txt and 'มีเครื่องอื่นร่วมนับ 2 เครื่อง' in txt, 'รายการแสดง D80 ส่งงานแล้ว · มีเครื่องอื่นร่วมนับ')
+    check('D85' in txt and 'พักไว้' in txt, 'D85 พักไว้ (ยังไม่ปิด)')
+    K.screenshot(path=f'{SHOT}/m05-locs.png')
+    K.locator('#locsList li', has_text='D85').click(); K.wait_for_timeout(1500)
+    check(K.inner_text('#tbLoc') == 'D85' and 'กลับมานับต่อ D85' in K.inner_text('#card'), 'แตะ D85 → กลับไปนับต่อ')
+    K.click('#btnMenu'); K.click('#menu button[data-m=typeloc]'); K.fill('#mInput', 'd800'); yes(K)
+    t = modal(K)
+    check('D800 ยังไม่เคยมีในรอบนี้' in t, 'พิมพ์ชื่อที่ไม่เคยมี → ให้ยืนยัน กันพิมพ์ผิด')
+    no(K)
+    check(K.inner_text('#tbLoc') == 'D85', 'ยกเลิก → ยังอยู่ D85')
+
+    print('จำนวนหลักพัน / ยืนยันจำนวน')
+    for d in '1200': K.click(f'#keypad button:text("{d}")')
+    scan(K, BC1); t = modal(K)
+    check('ยืนยันจำนวน' in t and '1,200' in t, 'ป้อน 1,200 ชิ้น → ต้องยืนยัน (เกิน 150)')
+    yes(K)
+    K.evaluate(f"window.__SC.S.stock.set('{MAT1}', 123456)"); scan(K, BC1)
+    fit = K.evaluate("[...['skuCnt','skuStk']].map(id => { const e = document.getElementById(id); return [e.textContent, e.scrollWidth <= e.clientWidth + 1]; })")
+    check(fit[0][0] == '1,205' and fit[1][0] == '123,456' and all(x[1] for x in fit), 'ตัวเลขหลักพัน/แสน มีคั่นหลักและพอดีช่อง: ' + str(fit))
+    K.screenshot(path=f'{SHOT}/m06-big-numbers.png')
+    box = K.locator('#btnClose').bounding_box()
+    check(box['y'] + box['height'] <= 568, f"ปุ่มล่างยังอยู่ในจอ ({box['y'] + box['height']:.0f}/568)")
+    K.screenshot(path=f'{SHOT}/m06-big-numbers.png')
+    K.click('#btnLoc'); K.wait_for_selector('#v-loc.on'); K.wait_for_timeout(800)
+    K.locator('#locItems li', has_text='UT0450XK').click(); modal(K)
+    n0 = K.evaluate('window.__SC.S.entries.length')
+    K.keyboard.type(BC1, delay=5); K.keyboard.press('Enter'); K.wait_for_timeout(300)
+    check('ยาวผิดปกติ' in K.inner_text('#toast') and K.evaluate('window.__SC.S.entries.length') == n0, 'ยิงบาร์โค้ดเข้าช่องตัวเลข → ไม่บันทึก')
+
+    check(not errors, 'ไม่มี JavaScript error: ' + '; '.join(errors))
+    b.close()
+print(f'\nE2E หลายเครื่อง ผ่าน {ok} ข้อ')

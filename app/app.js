@@ -5,7 +5,10 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2.1.1';
+  var APP_VERSION = '2.2.0';
+  var QTY_CONFIRM = 150;      // จำนวนที่ป้อนเองเกินนี้ต้องยืนยันอีกครั้ง
+  var QTY_MAX_DIGITS = 5;     // ยาวกว่านี้ = น่าจะยิงบาร์โค้ดเข้าช่องจำนวน
+  var INFO_EVERY = 15000;     // ถามสถานะผู้ช่วย/ผู้ดูแลระหว่างนับร่วมกัน
   var BATCH = 20;
   var SYNC_EVERY = 2500;
   var STALE_MIN = 30;
@@ -15,7 +18,7 @@
     cfg: {}, boot: null, latestVersion: '', defaultApi: '',
     master: new Map(), masterList: [], masterHash: '', masterProject: '',
     projectId: '', entries: [], oldPending: [], events: [],
-    staff: null, loc: null, qty: '', closedLocs: [], locChecks: {},
+    staff: null, loc: null, qty: '', roles: {}, info: {}, myLocs: {}, knownNames: [], locChecks: {},
     serverVersion: '', online: null, syncing: false, lastSyncOk: 0, lastErr: '', serverOffset: null,
     readiness: null, dwOk: false, view: '', recountBanner: '', masterChanged: false, wakeLock: null,
     stock: new Map(), stockSource: '', stockVersion: '', lastSku: null, resumeMsg: '', resumeUntil: 0
@@ -147,7 +150,7 @@
 
   function saveState() {
     return Promise.all([
-      DB.set('staff', S.staff), DB.set('loc', S.loc), DB.set('closedLocs_' + S.projectId, S.closedLocs), DB.set('locChecks_' + S.projectId, S.locChecks)
+      DB.set('staff', S.staff), DB.set('loc', S.loc), DB.set('roles_' + S.projectId, S.roles), DB.set('locChecks_' + S.projectId, S.locChecks)
     ]);
   }
 
@@ -173,6 +176,56 @@
     items.forEach(function (it) { it.qty = Math.round(it.qty * 1000) / 1000; if (it.qty !== 0) sku++; });
     return { lines: lines, qty: Math.round(qty * 1000) / 1000, sku: sku, items: items };
   }
+
+  // ---------- ผู้ดูแล / ผู้ช่วย ----------
+  // S.roles[loc] = { role: OWNER|HELPER, state: COUNTING|PAUSED|SUBMITTED|CLOSED, owner } — เซิร์ฟเวอร์เป็นตัวตัดสิน เครื่องจำไว้ใช้ตอนออฟไลน์
+  // S.info[loc]  = ผล locInfo ล่าสุด (ผู้ช่วยแต่ละเครื่อง + ยอดของเครื่องอื่นต่อ SKU)
+  function roleOf(loc) { var r = S.roles[loc]; return r ? r.role : 'OWNER'; }
+  function isHelper(loc) { return roleOf(loc || S.loc) === 'HELPER'; }
+  function setRole(loc, obj) { S.roles[loc] = Object.assign({}, S.roles[loc] || {}, obj, { at: Date.now() }); }
+  function staffName(code) { var s = ((S.boot && S.boot.staff) || []).find(function (x) { return x.code === code; }); return s ? s.name : code || ''; }
+  function memberLabel(m) { return (m.name || staffName(m.staff) || m.device) + ' (' + m.device + ')'; }
+  function othersOf(loc) { var i = S.info[loc]; return i && i.others ? i.others : { items: [], qty: 0 }; }
+  function hasOthers(loc) { var i = S.info[loc]; return !!(i && i.members && i.members.some(function (m) { return m.device !== S.cfg.deviceId; })); }
+  /** ผู้ช่วยที่ยังไม่ส่งงาน หรือส่งงานแล้วแต่เซิร์ฟเวอร์ยังได้ข้อมูลไม่ครบ */
+  function waitingHelpers(loc) {
+    var i = S.info[loc];
+    if (!i || !i.members) return [];
+    return i.members.filter(function (m) { return m.role === 'HELPER' && m.device !== S.cfg.deviceId && !(m.state === 'SUBMITTED' && m.match === 'OK'); });
+  }
+  function waitText(m) {
+    return memberLabel(m) + ' · ' + (m.state === 'SUBMITTED' ? 'ส่งงานแล้ว (รอข้อมูล)' : 'กำลังนับ ' + fmt(m.qty) + ' ชิ้น') + (m.lastTime ? ' · ยิงล่าสุด ' + String(m.lastTime).slice(11, 16) : '');
+  }
+  /** ยอดรวมทุกเครื่องต่อ SKU = ของเครื่องนี้ (ในเครื่อง รวมที่ยังไม่ส่ง) + ของเครื่องอื่น (จากเซิร์ฟเวอร์) */
+  function combinedSummary(loc) {
+    var mine = locSummary(loc), oth = othersOf(loc);
+    var items = new Map(), qty = mine.qty;
+    mine.items.forEach(function (it, k) { items.set(k, Object.assign({}, it, { mine: it.qty, others: 0 })); });
+    oth.items.forEach(function (x) {
+      var k = x[0], it = items.get(k);
+      if (!it) { it = { key: k, material: x[1], barcode: x[2], qty: 0, mine: 0, others: 0, edits: 0, lines: 0 }; items.set(k, it); }
+      it.others = x[3]; it.qty = Math.round((it.mine + it.others) * 1000) / 1000;
+      if (!it.barcode && x[2]) it.barcode = x[2];
+      qty += x[3];
+    });
+    var sku = 0;
+    items.forEach(function (it) { if (it.qty !== 0) sku++; });
+    return { qty: Math.round(qty * 1000) / 1000, sku: sku, items: items, mine: mine, othersQty: oth.qty, multi: hasOthers(loc) };
+  }
+  /** ถามเซิร์ฟเวอร์ว่าใครอยู่ใน Location นี้ (ล้มเหลว/ออฟไลน์ = null) */
+  function fetchInfo(loc, ms) {
+    if (S.online === false || !S.cfg.token) return Promise.resolve(null);
+    return api('locInfo', { location: loc }, ms || 4000).then(function (r) {
+      S.info[loc] = r;
+      if (r.me) setRole(loc, { role: r.me.role, state: S.loc === loc && r.me.state !== 'CLOSED' ? 'COUNTING' : r.me.state, owner: r.owner ? r.owner.device : '', ownerLabel: r.owner ? memberLabel(r.owner) : '' });
+      if (S.view === 'count' || S.view === 'loc') render();
+      return r;
+    }, function () { return null; });
+  }
+  setInterval(function () {
+    if (!S.loc || S.online === false || S.syncing || !$('modal').classList.contains('hidden')) return;
+    if (S.view === 'loc' || (S.view === 'count' && (hasOthers(S.loc) || isHelper()))) fetchInfo(S.loc);
+  }, INFO_EVERY);
 
   function deviceTotal() { return Math.round(S.entries.reduce(function (a, e) { return a + e.qty; }, 0) * 1000) / 1000; }
   function pending() { return S.entries.filter(function (e) { return !e.synced && !e.rejected; }); }
@@ -215,7 +268,7 @@
       return {
         logId: S.cfg.deviceId + '-' + pad6(seq), seq: seq, projectId: S.projectId, deviceId: S.cfg.deviceId,
         staff: S.staff ? S.staff.code : '', location: f.location || S.loc || '', barcode: f.barcode || '', material: f.material || '',
-        qty: Number(f.qty), type: f.type, refId: f.refId || '', reason: f.reason || '', note: f.note || '',
+        qty: Number(f.qty), type: f.type, refId: f.refId || '', reason: f.reason || '', note: f.note || '', basis: f.basis,
         scanTime: stamp(), createdAt: Date.now(), synced: 0
       };
     }).then(function (e) {
@@ -225,14 +278,17 @@
     });
   }
 
-  function addEvent(type, loc) {
+  /** เหตุการณ์ Location: OPEN JOIN SUBMIT PAUSE CLOSE EDIT — แนบยอดของเครื่องนี้ใน Location ให้เซิร์ฟเวอร์ตรวจว่าได้รับครบ */
+  var lastAt = 0;
+  function addEvent(type, loc, extra) {
     var sum = locSummary(loc);
     var seqs = S.entries.map(function (e) { return e.seq; });
-    var ev = {
-      id: S.cfg.deviceId + '-E' + Date.now() + Math.floor(Math.random() * 1000), type: type, projectId: S.projectId, location: loc,
+    var at = lastAt = Math.max(Date.now(), lastAt + 1);
+    var ev = Object.assign({
+      id: S.cfg.deviceId + '-E' + at, type: type, projectId: S.projectId, location: loc, at: at,
       staff: S.staff ? S.staff.code : '', time: stamp(), lines: sum.lines, qty: sum.qty,
       fromSeq: seqs.length ? Math.min.apply(null, seqs) : 0, upToSeq: seqs.length ? Math.max.apply(null, seqs) : 0, nextTry: 0
-    };
+    }, extra || {});
     S.events.push(ev);
     return DB.putMany('events', [ev]).then(function () { scheduleSync(600); });
   }
@@ -248,16 +304,24 @@
     var batch = unsynced.slice(0, BATCH);
     var rest = unsynced.slice(BATCH);
     var minRest = rest.length ? rest[0].seq : Infinity;
-    var evs = S.events.filter(function (ev) { return ev.nextTry <= now && ev.upToSeq < minRest; });
+    // ส่งเหตุการณ์ตามลำดับที่เกิด หยุดที่ตัวแรกที่ยังรอ (WAIT) เพื่อไม่ให้ "ส่งงาน" เก่าไปทับ "เข้าร่วม" ใหม่
+    var evs = [];
+    S.events.sort(function (a, b) { return (a.at || 0) - (b.at || 0); });
+    for (var q = 0; q < S.events.length; q++) {
+      var x = S.events[q];
+      if (x.nextTry > now || x.upToSeq >= minRest) break;
+      evs.push(x);
+    }
     if (!batch.length && !evs.length && !force) return Promise.resolve();
     S.syncing = true; renderTop();
     var payload = {
       entries: batch.map(function (e) {
         return { logId: e.logId, seq: e.seq, projectId: e.projectId, staff: e.staff, location: e.location, barcode: e.barcode, material: e.material,
-          qty: e.qty, type: e.type, refId: e.refId, reason: e.reason, note: e.note, scanTime: e.scanTime };
+          qty: e.qty, type: e.type, refId: e.refId, reason: e.reason, note: e.note, scanTime: e.scanTime, basis: e.basis };
       }),
       events: evs.map(function (ev) {
-        return { id: ev.id, type: ev.type, projectId: ev.projectId, location: ev.location, staff: ev.staff, time: ev.time, lines: ev.lines, qty: ev.qty, fromSeq: ev.fromSeq, upToSeq: ev.upToSeq };
+        return { id: ev.id, type: ev.type, projectId: ev.projectId, location: ev.location, staff: ev.staff, time: ev.time, lines: ev.lines, qty: ev.qty,
+          fromSeq: ev.fromSeq, upToSeq: ev.upToSeq, total: ev.total, auto: ev.auto, at: ev.at };
       })
     };
     return api('sync', payload, 30000).then(function (res) {
@@ -283,6 +347,19 @@
         }
       });
       S.events = S.events.filter(function (ev) { return removeIds.indexOf(ev.id) < 0; });
+      // บทบาทที่เซิร์ฟเวอร์ตัดสิน (เช่น เปิดตอนออฟไลน์ แต่มีผู้ดูแลอยู่แล้ว → เป็นผู้ช่วย)
+      (res.events || []).forEach(function (r) {
+        if (!r.role || r.match === 'WAIT') return;
+        var before = roleOf(r.location);
+        var later = S.events.some(function (ev) { return ev.location === r.location; });
+        var upd = { role: r.role, owner: r.owner };
+        if (!later) upd.state = r.location === S.loc && r.state !== 'CLOSED' && r.state !== 'SUBMITTED' ? 'COUNTING' : r.state;
+        setRole(r.location, upd);
+        if (before !== r.role && r.location === S.loc) {
+          toast(r.role === 'HELPER' ? r.location + ' มีผู้ดูแลแล้ว (' + r.owner + ') — เครื่องนี้เป็นผู้ช่วย' : 'เครื่องนี้เป็นผู้ดูแล ' + r.location, r.role === 'HELPER');
+          fetchInfo(r.location);
+        }
+      });
       if (res.masterHash !== undefined && S.masterHash && res.masterHash && res.masterHash !== S.masterHash) S.masterChanged = true;
       if (res.stockVersion && res.stockVersion !== S.stockVersion) downloadStock().catch(function () {});
       S.lastSyncOk = Date.now();
@@ -311,14 +388,19 @@
     document.querySelectorAll('.view').forEach(function (el) { el.classList.toggle('on', el.id === 'v-' + v); });
     window.scrollTo(0, 0);
     if (v === 'count') { requestWake(); renderCount(); }
-    if (v === 'loc') renderLoc();
+    if (v === 'loc') { renderLoc(); fetchInfo(S.loc); }
     if (v === 'status') renderStatus();
+    if (v === 'locs') { renderLocs(); loadMyLocs(); }
     if (v === 'manual') { $('manQ').value = ''; renderManual(); setTimeout(function () { $('manQ').focus(); }, 50); }
     renderTop();
   }
 
   function renderTop() {
     $('tbLoc').textContent = S.loc || '—';
+    var helper = S.loc && isHelper();
+    var rr = S.loc && S.roles[S.loc];
+    $('tbRole').textContent = !S.loc ? '' : helper ? 'ผู้ช่วย' : hasOthers(S.loc) && rr && rr.owner === S.cfg.deviceId ? 'ผู้ดูแล' : '';
+    $('tbRole').className = helper ? 'helper' : '';
     $('tbStaff').textContent = S.staff ? (S.staff.name || S.staff.code) : 'ยังไม่เข้างาน';
     var p = pending().length;
     var synced = S.entries.length - p - S.entries.filter(function (e) { return e.rejected; }).length;
@@ -345,13 +427,23 @@
     if (S.view === 'count') renderCount();
     if (S.view === 'loc') renderLoc();
     if (S.view === 'status') renderStatus();
+    if (S.view === 'locs') renderLocs();
   }
 
   function renderCount() {
-    var sum = S.loc ? locSummary(S.loc) : { qty: 0, sku: 0 };
+    var sum = S.loc ? combinedSummary(S.loc) : { qty: 0, sku: 0, multi: false };
     $('locTotal').textContent = fmt(sum.qty);
-    $('locSku').textContent = fmt(sum.sku) + ' SKU' + (S.loc && S.locChecks[S.loc] === 'OK' ? ' · ✓ ตรงกับเซิร์ฟเวอร์' : '');
+    fitText($('locTotal'), 40, 20);
+    // หลายเครื่อง: ยอดรวม = ทุกเครื่อง และบอกยอดของเครื่องนี้แยก
+    $('locSku').textContent = sum.multi ? 'ของฉัน ' + fmt(sum.mine.qty) + ' · ' + (S.info[S.loc].members.length) + ' เครื่อง' :
+      fmt(sum.sku) + ' SKU' + (S.loc && S.locChecks[S.loc] === 'OK' ? ' · ✓ ส่งครบ' : '');
+    $('locLbl').textContent = sum.multi ? 'ยอดรวม Location (ทุกเครื่อง)' : 'ยอดรวม Location';
     $('devTotal').textContent = fmt(deviceTotal());
+    fitText($('devTotal'), 22, 13);
+    var helper = S.loc && isHelper();
+    $('btnClose').innerHTML = helper ? 'ส่ง<br>งาน' : 'ปิด<br>Location';
+    $('btnClose').classList.toggle('ok', !!helper);
+    $('btnLoc').innerHTML = helper ? 'ดู<br>Location' : 'ดู/แก้<br>Location';
     renderSku();
     var q = S.qty || '1';
     $('qtyVal').textContent = q; $('qtyVal').className = q !== '1' ? 'multi' : '';
@@ -374,13 +466,35 @@
   function setSku(item) { S.lastSku = item && item.m ? { m: item.m, c: item.c || '' } : null; renderSku(); }
   function renderSku() {
     var box = $('skuBox'), k = S.lastSku;
-    if (!k) { box.className = 'sku empty'; $('skuTail').textContent = '—'; $('skuLine').innerHTML = ''; return; }
+    $('skuSrc').textContent = S.stockSource === 'POS' ? 'POS' : '';
+    $('skuSrc').classList.toggle('hidden', S.stockSource !== 'POS');
+    if (!k) { box.className = 'sku empty'; $('skuTail').textContent = '—'; $('skuCnt').textContent = '—'; $('skuStk').textContent = '—'; $('skuMark').textContent = ''; return; }
     var cnt = skuCount(k.m), has = S.stock.has(k.m), stk = has ? S.stock.get(k.m) : null;
-    var mark = has ? (cnt === stk ? ' ✓' : cnt > stk ? ' ▲' : '') : '';
     box.className = 'sku';
     $('skuTail').textContent = k.c ? k.c.slice(diffStart(k.c)) : k.m;
-    $('skuLine').innerHTML = 'นับ <b class="cnt">' + fmt(cnt) + '</b>' +
-      (has ? ' · ' + (S.stockSource === 'POS' ? 'Stock(POS)' : 'Stock') + ' <b class="stk">' + fmt(stk) + '</b>' + mark : '');
+    $('skuCnt').textContent = fmt(cnt);
+    $('skuStk').textContent = has ? fmt(stk) : '—';
+    $('skuMark').textContent = has ? (cnt === stk ? '✓' : cnt > stk ? '▲' : '') : '';
+    $('skuMark').className = has && cnt > stk ? 'over' : '';
+    fitText($('skuCnt'), 20, 12); fitText($('skuStk'), 20, 12);
+  }
+  /** ย่อตัวเลขจนพอดีช่อง (ตัวเลขหลักพัน/หมื่น) ไม่ตัดหรือล้นกรอบ */
+  function fitText(el, max, min) {
+    el.style.fontSize = max + 'px';
+    var size = max;
+    while (size > min && el.scrollWidth > el.clientWidth + 0.5) { size--; el.style.fontSize = size + 'px'; }
+  }
+
+  /** จำนวนที่ป้อนเองเกิน 150 → ยืนยันอีกครั้ง (กันกดเกิน เช่น 1200 แทน 12) */
+  function qtyCheck(qty, name) {
+    if (qty <= QTY_CONFIRM) return Promise.resolve(true);
+    return confirmBox('ยืนยันจำนวน', 'บันทึก <span class="bignum">' + fmt(qty) + '</span> ชิ้น<br>' + esc(name || '') + '<br><span class="muted">เกิน ' + QTY_CONFIRM + ' ชิ้นต่อครั้ง ตรวจว่าไม่ได้กดเกิน</span>', 'ถูกต้อง บันทึก');
+  }
+  /** ช่องตัวเลขในกล่อง: ยาวผิดปกติ = น่าจะยิงบาร์โค้ดเข้าช่องจำนวน */
+  function badNumber(v) {
+    v = String(v === null || v === undefined ? '' : v).trim();
+    if (v.replace(/\D/g, '').length > QTY_MAX_DIGITS) { SOUND.bad(); toast('ตัวเลขยาวผิดปกติ — อาจยิงบาร์โค้ดเข้าช่องจำนวน ไม่บันทึก', true); return true; }
+    return false;
   }
 
   function setCard(kind, title, subHtml, qtyHtml) {
@@ -439,55 +553,148 @@
     var item = S.master.get(bc);
     if (!item && !validFormat(bc)) { SOUND.bad(); setSku(null); setCard('bad', 'รูปแบบบาร์โค้ดผิด — ยิงใหม่', esc(bc), 'ไม่บันทึก'); return; }
     var qty = parseInt(S.qty || '1', 10) || 1;
-    var go = qty > 100 ? confirmBox('จำนวนมาก', 'บันทึก <span class="bignum">' + fmt(qty) + '</span> ชิ้น<br>' + esc(item ? item.n : bc) + ' ?', 'บันทึก') : Promise.resolve(true);
+    var go = qtyCheck(qty, item ? item.n : bc);
     go.then(function (yes) {
       if (!yes) return;
       return addEntry({ barcode: bc, material: item ? item.m : '', qty: qty, type: 'SCAN' }).then(function () {
         S.qty = '';
-        var inLoc = locSummary(S.loc).items.get(item ? item.m : 'BC:' + bc);
-        if (item) { SOUND.ok(); setSku(item); setCard('ok', item.n || item.m, codeLine(item.c, bc), '+' + fmt(qty) + ' · ใน ' + S.loc + ' รวม <b>' + fmt(inLoc ? inLoc.qty : qty) + '</b>'); }
+        var inLoc = combinedSummary(S.loc).items.get(item ? item.m : 'BC:' + bc);
+        if (item) { SOUND.ok(); setSku(item); setCard('ok', item.n || item.m, codeLine(item.c, bc), '+' + fmt(qty) + ' · ใน ' + S.loc + ' รวม ' + fmt(inLoc ? inLoc.qty : qty)); }
         else { SOUND.warn(); setSku(null); setCard('warn', 'บาร์โค้ดไม่รู้จัก — แยกสินค้าไว้', esc(bc), '+' + fmt(qty) + ' บันทึกแล้ว · ตรวจซ้ำตอนอัปโหลดไฟล์ใหม่'); }
         render();
       });
     });
   }
 
+  /**
+   * ยิงป้าย Location
+   * 1) ออกจาก Location เดิม: ผู้ดูแล = พัก, ผู้ช่วย = ส่งงานอัตโนมัติ (ไม่มีทางรอกันจนติด)
+   * 2) เปิดทันที ยิงสินค้าต่อได้ ไม่ต้องรอเซิร์ฟเวอร์
+   * 3) เช็กเบื้องหลัง: ถ้ามีเครื่องอื่นเป็นผู้ดูแล → ถามเข้าร่วม · ถ้าผู้ดูแลปิดแล้ว → ไม่รับการยิง
+   */
   function openLocation(loc) {
-    if (!S.staff) { SOUND.bad(); setCard('bad', 'ยิงบัตรผู้ตรวจสอบ (EMP:) ก่อน'); show('count'); return; }
-    if (S.loc === loc) { show('count'); toast('อยู่ที่ ' + loc + ' แล้ว'); return; }
-    var chain = Promise.resolve(true);
-    if (S.loc) { var prev = S.loc; chain = chain.then(function () { return doClose(prev, true); }).then(function () { return true; }); }
-    if (S.closedLocs.indexOf(loc) >= 0) {
-      chain = chain.then(function () {
-        var s = locSummary(loc);
-        return confirmBox(loc + ' ปิดไปแล้ว', 'ยอดเดิมของเครื่องนี้ ' + fmt(s.qty) + ' ชิ้น ' + s.sku + ' SKU<br>ต้องการเปิดเพื่อนับเพิ่มหรือแก้ไข?', 'เปิดนับเพิ่ม');
-      });
+    if (!S.staff) { SOUND.bad(); setCard('bad', 'ยิงบัตรผู้ตรวจสอบ (EMP:) ก่อน'); show('count'); return Promise.resolve(); }
+    if (S.loc === loc) { show('count'); toast('อยู่ที่ ' + loc + ' แล้ว'); return Promise.resolve(); }
+    var r = S.roles[loc] || null;
+    var ask = Promise.resolve(true);
+    if (r && r.role === 'OWNER' && r.state === 'CLOSED') {
+      var s0 = combinedSummary(loc);
+      ask = confirmBox(loc + ' ปิดไปแล้ว', 'ยอดตอนปิด ' + fmt(s0.qty) + ' ชิ้น ' + s0.sku + ' SKU<br>ต้องการเปิดเพื่อนับเพิ่มหรือแก้ไข?', 'เปิดนับเพิ่ม');
+    } else if (r && r.role === 'HELPER' && r.state === 'SUBMITTED') {
+      ask = confirmBox('กลับไปช่วย ' + loc + ' อีกครั้ง?', 'ส่งงานไปแล้ว <b>' + fmt(locSummary(loc).qty) + '</b> ชิ้น ยอดเดิมยังอยู่ ยิงเพิ่มต่อจากเดิม' +
+        (r.owner ? '<br><span class="muted">ผู้ดูแล ' + esc(r.ownerLabel || r.owner) + '</span>' : ''), 'กลับไปช่วย');
     }
-    chain = chain.then(function (ok) {
-      if (!ok || S.online === false) return ok;
-      return api('locStatus', { location: loc }, 3000).then(function (r) {
-        if (r.openByOther) return confirmBox(loc + ' กำลังนับโดย ' + r.openByOther, 'ช่วยนับ Location เดียวกันหรือไม่?', 'ช่วยนับ');
-        return true;
-      }, function () { return true; });
-    });
-    return chain.then(function (ok) {
+    return ask.then(function (ok) {
       if (!ok) { show('count'); return; }
-      S.loc = loc; S.recountBanner = ''; S.lastSku = null; clearResume();
-      S.closedLocs = S.closedLocs.filter(function (x) { return x !== loc; });
-      SOUND.ok();
-      setCard('idle', 'เปิด ' + loc + ' แล้ว — ยิงสินค้าได้เลย');
-      return Promise.all([saveState(), addEvent('OPEN', loc)]).then(function () { show('count'); });
+      var prev = S.loc;
+      return (prev ? leaveLocation(prev) : Promise.resolve()).then(function () {
+        S.loc = loc; S.recountBanner = ''; S.lastSku = null; clearResume();
+        var known = S.roles[loc];
+        setRole(loc, { role: known ? known.role : 'OWNER', state: 'COUNTING' });
+        SOUND.ok();
+        setCard('idle', (r && r.state === 'PAUSED' ? 'กลับมานับต่อ ' + loc + ' (พักไว้)' : 'เปิด ' + loc + ' แล้ว') + ' — ยิงสินค้าได้เลย',
+          prev ? (isHelperBefore(prev) ? 'ส่งงาน ' + prev + ' ให้อัตโนมัติแล้ว' : prev + ' พักไว้ (ยังไม่ปิด)') : '');
+        show('count');
+        return saveState().then(function () { return checkOwner(loc, r); });
+      });
+    });
+  }
+  var leftAs = {};
+  function isHelperBefore(loc) { return leftAs[loc] === 'HELPER'; }
+
+  /** ออกจาก Location โดยไม่ปิด: ผู้ดูแล → พัก · ผู้ช่วย → ส่งงานอัตโนมัติ */
+  function leaveLocation(loc, opt) {
+    var helper = isHelper(loc);
+    leftAs[loc] = helper ? 'HELPER' : 'OWNER';
+    setRole(loc, { state: helper ? 'SUBMITTED' : 'PAUSED' });
+    if (S.loc === loc) S.loc = null;
+    return addEvent(helper ? 'SUBMIT' : 'PAUSE', loc, helper ? { auto: !(opt && opt.self) } : null).then(saveState);
+  }
+
+  /** เช็กเบื้องหลังหลังเปิด: ใครเป็นผู้ดูแล (ออฟไลน์ = ไม่ถาม ให้เซิร์ฟเวอร์ตัดสินตอนส่งข้อมูล) */
+  function checkOwner(loc, before) {
+    var sendOpen = function (type) { return addEvent(type || 'OPEN', loc); };
+    return fetchInfo(loc, 3000).then(function (info) {
+      if (S.loc !== loc) return;
+      if (!info) return sendOpen(isHelper(loc) ? 'JOIN' : 'OPEN');
+      var o = info.owner, me = info.me;
+      var otherOwner = o && o.device !== S.cfg.deviceId;
+      if (!otherOwner) { setRole(loc, { role: 'OWNER', state: 'COUNTING', owner: S.cfg.deviceId }); render(); return sendOpen('OPEN'); }
+      var who = memberLabel(o);
+      if (o.state === 'CLOSED') {
+        // Control 10: ผู้ดูแลปิดแล้ว ผู้ช่วยยิงเพิ่มไม่ได้จนกว่าผู้ดูแลจะเปิดแก้ไข
+        S.loc = null; setRole(loc, { role: 'HELPER', state: 'SUBMITTED', owner: o.device, ownerLabel: who });
+        SOUND.bad(); setCard('bad', loc + ' ปิดแล้วโดย ' + (o.name || o.device), 'ให้ผู้ดูแลเปิดแก้ไขก่อน — ไม่รับการยิง');
+        return saveState().then(function () { render(); return modal({ title: loc + ' ปิดแล้ว', html: 'ปิดโดย ' + esc(who) + '<br>ถ้าต้องนับเพิ่ม ให้ผู้ดูแลยิงป้าย ' + esc(loc) + ' เพื่อเปิดแก้ไขก่อน', yes: 'รับทราบ', noCancel: true }); });
+      }
+      if (me && me.role === 'HELPER' && before && before.role === 'HELPER') {
+        setRole(loc, { role: 'HELPER', state: 'COUNTING', owner: o.device, ownerLabel: who }); render();
+        return sendOpen('JOIN');
+      }
+      SOUND.warn();
+      return modal({ title: loc + ' ดูแลโดย ' + (o.name || o.device), html: 'ผู้ดูแล ' + esc(who) + '<br>เข้าร่วมนับเป็น <b>ผู้ช่วย</b>?<br><span class="muted">ผู้ช่วยยิงได้ แก้ยอด/ปิดไม่ได้ เสร็จแล้วกด "ส่งงาน"</span>',
+        yes: 'เข้าร่วม', no: 'ไม่ใช่ (ยิงป้ายผิด)' }).then(function (yes) {
+        if (S.loc !== loc) return;
+        setRole(loc, { role: 'HELPER', state: 'COUNTING', owner: o.device, ownerLabel: who });
+        if (yes) { setCard('idle', 'เข้าร่วม ' + loc + ' เป็นผู้ช่วยแล้ว', 'ผู้ดูแล ' + esc(who), 'เสร็จแล้วกด "ส่งงาน"'); render(); return saveState().then(function () { return sendOpen('JOIN'); }); }
+        // ยิงป้ายผิด: ออกจาก Location; ถ้าเผลอยิงสินค้าไปแล้ว ยอดนั้นยังอยู่และถูกส่งงานไว้
+        var mine = locSummary(loc).lines;
+        S.loc = null;
+        setCard('idle', 'ไม่ได้เข้าร่วม ' + loc, mine ? 'ยิงไปแล้ว ' + mine + ' รายการ — ส่งงานให้แล้ว ถ้ายิงผิดให้ผู้ดูแลแก้ยอด' : 'ยิงป้าย Location ถัดไป');
+        var p = mine ? addEvent('JOIN', loc).then(function () { setRole(loc, { state: 'SUBMITTED' }); return addEvent('SUBMIT', loc); }) : Promise.resolve(delete S.roles[loc]);
+        return p.then(saveState).then(render);
+      });
     });
   }
 
-  function doClose(loc, silent) {
-    return addEvent('CLOSE', loc).then(function () {
-      if (S.closedLocs.indexOf(loc) < 0) S.closedLocs.push(loc);
+  function pausedLocs() {
+    return Object.keys(S.roles).filter(function (l) { var r = S.roles[l]; return l !== S.loc && r.role === 'OWNER' && r.state === 'PAUSED'; });
+  }
+  /** หลังปิด/ส่งงาน ถ้ามี Location ที่พักไว้ เสนอให้กลับไปนับต่อ */
+  function offerPaused() {
+    var p = pausedLocs();
+    if (!p.length) return Promise.resolve();
+    var l = p[p.length - 1];
+    return confirmBox('มี Location ที่พักไว้', 'กลับไปนับต่อที่ <b>' + esc(l) + '</b> (พักไว้)?' + (p.length > 1 ? '<br><span class="muted">พักไว้ทั้งหมด: ' + esc(p.join(', ')) + '</span>' : ''), 'กลับไปนับต่อที่ ' + l)
+      .then(function (y) { if (y) return openLocation(l); });
+  }
+
+  function doClose(loc, total) {
+    setRole(loc, { role: 'OWNER', state: 'CLOSED' });
+    return addEvent('CLOSE', loc, { total: total }).then(function () {
       if (S.loc === loc) S.loc = null;
       setCard('idle', 'ปิด ' + loc + ' แล้ว', 'ยิงป้าย Location ถัดไป');
-      if (!silent) toast('ปิด ' + loc + ' แล้ว');
+      toast('ปิด ' + loc + ' แล้ว');
       if (S.online === false && pending().length) exportFile(true);
-      return saveState().then(render);
+      return saveState().then(render).then(offerPaused);
+    });
+  }
+
+  function doSubmit(loc) {
+    return leaveLocation(loc, { self: true }).then(function () {
+      SOUND.ok();
+      setCard('idle', 'ส่งงาน ' + loc + ' แล้ว', 'ของฉัน ' + fmt(locSummary(loc).qty) + ' ชิ้น · ยิงป้าย Location ถัดไป');
+      if (S.online === false && pending().length) exportFile(true);
+      render();
+      return offerPaused();
+    });
+  }
+
+  /**
+   * ผู้ดูแลแก้ยอด/ล้าง/ปิด ได้เมื่อผู้ช่วยส่งงานครบ (ข้อมูลถึงเซิร์ฟเวอร์ครบ)
+   * ออนไลน์: ถามสถานะล่าสุด · ออฟไลน์: ใช้ได้ถ้าเท่าที่รู้ไม่มีผู้ช่วยค้าง (เซิร์ฟเวอร์ตรวจซ้ำตอนส่งข้อมูล)
+   */
+  function ownerGate(loc, what) {
+    return fetchInfo(loc, 5000).then(function (fresh) {
+      var wait = waitingHelpers(loc);
+      if (!wait.length) return true;
+      SOUND.warn();
+      return modal({
+        title: what + 'ได้เมื่อผู้ช่วยส่งงานครบ',
+        html: (fresh ? '' : '<span class="muted">ออฟไลน์ — ใช้สถานะล่าสุดที่รู้</span><br>') + 'รอ:<br>' + wait.map(function (m) { return '• ' + esc(waitText(m)); }).join('<br>') +
+          '<br><span class="muted">ตามตัวให้กด "ส่งงาน" ถ้าตามไม่ได้ แจ้งหัวหน้าทีม (หน้า Admin → ส่งงานแทน)</span>',
+        yes: 'รับทราบ', noCancel: true
+      }).then(function () { return false; });
     });
   }
 
@@ -518,11 +725,23 @@
 
   $('btnClose').onclick = function () {
     if (!S.loc) { toast('ยังไม่ได้เปิด Location', true); return; }
-    var s = locSummary(S.loc), loc = S.loc;
-    confirmBox('ปิด ' + loc, '<span class="bignum">' + fmt(s.qty) + '</span> ชิ้น · ' + s.sku + ' SKU<br>ตรงกับยอดนับมือบนกระดาษของร้านแล้วใช่ไหม?<br><span class="muted">ถ้าไม่ตรง กดยกเลิก แล้วใช้ "ดู/แก้ Location"</span>', 'ปิด Location')
-      .then(function (yes) { if (yes) doClose(loc); });
+    var loc = S.loc;
+    if (isHelper(loc)) {
+      var m = locSummary(loc), r = S.roles[loc] || {};
+      confirmBox('ส่งงาน ' + loc + '?', 'ของฉัน <span class="bignum">' + fmt(m.qty) + '</span> ชิ้น · ' + m.sku + ' SKU<br>ส่วนของฉันเสร็จแล้ว ผู้ดูแล' + (r.owner ? ' (' + esc(r.ownerLabel || r.owner) + ')' : '') + 'จะเป็นคนปิด Location<br><span class="muted">ถ้าต้องกลับมานับเพิ่ม ยิงป้าย ' + esc(loc) + ' อีกครั้ง</span>', 'ส่งงาน')
+        .then(function (yes) { if (yes) doSubmit(loc); });
+      return;
+    }
+    ownerGate(loc, 'ปิด Location ').then(function (ok) {
+      if (!ok || S.loc !== loc) return;
+      var s = combinedSummary(loc);
+      confirmBox('ปิด ' + loc, '<span class="bignum">' + fmt(s.qty) + '</span> ชิ้น · ' + s.sku + ' SKU' + (s.multi ? ' <span class="muted">(รวม ' + S.info[loc].members.length + ' เครื่อง)</span>' : '') +
+        '<br>ตรงกับยอดนับมือบนกระดาษของร้านแล้วใช่ไหม?<br><span class="muted">ถ้าไม่ตรง กดยกเลิก แล้วใช้ "ดู/แก้ Location"</span>', 'ปิด Location')
+        .then(function (yes) { if (yes) doClose(loc, s.qty); });
+    });
   };
-  $('btnLoc').onclick = function () { if (!S.loc) { toast('ยิงป้าย Location ก่อน (แก้ได้เฉพาะ Location ที่เปิดอยู่)', true); return; } show('loc'); };
+  $('btnLoc').onclick = function () { if (!S.loc) { toast('ยิงป้าย Location ก่อน หรือเลือกจาก ⋮ → Location ที่นับแล้ว', true); return; } show('loc'); };
+  $('tbLoc').onclick = function () { if (S.view === 'count' || S.view === 'loc') show('locs'); };
   $('btnManual').onclick = function () { if (!S.loc) { toast('ยิงป้าย Location ก่อน', true); return; } show('manual'); };
   $('btnMenu').onclick = function (e) { e.stopPropagation(); $('menu').classList.toggle('hidden'); };
   document.addEventListener('click', function () { $('menu').classList.add('hidden'); });
@@ -531,58 +750,144 @@
     $('menu').classList.add('hidden');
     if (b.dataset.m === 'status') show('status');
     else if (b.dataset.m === 'typeloc') typeLocation();
+    else if (b.dataset.m === 'locs') show('locs');
     else if (b.dataset.m === 'ready') { show('ready'); runChecks(false); }
   });
+  function knownLocs() {
+    var k = {};
+    S.entries.forEach(function (e) { if (e.location) k[e.location] = true; });
+    Object.keys(S.roles).forEach(function (l) { k[l] = true; });
+    S.knownNames.forEach(function (l) { k[l] = true; });
+    return k;
+  }
+  /** ไปที่ Location ด้วยการพิมพ์ชื่อ (ป้ายหาย/ยิงไม่ได้) — ชื่อที่ยังไม่เคยมีในรอบนี้ต้องยืนยัน กันพิมพ์ผิดแล้วยอดแยกไปอีกที่ */
   function typeLocation() {
-    modal({ title: 'พิมพ์ Location', html: 'ใช้เมื่อป้ายหาย/ยิงไม่ได้ เช่น A12', input: true, inputmode: 'text', yes: 'เปิด' }).then(function (v) {
+    modal({ title: 'ไปที่ Location', html: 'พิมพ์ชื่อ เช่น A12 (ใช้เมื่อป้ายหายหรือยิงไม่ได้)', input: true, inputmode: 'text', yes: 'ไป' }).then(function (v) {
       if (v === null) return; var loc = normLoc(v);
       if (!loc) { toast('รูปแบบต้องเป็นตัวอักษรโซน + เลข เช่น A12', true); return; }
-      openLocation(loc);
+      if (knownLocs()[loc] || loc === S.loc) return openLocation(loc);
+      confirmBox(loc + ' ยังไม่เคยมีในรอบนี้', 'ตรวจว่าพิมพ์ถูก: <span class="bignum">' + esc(loc) + '</span><br><span class="muted">ถ้าพิมพ์ผิด ยอดจะแยกไปอยู่ Location ใหม่</span>', 'ถูกต้อง เปิด ' + loc)
+        .then(function (y) { if (y) openLocation(loc); });
     });
   }
 
+  // ---------- Location ที่นับแล้ว ----------
+  var STATE_TXT = { COUNTING: 'กำลังนับ', PAUSED: 'พักไว้', SUBMITTED: 'ส่งงานแล้ว', CLOSED: 'ปิดแล้ว' };
+  function renderLocs() {
+    var locs = {};
+    S.entries.forEach(function (e) { if (e.location) { var x = locs[e.location] || (locs[e.location] = { last: '' }); if (e.scanTime > x.last) x.last = e.scanTime; } });
+    Object.keys(S.roles).forEach(function (l) { if (!locs[l]) locs[l] = { last: '' }; });
+    var order = { COUNTING: 1, PAUSED: 2, SUBMITTED: 3, CLOSED: 4 };
+    var list = Object.keys(locs).map(function (l) {
+      var r = S.roles[l] || {}, srv = S.myLocs[l] || {}, m = locSummary(l);
+      return { loc: l, role: r.role || srv.role || 'OWNER', state: l === S.loc ? 'COUNTING' : r.state || srv.state || 'COUNTING', mine: m.qty, sku: m.sku, last: locs[l].last || '', srv: srv };
+    }).sort(function (a, b) {
+      return (b.loc === S.loc) - (a.loc === S.loc) || (order[a.state] || 9) - (order[b.state] || 9) || String(b.last).localeCompare(String(a.last));
+    });
+    $('locsHead').textContent = list.length ? list.length + ' Location · แตะเพื่อไปที่ Location นั้น' : 'ยังไม่มี Location ในรอบนี้';
+    $('locsList').innerHTML = list.map(function (x) {
+      var st = x.loc === S.loc ? 'อยู่ที่นี่' : STATE_TXT[x.state] || x.state;
+      var multi = x.srv.devices > 1;
+      return '<li data-l="' + esc(x.loc) + '" class="st-' + esc(x.state) + (x.loc === S.loc ? ' here' : '') + '"><div><div class="n"><span class="ln">' + esc(x.loc) + '</span> ' + esc(st) +
+        ' · ' + (x.role === 'HELPER' ? 'ผู้ช่วย' : 'ผู้ดูแล') + '</div><div class="c">ของฉัน ' + fmt(x.mine) + ' ชิ้น · ' + x.sku + ' SKU' + (x.last ? ' · ยิงล่าสุด ' + esc(x.last.slice(11, 16)) : '') + '</div>' +
+        (multi ? '<div class="c"><span class="badge">มีเครื่องอื่นร่วมนับ ' + x.srv.devices + ' เครื่อง · รวม ' + fmt(x.srv.total) + '</span></div>' : '') +
+        (x.srv.flag ? '<div class="c"><span class="badge r">' + esc(x.srv.flag) + '</span></div>' : '') + '</div></li>';
+    }).join('');
+  }
+  function loadMyLocs() {
+    if (S.online === false || !S.cfg.token) return Promise.resolve();
+    return api('myLocs', {}, 8000).then(function (r) {
+      S.myLocs = {}; S.knownNames = r.names || [];
+      r.locs.forEach(function (x) {
+        S.myLocs[x.location] = x;
+        // เครื่องที่ข้อมูลถูกล้างแล้วจับคู่ใหม่ ได้บทบาทคืนจากเซิร์ฟเวอร์
+        var cur = S.roles[x.location];
+        if (!cur || cur.role !== x.role) setRole(x.location, { role: x.role, state: x.location === S.loc ? 'COUNTING' : (cur && cur.state) || x.state });
+      });
+      DB.set('knownNames_' + S.projectId, S.knownNames);
+      return saveState();
+    }, function () {}).then(function () { if (S.view === 'locs') renderLocs(); });
+  }
+  $('locsList').addEventListener('click', function (e) {
+    var li = e.target.closest('li[data-l]'); if (!li) return;
+    openLocation(li.dataset.l);
+  });
+  $('btnLocsBack').onclick = function () { show('count'); };
+  $('btnLocsType').onclick = function () { typeLocation(); };
+
   // ---------- ดู/แก้ Location ----------
+  // ผู้ดูแล: แก้ยอด/ล้าง จากยอดรวมทุกเครื่อง (ของเครื่องนี้ + เครื่องอื่นจากเซิร์ฟเวอร์) หลังผู้ช่วยส่งงานครบ
+  // ผู้ช่วย: ดูอย่างเดียว
   function renderLoc() {
     if (!S.loc) { show('count'); return; }
-    var s = locSummary(S.loc);
-    $('locName').textContent = S.loc;
+    var loc = S.loc, s = combinedSummary(loc), helper = isHelper(loc), info = S.info[loc];
+    $('locName').textContent = loc;
     $('locSum').textContent = fmt(s.qty) + ' ชิ้น · ' + s.sku + ' SKU';
-    var edits = S.entries.filter(function (e) { return e.location === S.loc && (e.type === 'RECOUNT_SET' || (e.type === 'VOID' && /แก้/.test(e.reason))); }).length;
-    $('locEdited').textContent = edits ? 'แก้ไขแล้ว ' + edits + ' ครั้ง (แตะ SKU เพื่อดูประวัติ)' : 'แตะ SKU เพื่อใส่ยอดจริงที่นับได้';
-    var items = Array.from(s.items.values()).sort(function (a, b) { return (b.qty !== 0) - (a.qty !== 0) || String(info(a).c).localeCompare(String(info(b).c)); });
+    var mem = '';
+    if (info && info.members && info.members.length > 1) {
+      mem = info.members.map(function (m) {
+        var me = m.device === S.cfg.deviceId;
+        var st = m.role === 'OWNER' ? (m.state === 'CLOSED' ? 'ปิดแล้ว' : m.state === 'PAUSED' ? 'พัก' : 'กำลังนับ') :
+          m.state === 'SUBMITTED' ? (m.match === 'OK' ? 'ส่งงานแล้ว ✓' : 'ส่งงานแล้ว (รอข้อมูล)') : 'กำลังนับ';
+        var q = me ? s.mine.qty : m.qty;
+        return '<div class="mrow' + (m.role === 'HELPER' && !(m.state === 'SUBMITTED' && m.match === 'OK') ? ' wait' : '') + '"><span>' + (m.role === 'OWNER' ? 'ผู้ดูแล' : 'ผู้ช่วย') + ' ' +
+          esc(memberLabel(m)) + (me ? ' (ฉัน)' : '') + '</span><span>' + esc(st) + ' · ' + fmt(q) + '</span></div>';
+      }).join('');
+    }
+    $('locMembers').innerHTML = mem;
+    var wait = helper ? [] : waitingHelpers(loc);
+    var edits = S.entries.filter(function (e) { return e.location === loc && (e.type === 'RECOUNT_SET' || (e.type === 'VOID' && /แก้/.test(e.reason))); }).length;
+    $('locEdited').textContent = helper ? 'ผู้ช่วยดูยอดได้อย่างเดียว — แก้ยอดให้แจ้งผู้ดูแล' + (info && info.owner ? ' (' + memberLabel(info.owner) + ')' : '') :
+      wait.length ? 'แก้ยอด / ล้าง / ปิด ได้เมื่อ ' + wait.map(function (m) { return m.name || m.device; }).join(', ') + ' ส่งงาน' :
+      edits ? 'แก้ไขแล้ว ' + edits + ' ครั้ง (แตะ SKU เพื่อดูประวัติ)' : 'แตะ SKU เพื่อใส่ยอดจริงที่นับได้';
+    $('locEdited').className = wait.length ? 'warnline' : 'muted';
+    $('btnLocUndo').classList.toggle('hidden', helper);
+    $('btnLocClear').classList.toggle('hidden', helper);
+    var items = Array.from(s.items.values()).sort(function (a, b) { return (b.qty !== 0) - (a.qty !== 0) || String(info_(a).c).localeCompare(String(info_(b).c)); });
     $('locItems').innerHTML = items.length ? items.map(function (it) {
-      var m = info(it);
+      var m = info_(it);
       return '<li data-k="' + esc(it.key) + '" class="' + (it.qty === 0 ? 'zero' : '') + '"><div><div class="n">' + esc(m.n) + (it.edits ? '<span class="badge">แก้ ' + it.edits + '</span>' : '') +
-        (!it.material ? '<span class="badge y">ไม่รู้จัก</span>' : '') + '</div><div class="c">' + tailHtml(m.c) + ' · ' + esc(it.material || it.barcode) + '</div></div><div class="q">' + fmt(it.qty) + '</div></li>';
+        (!it.material ? '<span class="badge y">ไม่รู้จัก</span>' : '') + '</div><div class="c">' + tailHtml(m.c) + ' · ' + esc(it.material || it.barcode) + '</div>' +
+        (s.multi ? '<div class="c">ของฉัน ' + fmt(it.mine) + ' · เครื่องอื่น ' + fmt(it.others) + '</div>' : '') + '</div><div class="q">' + fmt(it.qty) + '</div></li>';
     }).join('') : '<li class="muted">ยังไม่มีรายการใน Location นี้</li>';
   }
+  function info_(it) { return info(it); }
 
   $('locItems').addEventListener('click', function (e) {
     var li = e.target.closest('li[data-k]'); if (!li) return;
-    editItem(li.dataset.k);
+    if (isHelper()) { toast('ผู้ช่วยแก้ยอดไม่ได้ — แจ้งผู้ดูแลแก้', true); return; }
+    var key = li.dataset.k;
+    ownerGate(S.loc, 'แก้ยอด').then(function (ok) { if (ok) editItem(key); });
   });
 
   function editItem(key) {
-    var loc = S.loc, s = locSummary(loc), it = s.items.get(key); if (!it) return;
-    var m = info(it);
+    var loc = S.loc, s = combinedSummary(loc), it = s.items.get(key); if (!it) return;
+    var m = info(it), cur = it.qty;
     var hist = S.entries.filter(function (e) { return e.location === loc && itemKey(e) === key && e.type !== 'SCAN'; }).slice(-6).reverse()
       .map(function (e) { return '<div class="muted">' + esc(e.scanTime.slice(11, 16)) + ' ' + esc(e.staff) + ' · ' + esc(e.type) + ' ' + (e.qty > 0 ? '+' : '') + fmt(e.qty) + (e.reason ? ' · ' + esc(e.reason) : '') + '</div>'; }).join('');
     modal({
       title: 'แก้ยอดใน ' + loc,
-      html: '<b>' + esc(m.n) + '</b><br>' + tailHtml(m.c) + '<br>ใส่ <b>ยอดจริง</b> ที่นับได้ (ใส่ 0 ถ้าไม่มีของชิ้นนี้ที่นี่)' + (hist ? '<div style="margin-top:6px">' + hist + '</div>' : ''),
+      html: '<b>' + esc(m.n) + '</b><br>' + tailHtml(m.c) + '<br>ใส่ <b>ยอดจริง</b> ที่นับได้' + (s.multi ? ' <b>รวมทุกเครื่อง</b>' : '') + ' (ใส่ 0 ถ้าไม่มีของชิ้นนี้ที่นี่)' +
+        (s.multi ? '<div class="muted">ตอนนี้ ของฉัน ' + fmt(it.mine) + ' + เครื่องอื่น ' + fmt(it.others) + ' = ' + fmt(cur) + '</div>' : '') + (hist ? '<div style="margin-top:6px">' + hist + '</div>' : ''),
       input: true, value: '', yes: 'บันทึกยอดจริง',
       preview: function (v) {
         if (v === '' || isNaN(Number(v))) return '';
-        var nv = Number(v), d = nv - it.qty;
-        return 'SKU: ' + fmt(it.qty) + ' <span class="arrow">→ ' + fmt(nv) + '</span><br>' + loc + ': ' + fmt(s.qty) + ' <span class="arrow">→ ' + fmt(s.qty + d) + '</span>';
+        var nv = Number(v), d = nv - cur;
+        return 'SKU: ' + fmt(cur) + ' <span class="arrow">→ ' + fmt(nv) + '</span><br>' + loc + ': ' + fmt(s.qty) + ' <span class="arrow">→ ' + fmt(s.qty + d) + '</span>';
       }
     }).then(function (v) {
-      if (v === null || v === '' || isNaN(Number(v)) || Number(v) < 0) { if (v !== null) toast('ใส่ตัวเลข 0 ขึ้นไป', true); return; }
-      var nv = Number(v), d = Math.round((nv - it.qty) * 1000) / 1000;
+      if (v === null) return;
+      if (badNumber(v)) return;
+      if (v === '' || isNaN(Number(v)) || Number(v) < 0) { toast('ใส่ตัวเลข 0 ขึ้นไป', true); return; }
+      var nv = Number(v), d = Math.round((nv - cur) * 1000) / 1000;
       if (d === 0) { toast('ยอดเท่าเดิม ไม่มีการแก้'); return; }
-      addEntry({ barcode: it.barcode, material: it.material, qty: d, type: 'RECOUNT_SET', reason: 'แก้ยอด Location ' + fmt(it.qty) + ' → ' + fmt(nv) }).then(function () {
-        return addEvent('EDIT', loc);
-      }).then(function () { SOUND.ok(); toast('แก้แล้ว: ' + fmt(it.qty) + ' → ' + fmt(nv)); renderLoc(); renderTop(); });
+      return qtyCheck(nv, m.n).then(function (yes) {
+        if (!yes) return;
+        // basis = ยอดรวมที่เห็นตอนแก้ เซิร์ฟเวอร์ใช้ตรวจว่ามีเครื่องอื่นยิง/แก้ SKU นี้ระหว่างนั้นหรือไม่ (Control 8)
+        return addEntry({ barcode: it.barcode, material: it.material, qty: d, type: 'RECOUNT_SET', basis: cur, reason: 'แก้ยอด Location ' + fmt(cur) + ' → ' + fmt(nv) }).then(function () {
+          return addEvent('EDIT', loc);
+        }).then(function () { SOUND.ok(); toast('แก้แล้ว: ' + fmt(cur) + ' → ' + fmt(nv)); renderLoc(); renderTop(); });
+      });
     });
   }
 
@@ -599,18 +904,23 @@
     });
   };
   $('btnLocClear').onclick = function () {
-    var loc = S.loc, s = locSummary(loc);
-    if (!s.qty && !s.sku) { toast('Location นี้ไม่มียอด', true); return; }
-    confirmBox('ล้าง ' + loc + ' นับใหม่?', 'ล้าง <span class="bignum">' + fmt(s.qty) + '</span> ชิ้น ' + s.sku + ' SKU ของ ' + loc + '<br><span class="muted">ระบบไม่ลบข้อมูลเดิม แต่บันทึกรายการหักยอดกำกับไว้ ย้อนได้ทีละ SKU</span>', 'ล้างและนับใหม่').then(function (yes) {
-      if (!yes) return;
-      var items = Array.from(s.items.values()).filter(function (it) { return it.qty !== 0; });
-      var p = Promise.resolve();
-      items.forEach(function (it) {
-        p = p.then(function () { return addEntry({ barcode: it.barcode, material: it.material, qty: -it.qty, type: 'RECOUNT_SET', reason: 'ล้าง Location นับใหม่ (เดิม ' + fmt(it.qty) + ')' }); });
-      });
-      p.then(function () { return addEvent('EDIT', loc); }).then(function () {
-        S.recountBanner = 'นับใหม่ ' + loc + ' (ยอดเดิม ' + fmt(s.qty) + ')';
-        SOUND.warn(); setCard('idle', 'ล้าง ' + loc + ' แล้ว — เริ่มนับใหม่ได้'); show('count');
+    var loc = S.loc;
+    ownerGate(loc, 'ล้าง Location ').then(function (ok) {
+      if (!ok) return;
+      var s = combinedSummary(loc);
+      if (!s.qty && !s.sku) { toast('Location นี้ไม่มียอด', true); return; }
+      confirmBox('ล้าง ' + loc + ' นับใหม่?', 'ล้าง <span class="bignum">' + fmt(s.qty) + '</span> ชิ้น ' + s.sku + ' SKU ของ ' + loc + (s.multi ? ' <b>(รวมทุกเครื่อง)</b>' : '') +
+        '<br><span class="muted">ระบบไม่ลบข้อมูลเดิม แต่บันทึกรายการหักยอดกำกับไว้ ย้อนได้ทีละ SKU</span>', 'ล้างและนับใหม่').then(function (yes) {
+        if (!yes) return;
+        var items = Array.from(s.items.values()).filter(function (it) { return it.qty !== 0; });
+        var p = Promise.resolve();
+        items.forEach(function (it) {
+          p = p.then(function () { return addEntry({ barcode: it.barcode, material: it.material, qty: -it.qty, type: 'RECOUNT_SET', basis: it.qty, reason: 'ล้าง Location นับใหม่ (เดิม ' + fmt(it.qty) + ')' }); });
+        });
+        p.then(function () { return addEvent('EDIT', loc); }).then(function () {
+          S.recountBanner = 'นับใหม่ ' + loc + ' (ยอดเดิม ' + fmt(s.qty) + ')';
+          SOUND.warn(); setCard('idle', 'ล้าง ' + loc + ' แล้ว — เริ่มนับใหม่ได้'); show('count');
+        });
       });
     });
   };
@@ -648,14 +958,18 @@
     modal({ title: 'ป้อนเองใน ' + S.loc, html: item ? '<b>' + esc(item.n) + '</b><br>' + tailHtml(item.c) + ' · ' + esc(item.m) : 'บาร์โค้ด ' + esc(raw) + ' (ไม่รู้จัก)', input: true, value: S.qty || '1', yes: 'บันทึก' })
       .then(function (v) {
         if (v === null) return;
+        if (badNumber(v)) return;
         var qty = parseInt(v, 10);
         if (!(qty > 0)) { toast('ใส่จำนวนมากกว่า 0', true); return; }
-        addEntry({ barcode: item ? item.b : raw, material: item ? item.m : '', qty: qty, type: 'MANUAL', reason: 'ป้อนเอง' }).then(function () {
+        return qtyCheck(qty, item ? item.n : raw).then(function (yes) { if (yes) return save(qty); });
+      });
+    function save(qty) {
+        return addEntry({ barcode: item ? item.b : raw, material: item ? item.m : '', qty: qty, type: 'MANUAL', reason: 'ป้อนเอง' }).then(function () {
           S.qty = ''; if (item) SOUND.ok(); else SOUND.warn();
           setSku(item); setCard(item ? 'ok' : 'warn', item ? item.n : 'บาร์โค้ดไม่รู้จัก ' + raw, item ? codeLine(item.c, item.b) : '', '+' + fmt(qty) + ' (ป้อนเอง)');
           show('count');
         });
-      });
+    }
   }
   $('btnManBack').onclick = function () { show('count'); };
 
@@ -762,9 +1076,11 @@
   function switchProject(pid) {
     if (pid === S.projectId) return Promise.resolve();
     return loadEntries(pid).then(function () {
-      return Promise.all([DB.get('closedLocs_' + pid), DB.get('locChecks_' + pid), DB.get('loc')]);
+      return Promise.all([DB.get('closedLocs_' + pid), DB.get('locChecks_' + pid), DB.get('loc'), DB.get('roles_' + pid), DB.get('knownNames_' + pid)]);
     }).then(function (v) {
-      S.closedLocs = v[0] || []; S.locChecks = v[1] || {};
+      S.locChecks = v[1] || {}; S.roles = v[3] || {}; S.knownNames = v[4] || []; S.info = {}; S.myLocs = {};
+      // ข้อมูลจากรุ่นก่อน 2.2.0: Location ที่ปิดแล้ว = ผู้ดูแลที่ปิดแล้ว
+      (v[0] || []).forEach(function (l) { if (!S.roles[l]) S.roles[l] = { role: 'OWNER', state: 'CLOSED' }; });
       var lastLoc = v[2];
       S.loc = lastLoc && S.entries.some(function (e) { return e.location === lastLoc; }) ? lastLoc : null;
       return DB.set('projectId', pid);
@@ -799,7 +1115,12 @@
         else if (S.latestVersion !== APP_VERSION) add('แอปเป็นเวอร์ชันล่าสุด', 'FAIL', 'มีเวอร์ชัน ' + S.latestVersion + ' (เครื่องนี้ ' + APP_VERSION + ') — กดปุ่ม "อัปเดตแอปตอนนี้" ด้านล่าง');
         else add('แอปเป็นเวอร์ชันล่าสุด', 'OK', 'แอป ' + APP_VERSION + (S.serverVersion ? ' · เซิร์ฟเวอร์ ' + S.serverVersion : ''));
         // เลขเดียวทั้งระบบ: ถ้าไม่ตรง แปลว่าอัปเดตไม่ครบฝั่ง (เช่น ลืม Deploy New version ของ Apps Script)
-        if (S.serverVersion && S.serverVersion !== APP_VERSION) add('แอปกับเซิร์ฟเวอร์เป็นรุ่นเดียวกัน', 'WARN', 'แอป ' + APP_VERSION + ' · เซิร์ฟเวอร์ ' + S.serverVersion + ' — แจ้งหัวหน้าทีมตรวจสอบ');
+        // MAJOR.MINOR ต่างกัน = ฟีเจอร์ไม่ตรงกัน (เช่น 2.2 ต้องใช้เซิร์ฟเวอร์ที่รู้จักผู้ดูแล/ผู้ช่วย) → ห้ามเริ่มนับ · ต่างแค่ PATCH = เตือน
+        if (S.serverVersion && S.serverVersion !== APP_VERSION) {
+          var mm = function (v) { return String(v).split('.').slice(0, 2).join('.'); };
+          add('แอปกับเซิร์ฟเวอร์เป็นรุ่นเดียวกัน', mm(S.serverVersion) !== mm(APP_VERSION) ? 'FAIL' : 'WARN', 'แอป ' + APP_VERSION + ' · เซิร์ฟเวอร์ ' + S.serverVersion +
+            (mm(S.serverVersion) !== mm(APP_VERSION) ? ' — หัวหน้าทีมต้อง Deploy New version ของ Apps Script ก่อน' : ' — แจ้งหัวหน้าทีมตรวจสอบ'));
+        }
         // 2 จับคู่
         add('เครื่องผูกรหัสเครื่องแล้ว', S.cfg.token ? 'OK' : 'FAIL', S.cfg.deviceId || '');
         // 3 เซิร์ฟเวอร์
@@ -817,6 +1138,7 @@
           $('readyHead').textContent = 'กำลังโหลดรายการบาร์โค้ด…';
           masterP = downloadMaster().catch(function (e) { S._masterErr = e.message; });
         }
+        if (b.boot) masterP = masterP.then(loadMyLocs);
         if (b.boot && boot.stockVersion && (boot.stockVersion !== S.stockVersion || !S.stock.size)) {
           masterP = masterP.then(function () { return downloadStock().catch(function () {}); });
         }
@@ -908,6 +1230,7 @@
     }).then(function (v) {
       S.cfg = v[0] || {}; S.boot = v[1] || null; S.masterHash = v[2] || ''; S.masterProject = v[3] || '';
       S.staff = v[5] || null; S.readiness = v[6] || null; S.events = v[7] || [];
+      S.events.forEach(function (ev) { if (!ev.at) ev.at = 0; if (ev.at > lastAt) lastAt = ev.at; });
       var st = v[8];
       var pid = (S.boot && S.boot.project.id) || v[4] || '';
       if (st && st.projectId === pid) { S.stockVersion = st.version; S.stockSource = st.source; st.rows.forEach(function (x) { S.stock.set(x[0], Number(x[1]) || 0); }); }

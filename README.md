@@ -34,6 +34,8 @@ node run.js                     # ข้อมูลสังเคราะห�
 SAMPLE_SAP=/path/ZMMD002A.xls SAMPLE_POS=/path/Stock_Shop_POS.xls node run.js      # + ไฟล์จริง
 SAMPLE_SAP=... SAMPLE_POS=... node gas-mock.js   # จำลอง Apps Script ทั้ง flow
 SAMPLE_SAP=... SAMPLE_POS=... node api-test.js   # API ของเครื่อง (+ SAMPLE_DOLPHIN=ไฟล์ Dolphin)
+SAMPLE_SAP=... SAMPLE_POS=... node multi-test.js # หลายเครื่องนับ Location เดียวกัน (ผู้ดูแล/ผู้ช่วย)
 SAMPLE_SAP=... SAMPLE_POS=... node mock-server.js &   # เซิร์ฟเวอร์จำลอง http://localhost:8787/app/
 python3 e2e.py                                   # E2E เว็บแอปด้วย Chrome (Playwright)
+python3 e2e_multi.py                             # E2E สองเครื่อง (รัน mock-server ใหม่ก่อน)
 ```

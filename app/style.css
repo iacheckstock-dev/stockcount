@@ -15,7 +15,10 @@ h2 { font-size: 20px; margin: 8px 0 12px; }
 #rotate { display: none; position: fixed; inset: 0; z-index: 30; background: #111; color: #fff; align-items: center; justify-content: center; text-align: center; font-size: 22px; font-weight: 700; padding: 20px; }
 #rotate span { font-size: 15px; font-weight: 400; }
 @media (orientation: landscape) and (max-height: 520px) { #rotate { display: flex; } }
-#tbLoc { font-size: 38px; font-weight: 700; letter-spacing: 1px; }
+#tbLoc { font-size: 38px; font-weight: 700; letter-spacing: 1px; line-height: 1.05; }
+#tbRole { font-size: 12px; font-weight: 600; color: #bbb; line-height: 1.1; }
+#tbRole.helper { color: #111; background: #ffcc00; display: inline-block; padding: 0 6px; border-radius: 6px; }
+#tbRole:empty { display: none; }
 #tbRight { text-align: right; font-size: 14px; }
 #tbStaff { font-weight: 600; font-size: 16px; }
 .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #999; margin-right: 6px; vertical-align: middle; }
@@ -56,19 +59,29 @@ details { margin: 10px 0; } summary { color: #555; font-size: 14px; }
 .card.idle { background: #fff; }
 #cardTitle { font-size: 17px; font-weight: 600; line-height: 1.25; }
 #cardSub { font-size: 15px; color: #333; margin-top: 1px; line-height: 1.15; }
-#cardSub b.tail { font-size: 26px; letter-spacing: 1px; }
+#cardSub b.tail { font-size: inherit; letter-spacing: .5px; }
 #cardSub .bc { font-size: 15px; color: #444; }
-#cardQty { font-size: 15px; margin-top: 2px; }
+/* บรรทัดที่ 3 "+1 · ใน A1 รวม 2" ใหญ่และหนา อ่านง่ายที่สุด */
+#cardQty { font-size: 22px; font-weight: 700; line-height: 1.2; margin-top: 2px; }
 .totals { display: flex; gap: 8px; margin: 5px 0 0; }
 .totals > div { flex: 1; background: #fff; border: 1px solid #e3e1dc; border-radius: 12px; padding: 4px 10px; }
-.lbl.dev b { font-size: 22px; color: #111; margin-left: 4px; }
+.lbl.dev { display: flex; align-items: baseline; gap: 4px; white-space: nowrap; }
+.lbl.dev b { flex: 1; min-width: 0; overflow: hidden; font-size: 22px; color: #111; font-variant-numeric: tabular-nums; }
+#locSku, #locLbl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sku { border-top: 1px solid #e3e1dc; margin-top: 3px; padding-top: 2px; line-height: 1.25; }
-#skuTail { font-size: 15px; font-weight: 700; letter-spacing: .5px; }
-#skuLine { font-size: 15px; } #skuLine b { font-size: 20px; }
+#skuTail { font-size: 14px; font-weight: 700; letter-spacing: .5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* สองคอลัมน์ นับ | Stock: ป้ายเล็กด้านบน ตัวเลขด้านล่าง ตัวเลขย่ออัตโนมัติให้พอดีช่อง (fitText) */
+.skuCols { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.skuCols > div { min-width: 0; }
+.skuCols .l { font-size: 11px; color: #6b6b6b; line-height: 1.1; white-space: nowrap; }
+.skuCols b { display: block; font-size: 20px; line-height: 1.15; white-space: nowrap; overflow: hidden; font-variant-numeric: tabular-nums; }
+.skuCols .src { font-size: 10px; padding: 0 4px; border-radius: 6px; background: #e7f1fb; color: #1d4ed8; }
+#skuMark { font-weight: 700; margin-left: 3px; color: #1f7a3a; }
+#skuMark.over { color: #b8860b; }
 .sku .cnt { color: #1f7a3a; } .sku .stk { color: #1d4ed8; }
 .sku.empty #skuTail { color: #bbb; font-weight: 400; }
 .lbl { font-size: 13px; color: #6b6b6b; }
-.num { font-size: 40px; font-weight: 700; line-height: 1.05; font-variant-numeric: tabular-nums; }
+.num { white-space: nowrap; overflow: hidden; font-size: 40px; font-weight: 700; line-height: 1.05; font-variant-numeric: tabular-nums; }
 .num.small { font-size: 22px; }
 .qtyrow { display: flex; justify-content: space-between; align-items: center; padding: 0 6px; font-size: 15px; }
 #qtyVal { font-size: 28px; font-weight: 700; min-width: 60px; text-align: right; }
@@ -105,3 +118,16 @@ details { margin: 10px 0; } summary { color: #555; font-size: 14px; }
 #toast.err { background: #b42318; }
 .kv { display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; font-size: 16px; margin-bottom: 10px; }
 .kv div:nth-child(odd) { color: #555; } .kv div:nth-child(even) { font-weight: 600; text-align: right; }
+
+/* ผู้ดูแล / ผู้ช่วย ในหน้าดู Location */
+#locMembers .mrow { display: flex; justify-content: space-between; gap: 6px; font-size: 14px; padding: 4px 8px; border-radius: 8px; background: #f0efec; margin: 3px 0; }
+#locMembers .mrow.wait { background: #fff3cd; }
+.warnline { color: #7a4a00; font-size: 14px; font-weight: 600; }
+.badge.r { background: #fbebeb; color: #b42318; }
+/* Location ที่นับแล้ว */
+.items.locs li { display: block; }
+.items.locs .ln { font-size: 24px; font-weight: 700; margin-right: 4px; }
+.items.locs li.here { border: 2px solid #111; }
+.items.locs li.st-PAUSED { background: #fff8e6; }
+.items.locs li.st-CLOSED, .items.locs li.st-SUBMITTED { opacity: .8; }
+.btn.ok { background: #1f7a3a; color: #fff; }

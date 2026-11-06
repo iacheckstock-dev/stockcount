@@ -137,7 +137,7 @@ test('ได้ Seq 4 แล้ว ปิดใหม่ ยอดตรง → 
   assert.strictEqual(r.events[0].match, 'MISMATCH');
   const loc = env.run('apiDevicesState()').locations.find(l => l.Location === 'A1');
   assert.strictEqual(loc.Status, 'ปิดแล้ว');
-  assert.strictEqual(env.sheets.Loc_Checks.data.length - 1, 3);
+  assert.strictEqual(env.sheets.Loc_Checks.data.filter(r => r[4] === 'CLOSE' || r[4] === 'EDIT').length, 3);
 });
 test('locStatus: เครื่องอื่นเห็นว่า A2 กำลังนับโดย TC21-01', () => {
   call('sync', { events: [{ id: 'e5', type: 'OPEN', projectId: '2026Q4', location: 'A2', staff: 'EMP-NU' }] });

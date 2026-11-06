@@ -6,13 +6,13 @@
  * (API สำหรับ TC21 จะเพิ่มในเฟส 2 แยกต่างหาก และต้องใช้ device token)
  */
 
-var SCHEMA_VERSION = 3;
+var SCHEMA_VERSION = 4;
 
 /**
  * เวอร์ชันของระบบ (ใช้เลขเดียวทั้งแอป TC21 และเซิร์ฟเวอร์ ตาม Semantic Versioning MAJOR.MINOR.PATCH)
  * ต้องตรงกับ APP_VERSION ใน app/app.js และ appVersion ใน app/config.json — ดู CHANGELOG.md
  */
-var SYSTEM_VERSION = '2.1.1';
+var SYSTEM_VERSION = '2.2.0';
 
 var SHEETS = {
   Config: ['Key', 'Value', 'Note'],
@@ -20,9 +20,13 @@ var SHEETS = {
   Devices: ['Device_ID', 'Name', 'Active', 'Last_Seq', 'Last_Sync', 'Gaps', 'App_Version', 'Last_Check_At', 'Last_Check',
     'Paired_At', 'Token_Hash', 'Pair_Code', 'Pair_Expires', 'Pair_Fails'],
   Locations: ['Location', 'Zone', 'Status', 'Open_By', 'Counters', 'Devices', 'Opened_At', 'Closed_Time', 'Last_Check', 'Edits',
-    'Updated_At'],
+    'Updated_At', 'Owner', 'Members', 'Status_Detail', 'Flag', 'Flag_Check', 'Close_Cover', 'Close_Total'],
+  // ผู้ดูแล/ผู้ช่วยต่อ Location ต่อเครื่อง (v2.2.0)
+  Loc_Members: ['Project_ID', 'Location', 'Device_ID', 'Role', 'State', 'Staff', 'Joined_At', 'State_At', 'Cover_Seq', 'Sub_Lines',
+    'Sub_Qty', 'Match', 'Sub_By', 'Ev_At', 'Updated_At'],
+  // ประวัติทุกเหตุการณ์ของ Location: เปิด เข้าร่วม ส่งงาน พัก ปิด แก้ โอน (พร้อมผลตรวจยอดกับเครื่อง)
   Loc_Checks: ['Time', 'Project_ID', 'Device_ID', 'Location', 'Event', 'Staff', 'Dev_Lines', 'Dev_Qty', 'Srv_Lines', 'Srv_Qty',
-    'Match', 'Up_To_Seq'],
+    'Match', 'Up_To_Seq', 'Note'],
   Device_Checks: ['Time', 'Device_ID', 'Staff', 'App_Version', 'Result', 'Detail'],
   Quarantine: ['Received_Time', 'Device_ID', 'Log_ID', 'Project_ID', 'Payload', 'Reason'],
   SAP_Snapshot: null,
@@ -35,7 +39,7 @@ var SHEETS = {
   Master_Check: ['Time', 'Kind', 'Master_Hash', 'Level', 'Item', 'Count', 'Result', 'Note', 'By'],
   Device_Master: ['Barcode', 'Material', 'Cust_Mat', 'Name'],
   Count_Log: ['Log_ID', 'Project_ID', 'Device_ID', 'Seq', 'Staff_Code', 'Location', 'Barcode', 'Material', 'Qty',
-    'Entry_Type', 'Ref_ID', 'Reason', 'Note', 'Scan_Time', 'Received_Time', 'Source', 'Entered_By', 'Requested_By'],
+    'Entry_Type', 'Ref_ID', 'Reason', 'Note', 'Scan_Time', 'Received_Time', 'Source', 'Entered_By', 'Requested_By', 'Basis'],
   Import_Files: ['Time', 'File_Name', 'Checksum', 'Lines', 'Existing', 'Added', 'By'],
   Dash_Data: ['Key', 'Value', 'Updated_At'],
   Count_History: ['Project_ID', 'Count_Date', 'SAP_Qty', 'Net_Count', 'Diff_Qty', 'Diff_Value', 'Diff_Items', 'Edits',
@@ -51,6 +55,7 @@ var TEXT_COLS = {
   Count_Log: ['Log_ID', 'Device_ID', 'Staff_Code', 'Location', 'Barcode', 'Material', 'Ref_ID'],
   Locations: ['Location'],
   Loc_Checks: ['Device_ID', 'Location'],
+  Loc_Members: ['Location', 'Device_ID'],
   Quarantine: ['Device_ID', 'Log_ID'],
   Staff: ['Staff_Code'],
   Devices: ['Device_ID', 'Pair_Code']
@@ -72,6 +77,7 @@ var CONFIG_DEFAULTS = [
   ['MASTER_APPROVED_PROJECT', '', 'รอบนับที่อนุมัติ Master'],
   ['MASTER_APPROVED_ACK', '', 'คำเตือนที่รับทราบแล้ว (คั่นด้วย ,)'],
   ['APP_URL', 'https://iacheckstock-dev.github.io/stockcount/app/', 'ที่อยู่เว็บแอป TC21 (GitHub Pages)'],
+  ['MEMBERS_MIGRATED', '', 'รอบที่ย้ายข้อมูล Location เป็นผู้ดูแล/ผู้ช่วยแล้ว (v2.2.0)'],
   ['API_URL', '', 'URL ของ Web app ที่เครื่องใช้ (Deployment ที่ Active ลงท้าย /exec) — ต้องตรงกับ app/config.json']
 ];
 
@@ -529,8 +535,28 @@ function apiDevicesState() {
       .map(function (s) { return { code: normStaff_(s.Staff_Code), name: s.Name, role: s.Role, active: String(s.Active).toUpperCase() !== 'N' }; }),
     quarantine: Math.max(0, q.length - 1),
     locations: locs.rows.filter(function (r) { return r[0]; }).map(function (r) { return rowObj_(locs, r); }),
+    members: membersForAdmin_(cfg.PROJECT_ID),
     imports: readRaw_('Import_Files').slice(1).slice(-20).reverse()
   };
+}
+
+function membersForAdmin_(project) {
+  if (!project) return [];
+  var mt = membersTable_();
+  return mt.rows.filter(function (r) { return r[mt.idx.Project_ID] === project; }).map(function (r) {
+    var m = rowObj_(mt, r);
+    return { location: m.Location, device: m.Device_ID, role: m.Role, state: m.State, match: m.Match, staff: m.Staff, subBy: m.Sub_By, stateAt: m.State_At };
+  });
+}
+
+/** หัวหน้าทีม: ส่งงานแทนผู้ช่วยที่ติดต่อไม่ได้ (บันทึกผู้กดและเหตุผล) */
+function apiLocSubmitFor(loc, deviceId, reason) {
+  return withLock_(function () { adminSubmitFor_(loc, deviceId, reason); return apiDevicesState(); });
+}
+
+/** หัวหน้าทีม: โอนการดูแล Location (เช่น เครื่องผู้ดูแลเสีย) */
+function apiLocTransfer(loc, toDevice, reason) {
+  return withLock_(function () { adminTransfer_(loc, toDevice, reason); return apiDevicesState(); });
 }
 
 /**

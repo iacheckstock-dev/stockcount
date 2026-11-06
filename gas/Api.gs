@@ -26,6 +26,7 @@ function doPost(e) {
     return json_({ ok: false, error: 'BAD_JSON' });
   }
   try {
+    if (req.action !== 'ping') ensureSchema_();
     var out;
     switch (req.action) {
       case 'ping': out = { ok: true }; break;
@@ -35,6 +36,8 @@ function doPost(e) {
       case 'stock': out = apiStock_(auth_(req)); break;
       case 'sync': out = apiSync_(auth_(req), req); break;
       case 'locStatus': out = apiLocStatus_(auth_(req), req); break;
+      case 'locInfo': out = apiLocInfo_(auth_(req), req); break;
+      case 'myLocs': out = apiMyLocs_(auth_(req)); break;
       case 'check': out = apiCheck_(auth_(req), req); break;
       default: out = { ok: false, error: 'UNKNOWN_ACTION' };
     }
@@ -45,6 +48,11 @@ function doPost(e) {
     var code = err && err.code ? err.code : 'SERVER_ERROR';
     return json_({ ok: false, error: code, message: String(err && err.message || err), serverTime: Date.now(), serverVersion: SYSTEM_VERSION });
   }
+}
+
+/** อัปเกรดโครงสร้างชีตอัตโนมัติหลัง Deploy เวอร์ชันใหม่ (ไม่ต้องรอเปิดหน้า Admin) */
+function ensureSchema_() {
+  if (Number(readConfig_().SCHEMA_VERSION || 0) < SCHEMA_VERSION) ensureSetup_();
 }
 
 function json_(obj) {
@@ -251,13 +259,14 @@ function deviceSeqInfo_(deviceId, projectId) {
 
 /**
  * req.entries: [{logId, seq, projectId, staff, location, barcode, material, qty, type, refId, reason, note, scanTime}]
- * req.events:  [{id, type: 'OPEN'|'CLOSE'|'EDIT', projectId, location, staff, time, lines, qty, upToSeq}]
+ * req.entries[].basis: เฉพาะ RECOUNT_SET — ยอดรวม SKU ทุกเครื่องที่เครื่องเห็นตอนแก้ (ตรวจการแก้ชนกัน)
+ * req.events:  [{id, type: 'OPEN'|'JOIN'|'SUBMIT'|'PAUSE'|'CLOSE'|'EDIT', projectId, location, staff, time, lines, qty, fromSeq, upToSeq, total, auto, at}]
  */
 function apiSync_(a, req) {
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(25000)) throw apiError_('BUSY', 'เซิร์ฟเวอร์กำลังรับข้อมูลจากเครื่องอื่น จะลองส่งใหม่อัตโนมัติ');
   try {
-    var res = ingest_(a.deviceId, req.entries || [], req.events || [], 'SYNC', a.device);
+    var res = ingest_(a.deviceId, req.entries || [], req.events || [], 'SYNC', a.device, a.appVersion);
     putRow_(a.table, a.row, { Last_Seq: res.seq.max, Last_Sync: now_(), App_Version: a.appVersion, Gaps: res.seq.gaps.length });
     res.ok = true;
     var cfg = readConfig_();
@@ -273,7 +282,7 @@ function apiSync_(a, req) {
  * รวมรายการเข้า Count_Log (ใช้ทั้ง sync และนำเข้าไฟล์)
  * คืน { accepted:[], duplicate:[], quarantined:[], rejected:[{logId,reason}], events:[{id, location, match}], seq }
  */
-function ingest_(deviceId, entries, events, source, device) {
+function ingest_(deviceId, entries, events, source, device, appVersion) {
   var cfg = readConfig_();
   var project = cfg.PROJECT_ID;
   var statusOk = SYNC_STATUSES.indexOf(cfg.ROUND_STATUS) >= 0;
@@ -282,6 +291,9 @@ function ingest_(deviceId, entries, events, source, device) {
   var rows = [], qrows = [];
   var received = now_();
   var qIds = null;
+  if (project && statusOk) migrateMembers_(project);
+  var basis = source === 'SYNC' ? basisChecker_(project) : null;
+  var touched = {};
 
   entries.forEach(function (e) {
     var logId = String(e.logId || '');
@@ -300,9 +312,13 @@ function ingest_(deviceId, entries, events, source, device) {
       return;
     }
     idx.ids[logId] = true;
+    var loc = normLoc_(e.location);
+    if (basis) { basis.check(e, loc, deviceId); basis.added(e, loc, deviceId); }
+    if (loc) touched[loc] = true;
     var row = [logId, project, deviceId, Number(e.seq), normStaff_(e.staff), normLoc_(e.location), String(e.barcode || ''),
       String(e.material || ''), Number(e.qty), e.type, String(e.refId || ''), String(e.reason || ''), String(e.note || ''),
-      String(e.scanTime || ''), received, source, normStaff_(e.enteredBy || e.staff), normStaff_(e.requestedBy || '')];
+      String(e.scanTime || ''), received, source, normStaff_(e.enteredBy || e.staff), normStaff_(e.requestedBy || ''),
+      e.basis === undefined || e.basis === null ? '' : String(e.basis)];
     rows.push(row);
     idx.rows.push([logId, project, deviceId, String(e.seq)]);
     out.accepted.push(logId);
@@ -318,9 +334,25 @@ function ingest_(deviceId, entries, events, source, device) {
     logAdmin_('ROUND_COUNTING', project, 'เริ่มนับ (ได้รับรายการแรกจาก ' + deviceId + ')');
   }
 
+  if (basis && basis.problems.length) flagCheck_(project, deviceId, basis.problems);
   if (events.length) out.events = applyLocEvents_(deviceId, events, project, source);
+  // รายการที่อาจเปลี่ยนสถานะ Location (ส่งงานแล้วแต่ยิงต่อ / เข้ามาหลังปิด / ยังไม่มีสมาชิก)
+  var need = needRefresh_(project, deviceId, Object.keys(touched));
+  if (basis) basis.problems.forEach(function (p) { if (need.indexOf(p.loc) < 0) need.push(p.loc); });
+  if (need.length) refreshLocations_(project, need);
   out.seq = seqStats_(idx.rows, deviceId, project);
   return out;
+}
+
+function needRefresh_(project, deviceId, locs) {
+  if (!locs.length || !project) return [];
+  var mt = membersTable_();
+  return locs.filter(function (loc) {
+    var list = membersOf_(mt, project, loc);
+    var me = list.filter(function (x) { return x.m.Device_ID === deviceId; })[0];
+    var owner = list.filter(function (x) { return x.m.Role === 'OWNER'; })[0];
+    return !me || me.m.State !== 'COUNTING' || (owner && owner.m.State === 'CLOSED');
+  });
 }
 
 function validateEntry_(e, deviceId, source) {
@@ -351,15 +383,140 @@ function quarantineIds_() {
   return ids;
 }
 
-// ---------- Location ----------
+// ---------- Location: ผู้ดูแล / ผู้ช่วย (v2.2.0) ----------
+//
+// หลักการ
+// - เครื่องแรกที่เปิด Location = ผู้ดูแล (OWNER) แก้ยอด ล้าง และปิดได้
+// - เครื่องที่มาทีหลัง = ผู้ช่วย (HELPER) ยิงได้ ยกเลิกรายการของตัวเองได้ ดูยอดรวมได้ และ "ส่งงาน"
+// - เซิร์ฟเวอร์เป็นตัวตัดสินบทบาทเสมอ (กรณีสองเครื่องเปิดพร้อมกัน / เปิดตอนออฟไลน์)
+// - สถานะต่อเครื่อง (Loc_Members): COUNTING กำลังนับ · PAUSED พัก (ผู้ดูแล) · SUBMITTED ส่งงานแล้ว · CLOSED ปิดแล้ว (ผู้ดูแล)
+// - Cover_Seq = เลข Seq สูงสุดที่การส่งงาน/พัก/ปิดครั้งล่าสุดครอบคลุม ใช้ตรวจ "มีรายการหลังปิด"
 
+var ROLE_TH = { OWNER: 'ผู้ดูแล', HELPER: 'ผู้ช่วย' };
+var STATE_TH = { COUNTING: 'กำลังนับ', PAUSED: 'พัก', SUBMITTED: 'ส่งงานแล้ว', CLOSED: 'ปิดแล้ว' };
+var FLAG_AFTER_CLOSE = 'มีรายการหลังปิด — ตรวจซ้ำ';
+
+function itemKey_(material, barcode) { return material ? String(material) : 'BC:' + String(barcode || ''); }
+
+/** อ่าน Count_Log ครั้งเดียว สรุปต่อ Location: ต่อเครื่อง และต่อ SKU (รวมทุกเครื่อง) */
+function locData_(project, onlyLocs) {
+  var sh = SpreadsheetApp.getActive().getSheetByName('Count_Log');
+  var n = sh.getLastRow() - 1;
+  var vals = n > 0 ? sh.getRange(2, 1, n, 14).getDisplayValues() : [];
+  var want = onlyLocs ? {} : null;
+  if (onlyLocs) onlyLocs.forEach(function (l) { want[l] = true; });
+  var out = {};
+  vals.forEach(function (r) {
+    if (r[1] !== project) return;
+    var loc = r[5];
+    if (!loc || (want && !want[loc])) return;
+    var L = out[loc] || (out[loc] = { devices: {}, items: {}, qty: 0, lines: 0 });
+    var qty = Number(r[8]) || 0, seq = Number(r[3]) || 0;
+    var d = L.devices[r[2]] || (L.devices[r[2]] = { lines: 0, qty: 0, maxSeq: 0, lastTime: '', seqs: [] });
+    d.lines++; d.qty += qty; if (seq > d.maxSeq) d.maxSeq = seq; if (r[13] > d.lastTime) d.lastTime = r[13];
+    d.seqs.push(seq);
+    var k = itemKey_(r[7], r[6]);
+    var it = L.items[k] || (L.items[k] = { key: k, material: r[7], barcode: r[6], qty: 0, byDevice: {} });
+    it.qty += qty; it.byDevice[r[2]] = (it.byDevice[r[2]] || 0) + qty;
+    if (!it.barcode && r[6]) it.barcode = r[6];
+    L.qty += qty; L.lines++;
+  });
+  Object.keys(out).forEach(function (loc) {
+    var L = out[loc];
+    L.qty = r3_(L.qty);
+    Object.keys(L.devices).forEach(function (d) { L.devices[d].qty = r3_(L.devices[d].qty); });
+    Object.keys(L.items).forEach(function (k) { L.items[k].qty = r3_(L.items[k].qty); });
+  });
+  return out;
+}
+
+function r3_(n) { return Math.round(Number(n || 0) * 1000) / 1000; }
+
+// ---------- Loc_Members ----------
+
+function membersTable_() { return table_('Loc_Members'); }
+
+function membersOf_(t, project, loc) {
+  var list = [];
+  t.rows.forEach(function (r, i) {
+    if (r[t.idx.Project_ID] === project && r[t.idx.Location] === loc) list.push({ i: i, m: rowObj_(t, r) });
+  });
+  return list;
+}
+
+function memberIdx_(t, project, loc, deviceId) {
+  for (var i = 0; i < t.rows.length; i++) {
+    var r = t.rows[i];
+    if (r[t.idx.Project_ID] === project && r[t.idx.Location] === loc && r[t.idx.Device_ID] === deviceId) return i;
+  }
+  return -1;
+}
+
+function ownerOf_(t, project, loc) {
+  var list = membersOf_(t, project, loc);
+  for (var k = 0; k < list.length; k++) if (list[k].m.Role === 'OWNER') return list[k];
+  return null;
+}
+
+function putMember_(t, project, loc, deviceId, obj) {
+  var i = memberIdx_(t, project, loc, deviceId);
+  var base = { Project_ID: project, Location: loc, Device_ID: deviceId, Updated_At: now_() };
+  if (i < 0) base.Joined_At = now_();
+  putRow_(t, i, Object.assign(base, obj));
+}
+
+/**
+ * ย้ายข้อมูลจากรุ่นก่อน 2.2.0 (ครั้งเดียวต่อรอบ): เครื่องใน Open_By หรือเครื่องแรก = ผู้ดูแล เครื่องอื่น = ผู้ช่วยที่ส่งงานแล้ว
+ * ยอดเดิมใน Count_Log ไม่ถูกแก้
+ */
+function migrateMembers_(project) {
+  var cfg = readConfig_();
+  if (!project || cfg.MEMBERS_MIGRATED === project) return;
+  var t = membersTable_();
+  var has = t.rows.some(function (r) { return r[t.idx.Project_ID] === project; });
+  if (!has) {
+    var data = locData_(project);
+    var locs = table_('Locations');
+    var n = 0;
+    locs.rows.forEach(function (r) {
+      var l = rowObj_(locs, r), D = data[l.Location];
+      if (!l.Location || !D) return;
+      var devs = Object.keys(D.devices);
+      var owner = String(l.Open_By || '').split(' ')[0];
+      if (devs.indexOf(owner) < 0) owner = String(l.Devices || '').split(',').filter(function (x) { return devs.indexOf(x) >= 0; })[0] || devs[0];
+      var closed = l.Status === 'ปิดแล้ว';
+      devs.forEach(function (d) {
+        var info = D.devices[d];
+        var own = d === owner;
+        putMember_(t, project, l.Location, d, {
+          Role: own ? 'OWNER' : 'HELPER', State: own ? (closed ? 'CLOSED' : 'PAUSED') : 'SUBMITTED', Staff: '',
+          State_At: now_(), Cover_Seq: info.maxSeq, Sub_Lines: info.lines, Sub_Qty: info.qty, Match: 'OK', Sub_By: 'MIGRATE', Ev_At: 0
+        });
+        n++;
+      });
+    });
+    if (n) logAdmin_('MIGRATE_MEMBERS', project, 'กำหนดผู้ดูแล/ผู้ช่วยจากข้อมูลเดิม ' + n + ' รายการ (v2.2.0)');
+  }
+  setConfig_({ MEMBERS_MIGRATED: project });
+}
+
+// ---------- รับเหตุการณ์ Location จากเครื่อง ----------
+
+/**
+ * ev.type: OPEN | JOIN | SUBMIT | PAUSE | CLOSE | EDIT
+ * ev.lines/qty/fromSeq/upToSeq = ยอดของเครื่องนี้ใน Location (ตรวจว่าเซิร์ฟเวอร์ได้รับครบ)
+ * ev.total = ยอดรวมทุกเครื่องที่ผู้ดูแลเห็นตอนปิด · ev.auto = ส่งงานอัตโนมัติ (ยิงป้ายที่อื่น) · ev.at = เวลาสร้าง (ms)
+ */
 function applyLocEvents_(deviceId, events, project, source) {
+  migrateMembers_(project);
   var log = SpreadsheetApp.getActive().getSheetByName('Count_Log');
   var n = log.getLastRow() - 1;
   var all = n > 0 ? log.getRange(2, 1, n, 9).getDisplayValues() : [];
   var locs = table_('Locations');
+  var mt = membersTable_();
   var checks = [];
   var out = [];
+  var touched = {};
   var have = {};
   all.forEach(function (r) { if (r[1] === project && r[2] === deviceId) have[Number(r[3])] = true; });
   events.forEach(function (ev) {
@@ -372,64 +529,367 @@ function applyLocEvents_(deviceId, events, project, source) {
     });
     // ยังได้รับรายการของเครื่องนี้ไม่ครบถึง upToSeq → ยังตัดสินไม่ได้ (WAIT)
     for (var s = Number(ev.fromSeq) || upTo + 1; s <= upTo; s++) if (!have[s]) { missing++; break; }
-    srvQty = Math.round(srvQty * 1000) / 1000;
+    srvQty = r3_(srvQty);
     var match = missing ? 'WAIT' : (srvLines === Number(ev.lines) && srvQty === Number(ev.qty) ? 'OK' : 'MISMATCH');
-    if (ev.type === 'CLOSE' || ev.type === 'EDIT') {
-      checks.push([now_(), project, deviceId, loc, ev.type, normStaff_(ev.staff), Number(ev.lines) || 0, Number(ev.qty) || 0,
-        srvLines, srvQty, match, upTo]);
+    var res = applyRole_(mt, locs, project, loc, deviceId, ev, match, upTo);
+    if (ev.type !== 'OPEN' && ev.type !== 'JOIN' || res.note) {
+      checks.push([now_(), project, deviceId, loc, res.logType || ev.type, normStaff_(ev.staff), Number(ev.lines) || 0, Number(ev.qty) || 0,
+        srvLines, srvQty, ev.type === 'OPEN' || ev.type === 'JOIN' ? '' : match, upTo, res.note || '']);
+    } else {
+      checks.push([now_(), project, deviceId, loc, ev.type, normStaff_(ev.staff), '', '', '', '', '', '', ROLE_TH[res.role] || '']);
     }
-    upsertLocation_(locs, loc, ev, deviceId, match);
-    out.push({ id: ev.id, location: loc, match: ev.type === 'OPEN' ? 'OPEN' : match, srvLines: srvLines, srvQty: srvQty });
+    touched[loc] = true;
+    out.push({ id: ev.id, location: loc, match: ev.type === 'OPEN' || ev.type === 'JOIN' ? 'OPEN' : match, srvLines: srvLines, srvQty: srvQty,
+      role: res.role, owner: res.owner, state: res.state });
   });
   if (checks.length) appendRows_(SpreadsheetApp.getActive().getSheetByName('Loc_Checks'), checks);
+  refreshLocations_(project, Object.keys(touched), locs, mt);
   return out;
 }
 
-function upsertLocation_(t, loc, ev, deviceId, match) {
-  var i = -1;
-  for (var k = 0; k < t.rows.length; k++) if (t.rows[k][t.idx.Location] === loc) { i = k; break; }
-  var cur = i >= 0 ? rowObj_(t, t.rows[i]) : {};
-  function addTo(list, v) {
-    var a = String(list || '').split(',').filter(String);
-    if (v && a.indexOf(v) < 0) a.push(v);
-    return a.join(',');
+/** ตัดสินบทบาทและสถานะของเครื่องใน Location ตามเหตุการณ์ คืน { role, owner, state, note, logType } */
+function applyRole_(mt, locs, project, loc, deviceId, ev, match, upTo) {
+  var owner = ownerOf_(mt, project, loc);
+  var mi = memberIdx_(mt, project, loc, deviceId);
+  var me = mi >= 0 ? rowObj_(mt, mt.rows[mi]) : null;
+  var isOwner = owner && owner.m.Device_ID === deviceId;
+  var at = Number(ev.at) || 0;
+  var staff = normStaff_(ev.staff);
+  var li = locIdx_(locs, loc);
+  var L = li >= 0 ? rowObj_(locs, locs.rows[li]) : {};
+  var closed = owner && owner.m.State === 'CLOSED';
+  var res = { owner: owner ? owner.m.Device_ID : deviceId };
+  // เหตุการณ์ที่เก่ากว่าที่ใช้ไปแล้ว (ส่งซ้ำหลัง WAIT) ไม่เปลี่ยนสถานะ แต่ยังบันทึกผลตรวจ
+  var stale = me && at && Number(me.Ev_At) > at;
+  function set(obj) { if (!stale) putMember_(mt, project, loc, deviceId, Object.assign({ Staff: staff, Ev_At: at || me && me.Ev_At || 0 }, obj)); }
+  function locSet(obj) { if (!stale) putRow_(locs, li, Object.assign({ Location: loc, Zone: (loc.match(/^[A-Z]+/) || [''])[0], Updated_At: now_() }, obj)); li = locIdx_(locs, loc); }
+  function submit(by) {
+    set({ Role: me ? me.Role : 'HELPER', State: 'SUBMITTED', State_At: now_(), Cover_Seq: upTo, Sub_Lines: Number(ev.lines) || 0, Sub_Qty: Number(ev.qty) || 0, Match: match, Sub_By: by });
+    res.role = me ? me.Role : 'HELPER'; res.state = 'SUBMITTED';
   }
-  var upd = {
-    Location: loc,
-    Zone: (loc.match(/^[A-Z]+/) || [''])[0],
-    Counters: addTo(cur.Counters, normStaff_(ev.staff)),
-    Devices: addTo(cur.Devices, deviceId),
-    Updated_At: now_()
-  };
-  if (ev.type === 'OPEN') {
-    upd.Status = 'กำลังนับ';
-    upd.Open_By = deviceId + ' ' + normStaff_(ev.staff);
-    if (!cur.Opened_At) upd.Opened_At = String(ev.time || now_());
-  } else if (ev.type === 'CLOSE') {
-    upd.Status = 'ปิดแล้ว';
-    upd.Open_By = '';
-    upd.Closed_Time = String(ev.time || now_());
-    upd.Last_Check = match;
-  } else if (ev.type === 'EDIT') {
-    upd.Last_Check = match;
-    upd.Edits = (parseInt(cur.Edits, 10) || 0) + 1;
+
+  switch (ev.type) {
+    case 'OPEN':
+    case 'JOIN':
+      if (!owner || isOwner) {
+        res.role = 'OWNER'; res.owner = deviceId; res.state = 'COUNTING';
+        if (closed) res.note = 'ผู้ดูแลเปิดแก้ไขหลังปิด';
+        set({ Role: 'OWNER', State: 'COUNTING', State_At: now_() });
+        locSet({ Opened_At: L.Opened_At || String(ev.time || now_()) });
+      } else {
+        res.role = 'HELPER'; res.state = 'COUNTING';
+        if (ev.type === 'OPEN') res.note = 'มีผู้ดูแลแล้ว (' + owner.m.Device_ID + ') — เป็นผู้ช่วย';
+        if (closed) res.note = (res.note ? res.note + ' · ' : '') + 'เข้าร่วมหลังผู้ดูแลปิดแล้ว';
+        if (me && me.State === 'SUBMITTED') res.note = (res.note ? res.note + ' · ' : '') + 'กลับมาช่วยอีกครั้ง';
+        set({ Role: 'HELPER', State: 'COUNTING', State_At: now_() });
+      }
+      break;
+    case 'SUBMIT':
+      if (isOwner || (!owner && !me)) {
+        // ผู้ดูแลกดส่งงานไม่ได้ในแอป ถ้าเกิดขึ้นให้ถือเป็นการพัก
+        set({ Role: 'OWNER', State: 'PAUSED', State_At: now_(), Cover_Seq: upTo, Sub_Lines: Number(ev.lines) || 0, Sub_Qty: Number(ev.qty) || 0, Match: match });
+        res.role = 'OWNER'; res.state = 'PAUSED'; res.logType = 'PAUSE';
+      } else { submit(ev.auto ? 'AUTO' : 'SELF'); if (ev.auto) res.note = 'ส่งงานอัตโนมัติ (ยิงป้าย Location อื่น)'; }
+      break;
+    case 'PAUSE':
+      if (isOwner || !owner) {
+        set({ Role: 'OWNER', State: 'PAUSED', State_At: now_(), Cover_Seq: upTo, Sub_Lines: Number(ev.lines) || 0, Sub_Qty: Number(ev.qty) || 0, Match: match });
+        res.role = 'OWNER'; res.state = 'PAUSED';
+      } else { submit('AUTO'); res.logType = 'SUBMIT'; res.note = 'ส่งงานอัตโนมัติ (ยิงป้าย Location อื่น)'; }
+      break;
+    case 'CLOSE':
+      if (owner && !isOwner) {
+        // แอปรุ่นเก่า (ก่อน 2.2.0) ปิดอัตโนมัติเมื่อยิงป้ายใหม่ → สำหรับผู้ช่วยถือเป็นการส่งงาน
+        submit('CLOSE'); res.logType = 'SUBMIT'; res.note = 'ผู้ช่วยกดปิด/ยิงป้ายอื่น ถือเป็นส่งงาน';
+        break;
+      }
+      set({ Role: 'OWNER', State: 'CLOSED', State_At: now_(), Cover_Seq: upTo, Sub_Lines: Number(ev.lines) || 0, Sub_Qty: Number(ev.qty) || 0, Match: match });
+      res.role = 'OWNER'; res.owner = deviceId; res.state = 'CLOSED';
+      if (stale) break;
+      // ครอบคลุมตอนปิด: ผู้ดูแล = upTo ของเหตุการณ์ปิด, ผู้ช่วย = Cover_Seq ของการส่งงานล่าสุด (ถ้ายังไม่ส่งงาน = 0)
+      var cover = {}, waiting = [];
+      membersOf_(mt, project, loc).forEach(function (x) {
+        if (x.m.Device_ID === deviceId) { cover[deviceId] = upTo; return; }
+        var ok = x.m.State === 'SUBMITTED' && x.m.Match === 'OK';
+        cover[x.m.Device_ID] = x.m.State === 'SUBMITTED' ? Number(x.m.Cover_Seq) || 0 : 0;
+        if (!ok) waiting.push(x.m.Device_ID);
+      });
+      var upd = { Status: 'ปิดแล้ว', Closed_Time: String(ev.time || now_()), Last_Check: match, Close_Cover: JSON.stringify(cover),
+        Close_Total: ev.total === undefined || ev.total === '' ? '' : Number(ev.total) };
+      if (match === 'OK') {
+        var reasons = [];
+        if (waiting.length) reasons.push('ปิดขณะผู้ช่วยยังไม่ส่งงาน (' + waiting.join(', ') + ')');
+        if (ev.total !== undefined && ev.total !== '') {
+          var srvTotal = r3_((locData_(project, [loc])[loc] || { qty: 0 }).qty);
+          if (srvTotal !== r3_(ev.total)) reasons.push('ยอดตอนปิด ' + ev.total + ' ≠ เซิร์ฟเวอร์ ' + srvTotal);
+        }
+        upd.Flag_Check = reasons.join(' · ');
+        if (reasons.length) res.note = reasons.join(' · ');
+      }
+      locSet(upd);
+      break;
+    case 'EDIT':
+      locSet({ Last_Check: match, Edits: (parseInt(L.Edits, 10) || 0) + 1 });
+      res.role = me ? me.Role : ''; res.state = me ? me.State : '';
+      break;
   }
-  putRow_(t, i, upd);
+  return res;
 }
 
-/** ตรวจว่ามีเครื่องอื่นเปิด Location นี้อยู่หรือไม่ (ใช้เตือนตอนออนไลน์) */
-function apiLocStatus_(a, req) {
-  var loc = normLoc_(req.location);
-  var t = table_('Locations');
-  for (var k = 0; k < t.rows.length; k++) {
-    var r = rowObj_(t, t.rows[k]);
-    if (r.Location === loc) {
-      var openBy = String(r.Open_By || '');
-      var other = openBy && openBy.split(' ')[0] !== a.deviceId ? openBy : '';
-      return { ok: true, location: loc, status: r.Status, openByOther: other, devices: r.Devices, counters: r.Counters };
+function locIdx_(t, loc) {
+  for (var k = 0; k < t.rows.length; k++) if (t.rows[k][t.idx.Location] === loc) return k;
+  return -1;
+}
+
+/**
+ * คำนวณสถานะรวมของ Location ใหม่จาก Loc_Members + Count_Log
+ * - ผู้ช่วยที่ส่งงานแล้วแต่มีรายการใหม่หลังส่งงาน → กลับเป็นกำลังนับ (ผู้ดูแลปิดไม่ได้จนกว่าจะส่งงานใหม่)
+ * - Location ที่ปิดแล้วแต่มีรายการเกินที่ครอบคลุมตอนปิด → ติดธง "มีรายการหลังปิด — ตรวจซ้ำ"
+ */
+function refreshLocations_(project, locNames, locs, mt) {
+  if (!locNames.length) return;
+  locs = locs || table_('Locations');
+  mt = mt || membersTable_();
+  var data = locData_(project, locNames);
+  locNames.forEach(function (loc) {
+    var D = data[loc] || { devices: {}, qty: 0 };
+    var list = membersOf_(mt, project, loc);
+    list.forEach(function (x) {
+      var dev = D.devices[x.m.Device_ID];
+      if (!dev) return;
+      var cover = Number(x.m.Cover_Seq) || 0;
+      if ((x.m.State === 'SUBMITTED' || x.m.State === 'PAUSED') && dev.maxSeq > cover) {
+        putRow_(mt, x.i, { State: 'COUNTING', State_At: now_(), Updated_At: now_() });
+        x.m.State = 'COUNTING';
+      }
+    });
+    // เครื่องที่มีรายการใน Location แต่ยังไม่มีใน Loc_Members (เช่น นำเข้าจากไฟล์) → เพิ่มเป็นผู้ช่วย
+    Object.keys(D.devices).forEach(function (d) {
+      if (list.some(function (x) { return x.m.Device_ID === d; })) return;
+      var hasOwner = list.some(function (x) { return x.m.Role === 'OWNER'; });
+      putMember_(mt, project, loc, d, { Role: hasOwner ? 'HELPER' : 'OWNER', State: 'COUNTING', State_At: now_(), Staff: '', Ev_At: 0 });
+    });
+    list = membersOf_(mt, project, loc);
+    var owner = list.filter(function (x) { return x.m.Role === 'OWNER'; })[0];
+    var li = locIdx_(locs, loc);
+    var L = li >= 0 ? rowObj_(locs, locs.rows[li]) : {};
+    var closed = owner && owner.m.State === 'CLOSED';
+    var counting = list.some(function (x) { return x.m.State === 'COUNTING'; });
+    var after = false;
+    if (closed) {
+      var cover = {};
+      try { cover = JSON.parse(L.Close_Cover || '{}'); } catch (e) { cover = {}; }
+      Object.keys(D.devices).forEach(function (d) { if (D.devices[d].maxSeq > (Number(cover[d]) || 0)) after = true; });
     }
+    var helpers = list.filter(function (x) { return x.m.Role === 'HELPER'; });
+    var done = helpers.filter(function (x) { return x.m.State === 'SUBMITTED' && x.m.Match === 'OK'; }).length;
+    var flags = [];
+    if (after) flags.push(FLAG_AFTER_CLOSE);
+    if (L.Flag_Check) flags.push(L.Flag_Check);
+    var counters = {};
+    list.forEach(function (x) { if (x.m.Staff) counters[x.m.Staff] = true; });
+    String(L.Counters || '').split(',').filter(String).forEach(function (c) { counters[c] = true; });
+    putRow_(locs, li, {
+      Location: loc, Zone: (loc.match(/^[A-Z]+/) || [''])[0],
+      Status: closed ? 'ปิดแล้ว' : counting ? 'กำลังนับ' : 'พัก',
+      Status_Detail: list.length > 1 ? list.length + ' เครื่อง · ผู้ช่วยส่งงานแล้ว ' + done + '/' + helpers.length : '',
+      Owner: owner ? owner.m.Device_ID + (owner.m.Staff ? ' ' + owner.m.Staff : '') : '',
+      Open_By: owner && !closed ? owner.m.Device_ID + (owner.m.Staff ? ' ' + owner.m.Staff : '') : '',
+      Members: list.map(function (x) {
+        return x.m.Device_ID + ' ' + (ROLE_TH[x.m.Role] || '') + ' ' + (STATE_TH[x.m.State] || x.m.State) +
+          (x.m.State === 'SUBMITTED' && x.m.Match !== 'OK' ? ' (รอข้อมูล)' : '') + (x.m.Sub_By === 'ADMIN' ? ' (แทนโดยหัวหน้าทีม)' : '');
+      }).join(' · '),
+      Devices: list.map(function (x) { return x.m.Device_ID; }).join(','),
+      Counters: Object.keys(counters).join(','),
+      Flag: flags.join(' · '),
+      Updated_At: now_()
+    });
+  });
+}
+
+// ---------- ตรวจ "ยอดที่เห็นตอนแก้" (Control 8) ----------
+
+/**
+ * เรียกจาก ingest_ ก่อนบันทึกรายการ RECOUNT_SET: เทียบยอด SKU รวมทุกเครื่องบนเซิร์ฟเวอร์ ณ ตอนนั้น กับ basis ที่เครื่องเห็นตอนแก้
+ * ไม่ตรง = มีเครื่องอื่นยิง/แก้ SKU นี้ระหว่างนั้น → ติดธง "ต้องตรวจซ้ำ"
+ * แก้จากแอปรุ่นเก่า (ไม่มี basis) ขณะ Location มีหลายเครื่อง → ติดธงเช่นกัน
+ */
+function basisChecker_(project) {
+  var map = null, devs = null;
+  function load() {
+    map = {}; devs = {};
+    var sh = SpreadsheetApp.getActive().getSheetByName('Count_Log');
+    var n = sh.getLastRow() - 1;
+    var vals = n > 0 ? sh.getRange(2, 1, n, 9).getDisplayValues() : [];
+    vals.forEach(function (r) { if (r[1] === project) add(r[5], r[7], r[6], r[8], r[2]); });
   }
-  return { ok: true, location: loc, status: '', openByOther: '' };
+  function add(loc, mat, bc, qty, dev) {
+    var k = loc + '|' + itemKey_(mat, bc);
+    map[k] = r3_((map[k] || 0) + (Number(qty) || 0));
+    (devs[loc] || (devs[loc] = {}))[dev] = true;
+  }
+  var problems = [];
+  return {
+    check: function (e, loc, deviceId) {
+      if (e.type !== 'RECOUNT_SET') return;
+      if (!map) load();
+      var k = loc + '|' + itemKey_(e.material, e.barcode);
+      var cur = map[k] || 0;
+      if (e.basis === undefined || e.basis === null || e.basis === '') {
+        var ds = Object.keys(devs[loc] || {});
+        if (ds.length > 1 || (ds.length === 1 && ds[0] !== deviceId)) problems.push({ loc: loc, note: 'แก้ยอดจากแอปรุ่นเก่าขณะมีหลายเครื่อง (' + (e.material || e.barcode) + ')' });
+        return;
+      }
+      if (r3_(e.basis) !== cur) problems.push({ loc: loc, note: 'ยอดเปลี่ยนระหว่างแก้ ' + (e.material || e.barcode) + ': เห็น ' + r3_(e.basis) + ' เซิร์ฟเวอร์ ' + cur });
+    },
+    added: function (e, loc, deviceId) { if (map) add(loc, e.material, e.barcode, e.qty, deviceId); },
+    problems: problems
+  };
+}
+
+function flagCheck_(project, deviceId, problems) {
+  if (!problems.length) return;
+  var locs = table_('Locations');
+  var rows = [];
+  var byLoc = {};
+  problems.forEach(function (p) { (byLoc[p.loc] || (byLoc[p.loc] = [])).push(p.note); rows.push([now_(), project, deviceId, p.loc, 'EDIT_CONFLICT', '', '', '', '', '', 'ต้องตรวจซ้ำ', '', p.note]); });
+  Object.keys(byLoc).forEach(function (loc) {
+    var li = locIdx_(locs, loc);
+    var cur = li >= 0 ? String(rowObj_(locs, locs.rows[li]).Flag_Check || '') : '';
+    var note = 'ต้องตรวจซ้ำ: ' + byLoc[loc].join(' · ');
+    putRow_(locs, li, { Location: loc, Zone: (loc.match(/^[A-Z]+/) || [''])[0], Flag_Check: (cur ? cur + ' · ' : '') + note, Updated_At: now_() });
+  });
+  appendRows_(SpreadsheetApp.getActive().getSheetByName('Loc_Checks'), rows);
+}
+
+// ---------- ข้อมูล Location สำหรับเครื่อง ----------
+
+function memberView_(m, D, staffNames) {
+  var dev = (D && D.devices[m.Device_ID]) || { lines: 0, qty: 0, lastTime: '' };
+  return {
+    device: m.Device_ID, staff: m.Staff, name: staffNames[m.Staff] || '', role: m.Role, state: m.State, match: m.Match,
+    subBy: m.Sub_By, lines: dev.lines, qty: dev.qty, lastTime: dev.lastTime, stateAt: m.State_At
+  };
+}
+
+function staffNames_() {
+  var t = table_('Staff'), out = {};
+  t.rows.forEach(function (r) { var s = rowObj_(t, r); if (s.Staff_Code) out[normStaff_(s.Staff_Code)] = s.Name; });
+  return out;
+}
+
+/**
+ * รายละเอียด Location: ผู้ดูแล ผู้ช่วย สถานะต่อเครื่อง และยอดต่อ SKU ของ "เครื่องอื่น"
+ * (เครื่องที่ถามนำยอดของตัวเองในเครื่องมารวมเอง เพราะอาจมีรายการที่ยังไม่ได้ส่ง)
+ */
+function apiLocInfo_(a, req) {
+  var cfg = readConfig_(), project = cfg.PROJECT_ID;
+  migrateMembers_(project);
+  var loc = normLoc_(req.location);
+  var D = locData_(project, [loc])[loc] || { devices: {}, items: {}, qty: 0, lines: 0 };
+  var mt = membersTable_();
+  var names = staffNames_();
+  var list = membersOf_(mt, project, loc).map(function (x) { return memberView_(x.m, D, names); });
+  var owner = list.filter(function (m) { return m.role === 'OWNER'; })[0] || null;
+  var me = list.filter(function (m) { return m.device === a.deviceId; })[0] || null;
+  var others = [], othersQty = 0;
+  Object.keys(D.items).forEach(function (k) {
+    var it = D.items[k];
+    var q = r3_(it.qty - (it.byDevice[a.deviceId] || 0));
+    if (q !== 0 || Object.keys(it.byDevice).some(function (d) { return d !== a.deviceId; })) others.push([k, it.material, it.barcode, q]);
+    othersQty += q;
+  });
+  var t = table_('Locations'), li = locIdx_(t, loc);
+  var L = li >= 0 ? rowObj_(t, t.rows[li]) : {};
+  return {
+    ok: true, location: loc, status: L.Status || '', flag: L.Flag || '', owner: owner, me: me, members: list,
+    others: { items: others, qty: r3_(othersQty) }, total: D.qty
+  };
+}
+
+/** Location ที่เครื่องนี้เคยร่วมนับในรอบนี้ + ชื่อ Location ทั้งหมดในรอบ (ใช้เตือนพิมพ์ชื่อผิด) */
+function apiMyLocs_(a) {
+  var cfg = readConfig_(), project = cfg.PROJECT_ID;
+  migrateMembers_(project);
+  var mt = membersTable_();
+  var mine = {};
+  mt.rows.forEach(function (r) {
+    if (r[mt.idx.Project_ID] === project && r[mt.idx.Device_ID] === a.deviceId) mine[r[mt.idx.Location]] = rowObj_(mt, r);
+  });
+  var t = table_('Locations');
+  var data = locData_(project, Object.keys(mine));
+  var count = {};
+  mt.rows.forEach(function (r) { if (r[mt.idx.Project_ID] === project) count[r[mt.idx.Location]] = (count[r[mt.idx.Location]] || 0) + 1; });
+  var names = {};
+  t.rows.forEach(function (r) { var l = r[t.idx.Location]; if (l && count[l]) names[l] = true; });
+  Object.keys(count).forEach(function (l) { names[l] = true; });
+  var list = Object.keys(mine).map(function (loc) {
+    var m = mine[loc], li = locIdx_(t, loc), L = li >= 0 ? rowObj_(t, t.rows[li]) : {};
+    var D = data[loc] || { qty: 0 };
+    return { location: loc, role: m.Role, state: m.State, match: m.Match, status: L.Status || '', total: D.qty, devices: count[loc] || 1, flag: L.Flag || '', owner: L.Owner || '' };
+  });
+  return { ok: true, locs: list, names: Object.keys(names) };
+}
+
+/** รุ่นเก่า (ก่อน 2.2.0) ยังเรียก locStatus — คืนผู้ดูแลถ้าเป็นเครื่องอื่น */
+function apiLocStatus_(a, req) {
+  var cfg = readConfig_(), project = cfg.PROJECT_ID;
+  migrateMembers_(project);
+  var loc = normLoc_(req.location);
+  var mt = membersTable_();
+  var owner = ownerOf_(mt, project, loc);
+  var t = table_('Locations'), li = locIdx_(t, loc);
+  var L = li >= 0 ? rowObj_(t, t.rows[li]) : {};
+  var other = owner && owner.m.Device_ID !== a.deviceId ? owner.m.Device_ID + (owner.m.Staff ? ' ' + owner.m.Staff : '') : '';
+  return { ok: true, location: loc, status: L.Status || '', openByOther: other, devices: L.Devices || '', counters: L.Counters || '' };
+}
+
+// ---------- หัวหน้าทีม (หน้า Admin) ----------
+
+/** ส่งงานแทนผู้ช่วยที่ติดต่อไม่ได้: ใช้ยอดที่เซิร์ฟเวอร์ได้รับแล้ว รายการที่มาทีหลังจะทำให้กลับเป็น "กำลังนับ" หรือติดธงหลังปิด */
+function adminSubmitFor_(loc, deviceId, reason) {
+  var project = readConfig_().PROJECT_ID;
+  migrateMembers_(project);
+  loc = normLoc_(loc);
+  var mt = membersTable_();
+  var i = memberIdx_(mt, project, loc, deviceId);
+  if (i < 0) throw new Error(deviceId + ' ไม่ได้ร่วมนับ ' + loc);
+  var m = rowObj_(mt, mt.rows[i]);
+  if (m.Role !== 'HELPER') throw new Error(deviceId + ' เป็นผู้ดูแล ' + loc + ' — ใช้ "โอนการดูแล" แทน');
+  var D = (locData_(project, [loc])[loc] || { devices: {} }).devices[deviceId] || { lines: 0, qty: 0, maxSeq: 0 };
+  var seqAll = deviceSeqInfo_(deviceId, project).max;
+  putRow_(mt, i, { State: 'SUBMITTED', State_At: now_(), Cover_Seq: Math.max(seqAll, D.maxSeq), Sub_Lines: D.lines, Sub_Qty: D.qty, Match: 'OK', Sub_By: 'ADMIN', Ev_At: Date.now(), Updated_At: now_() });
+  var note = 'หัวหน้าทีมส่งงานแทน ' + who_() + (reason ? ' · ' + reason : '') + ' · ยอดที่เซิร์ฟเวอร์มี ' + D.qty + ' ชิ้น ' + D.lines + ' รายการ';
+  appendRows_(SpreadsheetApp.getActive().getSheetByName('Loc_Checks'), [[now_(), project, deviceId, loc, 'ADMIN_SUBMIT', '', D.lines, D.qty, D.lines, D.qty, 'OK', Math.max(seqAll, D.maxSeq), note]]);
+  logAdmin_('LOC_SUBMIT_FOR', loc + ' ' + deviceId, note);
+  refreshLocations_(project, [loc], null, mt);
+}
+
+/** โอนการดูแล Location ให้เครื่องอื่น (เช่น เครื่องผู้ดูแลเสีย) ผู้ดูแลเดิมกลายเป็นผู้ช่วยที่ส่งงานแล้ว */
+function adminTransfer_(loc, toDevice, reason) {
+  var project = readConfig_().PROJECT_ID;
+  migrateMembers_(project);
+  loc = normLoc_(loc);
+  var dt = table_('Devices');
+  if (findDevice_(dt, toDevice) < 0) throw new Error('ไม่พบเครื่อง ' + toDevice);
+  var mt = membersTable_();
+  var owner = ownerOf_(mt, project, loc);
+  if (owner && owner.m.Device_ID === toDevice) throw new Error(toDevice + ' เป็นผู้ดูแลอยู่แล้ว');
+  var closed = owner && owner.m.State === 'CLOSED';
+  if (owner) {
+    var D = (locData_(project, [loc])[loc] || { devices: {} }).devices[owner.m.Device_ID] || { lines: 0, qty: 0, maxSeq: 0 };
+    var seqAll = deviceSeqInfo_(owner.m.Device_ID, project).max;
+    putRow_(mt, owner.i, { Role: 'HELPER', State: 'SUBMITTED', State_At: now_(), Cover_Seq: Math.max(seqAll, D.maxSeq), Sub_Lines: D.lines, Sub_Qty: D.qty,
+      Match: 'OK', Sub_By: 'ADMIN', Ev_At: Date.now(), Updated_At: now_() });
+  }
+  var ti = memberIdx_(mt, project, loc, toDevice);
+  var cur = ti >= 0 ? rowObj_(mt, mt.rows[ti]) : null;
+  putMember_(mt, project, loc, toDevice, { Role: 'OWNER', State: closed ? 'CLOSED' : cur && cur.State === 'COUNTING' ? 'COUNTING' : 'PAUSED', State_At: now_(), Ev_At: Date.now(),
+    Staff: cur ? cur.Staff : '', Cover_Seq: cur ? cur.Cover_Seq : 0 });
+  var note = 'โอนการดูแล ' + (owner ? owner.m.Device_ID : '-') + ' → ' + toDevice + ' โดย ' + who_() + (reason ? ' · ' + reason : '');
+  appendRows_(SpreadsheetApp.getActive().getSheetByName('Loc_Checks'), [[now_(), project, toDevice, loc, 'TRANSFER', '', '', '', '', '', '', '', note]]);
+  logAdmin_('LOC_TRANSFER', loc, note);
+  refreshLocations_(project, [loc], null, mt);
 }
 
 // ---------- ผลตรวจความพร้อมเครื่อง ----------

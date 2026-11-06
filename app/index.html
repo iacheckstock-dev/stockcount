@@ -20,7 +20,7 @@
 <div id="rotate"><div>หมุนเครื่องเป็นแนวตั้ง<br><span>และปิด "หมุนอัตโนมัติ" ที่แถบด้านบนของเครื่อง</span></div></div>
 
 <div id="topbar">
-  <div id="tbLoc">—</div>
+  <div id="tbLocBox"><div id="tbLoc">—</div><div id="tbRole"></div></div>
   <div id="tbRight">
     <div id="tbStaff">-</div>
     <div id="tbSync"><span id="netDot" class="dot"></span><span id="syncText">-</span></div>
@@ -29,7 +29,8 @@
 </div>
 <div id="menu" class="hidden">
   <button data-m="status">สถานะ / Export</button>
-  <button data-m="typeloc">พิมพ์ Location (ป้ายหาย)</button>
+  <button data-m="locs">Location ที่นับแล้ว</button>
+  <button data-m="typeloc">ไปที่ Location (พิมพ์ชื่อ)</button>
   <button data-m="ready">ตรวจความพร้อมใหม่</button>
 </div>
 <div id="banner" class="hidden"></div>
@@ -75,10 +76,15 @@
     <div id="cardQty"></div>
   </div>
   <div class="totals">
-    <div><div class="lbl">ยอดรวม Location</div><div id="locTotal" class="num">0</div><div id="locSku" class="muted">0 SKU</div></div>
+    <div><div class="lbl" id="locLbl">ยอดรวม Location</div><div id="locTotal" class="num">0</div><div id="locSku" class="muted">0 SKU</div></div>
     <div>
       <div class="lbl dev">ทั้งเครื่อง (รอบนี้) <b id="devTotal">0</b></div>
-      <div id="skuBox" class="sku empty"><div id="skuTail">—</div><div id="skuLine"></div></div>
+      <div id="skuBox" class="sku empty"><div id="skuTail">—</div>
+        <div class="skuCols">
+          <div><div class="l">นับ</div><b id="skuCnt" class="cnt">—</b></div>
+          <div><div class="l">Stock <span id="skuSrc" class="src hidden">POS</span><span id="skuMark"></span></div><b id="skuStk" class="stk">—</b></div>
+        </div>
+      </div>
     </div>
   </div>
   <div class="qtyrow"><span>จำนวนต่อการยิง</span><span id="qtyVal">1</span></div>
@@ -99,12 +105,24 @@
 <!-- ดู/แก้ Location -->
 <section id="v-loc" class="view">
   <div class="lochead"><div id="locName" class="bigloc"></div><div><span id="locSum"></span></div></div>
+  <div id="locMembers"></div>
   <div id="locEdited" class="muted"></div>
   <ul id="locItems" class="items"></ul>
   <div class="actions">
     <button class="btn sec" id="btnLocBack">ยิงเพิ่ม SKU</button>
     <button class="btn sec" id="btnLocUndo">ย้อนการแก้ล่าสุด</button>
     <button class="btn danger" id="btnLocClear">ล้าง Location นับใหม่</button>
+  </div>
+</section>
+
+<!-- Location ที่นับแล้ว -->
+<section id="v-locs" class="view">
+  <h2>Location ที่นับแล้ว</h2>
+  <div id="locsHead" class="muted"></div>
+  <ul id="locsList" class="items locs"></ul>
+  <div class="actions">
+    <button class="btn sec" id="btnLocsBack">กลับหน้านับ</button>
+    <button class="btn sec" id="btnLocsType">ไปที่ Location (พิมพ์ชื่อ)</button>
   </div>
 </section>
 

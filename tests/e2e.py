@@ -39,7 +39,7 @@ with sync_playwright() as p:
     def shot(name): pg.screenshot(path=f'{SHOT}/{name}.png')
     def open_menu(item):
         pg.click('#btnMenu'); pg.click(f'#menu button[data-m={item}]')
-    def sku(): return pg.inner_text('#skuBox').replace('\n', ' ')
+    def sku(): return 'นับ ' + pg.inner_text('#skuCnt') + ' Stock ' + pg.inner_text('#skuStk') + ' ' + pg.inner_text('#skuTail')
 
     print('ตั้งค่าเครื่อง')
     pg.goto(BASE + '/app/'); pg.wait_for_selector('#v-setup.on')
@@ -63,7 +63,7 @@ with sync_playwright() as p:
     pg.wait_for_function("/พร้อมนับ ✓/.test(document.querySelector('#readyHead').textContent)", timeout=10000)
     shot('03-ready-pass')
     check(pg.is_visible('#btnStart'), 'ผ่านทุกข้อ ขึ้นปุ่มเริ่มนับ')
-    check('แอป 2.1.1 · เซิร์ฟเวอร์ 2.1.1' in pg.inner_text('#readyList'), 'แสดงเวอร์ชันแอปและเซิร์ฟเวอร์ตรงกัน')
+    check('แอป 2.2.0 · เซิร์ฟเวอร์ 2.2.0' in pg.inner_text('#readyList'), 'แสดงเวอร์ชันแอปและเซิร์ฟเวอร์ตรงกัน')
     pg.click('#btnStart'); pg.wait_for_selector('#v-count.on')
     check('นุ่น' in pg.inner_text('#tbStaff'), 'เข้างานเป็น นุ่น')
 
@@ -86,10 +86,10 @@ with sync_playwright() as p:
     pg.click('#btnUndo'); pg.click('#mYes'); pg.wait_for_timeout(300)
     check('นับ 2' in sku(), 'ยกเลิกล่าสุด → ช่อง SKU แสดงยอดหลังหัก (นับ 2)')
     scan(UNKNOWN); check('warn' in pg.get_attribute('#card', 'class'), 'บาร์โค้ดไม่รู้จัก (check digit ถูก) → เหลือง บันทึก')
-    check(sku().strip() == '—', 'บาร์โค้ดไม่รู้จัก → ช่อง SKU เคลียร์')
+    check(pg.inner_text('#skuTail') == '—' and pg.inner_text('#skuCnt') == '—', 'บาร์โค้ดไม่รู้จัก → ช่อง SKU เคลียร์')
     shot('04-count-unknown')
     scan(BC1); scan('12345'); check('bad' in pg.get_attribute('#card', 'class'), 'รูปแบบผิด → แดง ไม่บันทึก')
-    check(sku().strip() == '—', 'ยิงผิด → ช่อง SKU เคลียร์ ไม่ค้างของชิ้นก่อน')
+    check(pg.inner_text('#skuTail') == '—', 'ยิงผิด → ช่อง SKU เคลียร์ ไม่ค้างของชิ้นก่อน')
     pg.click('#btnUndo'); pg.click('#mYes'); pg.wait_for_timeout(300)   # คืนยอดให้เท่าเดิมสำหรับขั้นถัดไป
     check(pg.inner_text('#locTotal') == '8', 'ยอดรวม A1 = 8 (1+1+5+1)')
     pg.click('#btnUndo'); pg.click('#mYes'); pg.wait_for_timeout(300)
@@ -174,7 +174,7 @@ with sync_playwright() as p:
     check('9.9.9' in pg.inner_text('#readyList'), 'มีเวอร์ชันใหม่ → ขึ้น ✗ พร้อมปุ่ม "อัปเดตแอปตอนนี้"')
     shot('11-update')
     pg.click('#btnUpdate'); pg.wait_for_load_state('load'); pg.wait_for_timeout(1500)
-    get('/debug/version?v=2.1.1')
+    get('/debug/version?v=2.2.0')
     pg.wait_for_selector('.view.on', timeout=10000)
     check('สแกน 38' in pg.inner_text('#syncText'), 'หลังกดอัปเดต แอปโหลดใหม่ ข้อมูลในเครื่องยังครบ 38 รายการ')
 
