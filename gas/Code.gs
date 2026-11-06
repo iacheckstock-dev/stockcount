@@ -6,7 +6,7 @@
  * (API สำหรับ TC21 จะเพิ่มในเฟส 2 แยกต่างหาก และต้องใช้ device token)
  */
 
-var SCHEMA_VERSION = 2;
+var SCHEMA_VERSION = 3;
 
 var SHEETS = {
   Config: ['Key', 'Value', 'Note'],
@@ -65,7 +65,8 @@ var CONFIG_DEFAULTS = [
   ['MASTER_APPROVED_COUNT', '', 'จำนวนบาร์โค้ดที่ส่งลงเครื่อง'],
   ['MASTER_APPROVED_PROJECT', '', 'รอบนับที่อนุมัติ Master'],
   ['MASTER_APPROVED_ACK', '', 'คำเตือนที่รับทราบแล้ว (คั่นด้วย ,)'],
-  ['APP_URL', 'https://iacheckstock-dev.github.io/stockcount/app/', 'ที่อยู่เว็บแอป TC21 (GitHub Pages)']
+  ['APP_URL', 'https://iacheckstock-dev.github.io/stockcount/app/', 'ที่อยู่เว็บแอป TC21 (GitHub Pages)'],
+  ['API_URL', '', 'URL ของ Web app ที่เครื่องใช้ (Deployment ที่ Active ลงท้าย /exec) — ต้องตรงกับ app/config.json']
 ];
 
 // ---------- เมนูและหน้า Admin ----------
@@ -513,7 +514,7 @@ function apiDevicesState() {
   var q = readRaw_('Quarantine');
   var locs = table_('Locations');
   return {
-    apiUrl: safeServiceUrl_(),
+    apiUrl: cfg.API_URL || '',
     appUrl: cfg.APP_URL,
     projectId: cfg.PROJECT_ID,
     devices: devices,
@@ -525,8 +526,19 @@ function apiDevicesState() {
   };
 }
 
-function safeServiceUrl_() {
-  try { return ScriptApp.getService().getUrl() || ''; } catch (e) { return ''; }
+/**
+ * บันทึก URL ของ Web app ที่ใช้งานจริง
+ * ไม่ใช้ ScriptApp.getService().getUrl() เพราะเมื่อเรียกจากเมนูใน Sheets มักได้ URL ของรุ่นทดสอบหรือ deployment อื่น
+ */
+function apiSetApiUrl(url) {
+  url = String(url || '').trim();
+  if (!/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(url)) {
+    throw new Error('URL ต้องเป็นรูปแบบ https://script.google.com/macros/s/…/exec (คัดลอกจาก Deploy → Manage deployments → Web app URL)');
+  }
+  var old = readConfig_().API_URL;
+  setConfig_({ API_URL: url });
+  logAdmin_('SET_API_URL', url, old ? 'เดิม ' + old : 'ตั้งครั้งแรก');
+  return apiDevicesState();
 }
 
 function apiSeedDevices(count, prefix) {

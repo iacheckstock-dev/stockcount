@@ -167,6 +167,11 @@ test('จับคู่ใหม่ได้ maxSeqAll = Seq สูงสุด
   token = r.token;
   assert.strictEqual(call('bootstrap').device.maxSeqAll, 6);
 });
+test('ตั้ง API_URL: รับเฉพาะรูปแบบ Web app /exec และแสดงในหน้า Admin', () => {
+  assert.throws(() => env.run('apiSetApiUrl("https://example.com/x")'), /รูปแบบ/);
+  const u = 'https://script.google.com/macros/s/AKfycbxrnsB6Rbv8yG5dS4LTyz-sb4YfN9qUO20OJ5227rY8KyobO4J063_GsBjlvNAHSxRC/exec';
+  assert.strictEqual(env.run(`apiSetApiUrl(${JSON.stringify(u)})`).apiUrl, u);
+});
 test('ล้างรอบไม่ได้หลังเริ่มนับ', () => assert.throws(() => env.run('resetRound_()'), /เริ่มนับแล้ว/));
 
 console.log('\nนำเข้าไฟล์จากเครื่อง');

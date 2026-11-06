@@ -34,6 +34,7 @@ http.createServer((req, res) => {
     try {
       if (url.pathname === '/api') {
         if (offline) { req.socket.destroy(); return; }
+        if (req.method === 'GET') return send(200, run('doGet(_e).getContent()', { _e: { parameter: Object.fromEntries(url.searchParams) } }));
         return send(200, run('doPost(_r).getContent()', { _r: { postData: { contents: body } } }));
       }
       if (url.pathname === '/debug/paircode') return send(200, run(`apiPairCode(${JSON.stringify(url.searchParams.get('d'))})`).devices.find(d => d.id === url.searchParams.get('d')));

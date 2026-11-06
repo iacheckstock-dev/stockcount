@@ -433,7 +433,9 @@ function loadDevices() { call('apiDevicesState', [], renderDevices); }
 function renderDevices(d) {
   DEV = d;
   $('urlKv').innerHTML = kv([
-    ['API (Web app)', d.apiUrl ? '<span class="mono" style="word-break:break-all">' + esc(d.apiUrl) + '</span>' : '<span class="pill warn">ยังไม่ได้ Deploy เป็น Web app</span>'],
+    ['API (Web app)', '<input type="text" id="apiUrlIn" class="mono" style="width:100%;font-size:12px" placeholder="https://script.google.com/macros/s/…/exec" value="' + esc(d.apiUrl) + '">' +
+      '<div class="row" style="margin:4px 0"><button class="btn sec" onclick="saveApiUrl()">บันทึก</button><button class="btn sec" onclick="testApi()">ทดสอบ</button></div>' +
+      '<div id="apiTest" class="muted">' + (d.apiUrl ? 'กด "ทดสอบ" เพื่อตรวจว่า URL ใช้งานได้และตรงกับที่เครื่องใช้' : '<span class="pill warn">ยังไม่ได้ตั้ง</span> คัดลอก Web app URL จาก Deploy → Manage deployments (ตัวที่ Active)') + '</div>'],
     ['เว็บแอป TC21', '<a href="' + esc(d.appUrl) + '" target="_blank">' + esc(d.appUrl) + '</a>'],
     ['รอบปัจจุบัน', esc(d.projectId || '-')]
   ], true);
@@ -468,6 +470,29 @@ function renderLabelLinks() {
     '<a class="btn sec" style="text-decoration:none" target="_blank" href="' + esc(dev) + '">สติกเกอร์เครื่อง</a>';
 }
 ['lblZones', 'lblFrom', 'lblTo'].forEach(function (id) { $(id).addEventListener('input', renderLabelLinks); });
+function saveApiUrl() {
+  call('apiSetApiUrl', [$('apiUrlIn').value], function (d) { renderDevices(d); toast('บันทึก URL แล้ว'); testApi(); });
+}
+/**
+ * ทดสอบจากเบราว์เซอร์: (1) เรียก ?action=ping ที่ URL นี้จริง (2) เทียบกับ URL ใน config.json ที่เครื่อง TC21 ใช้
+ */
+function testApi() {
+  var url = ($('apiUrlIn').value || '').trim(), out = [];
+  if (!url) { $('apiTest').innerHTML = '<span class="pill warn">ยังไม่ได้ใส่ URL</span>'; return; }
+  $('apiTest').textContent = 'กำลังทดสอบ…';
+  function withTimeout(p, ms) { return Promise.race([p, new Promise(function (_, rej) { setTimeout(function () { rej(new Error('หมดเวลา')); }, ms); })]); }
+  var t0 = Date.now();
+  var ping = withTimeout(fetch(url + '?action=ping', { redirect: 'follow' }).then(function (r) { return r.json(); }), 15000)
+    .then(function (j) { return j && j.ok ? '<span class="pill ok">✓ ใช้งานได้</span> API v' + esc(j.api) + ' · ' + (Date.now() - t0) + ' ms' : '<span class="pill bad">✗ ตอบกลับผิดรูปแบบ</span>'; },
+      function (e) { return '<span class="pill bad">✗ เรียกไม่ได้</span> ' + esc(e.message) + ' (deployment ถูก archive หรือไม่ได้ตั้ง Who has access = Anyone?)'; });
+  var cfgUrl = (DEV && DEV.appUrl ? DEV.appUrl.replace(/\/?$/, '/') : '') + 'config.json?t=' + Date.now();
+  var same = withTimeout(fetch(cfgUrl, { cache: 'no-store' }).then(function (r) { return r.json(); }), 15000)
+    .then(function (c) {
+      return c.apiUrl === url ? '<span class="pill ok">✓ ตรงกับที่เครื่อง TC21 ใช้</span>'
+        : '<span class="pill bad">✗ ไม่ตรงกับที่เครื่องใช้</span> <span class="mono">' + esc(c.apiUrl || '(ว่าง)') + '</span> — แจ้งผู้ดูแลแก้ app/config.json';
+    }, function (e) { return '<span class="pill warn">ตรวจ config.json ของเครื่องไม่ได้</span> ' + esc(e.message); });
+  Promise.all([ping, same]).then(function (r) { $('apiTest').innerHTML = r.join('<br>'); });
+}
 function seedDevices() { call('apiSeedDevices', [$('seedN').value, 'TC21'], function (d) { renderDevices(d); toast('สร้างรหัสเครื่องแล้ว'); }); }
 function pairCode(id) {
   if (!confirm('สร้างรหัสจับคู่ใหม่ให้ ' + id + '?\nถ้าเครื่องนี้เคยจับคู่แล้ว ต้องจับคู่ใหม่บนเครื่องด้วยรหัสนี้')) return;
