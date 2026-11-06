@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2.0.2';
+  var APP_VERSION = '2.1.0';
   var BATCH = 20;
   var SYNC_EVERY = 2500;
   var STALE_MIN = 30;
@@ -17,7 +17,8 @@
     projectId: '', entries: [], oldPending: [], events: [],
     staff: null, loc: null, qty: '', closedLocs: [], locChecks: {},
     online: null, syncing: false, lastSyncOk: 0, lastErr: '', serverOffset: null,
-    readiness: null, dwOk: false, view: '', recountBanner: '', masterChanged: false, wakeLock: null
+    readiness: null, dwOk: false, view: '', recountBanner: '', masterChanged: false, wakeLock: null,
+    stock: new Map(), stockSource: '', stockVersion: '', lastSku: null, resumeMsg: '', resumeUntil: 0
   };
 
   // ---------- เครื่องมือ ----------
@@ -197,6 +198,10 @@
     tailCache.set(c, start);
     return start;
   }
+  /** บรรทัดที่ 2 ของการ์ด: Cust-mat / บาร์โค้ด เช่น UTAA0<b>590XT</b> / 8858153343503 */
+  function codeLine(c, bc) {
+    return (c ? tailHtml(c) : '') + (bc ? '<span class="bc">' + (c ? ' / ' : '') + esc(bc) + '</span>' : '');
+  }
   function tailHtml(c) {
     if (!c) return '';
     var i = diffStart(c);
@@ -278,6 +283,7 @@
       });
       S.events = S.events.filter(function (ev) { return removeIds.indexOf(ev.id) < 0; });
       if (res.masterHash !== undefined && S.masterHash && res.masterHash && res.masterHash !== S.masterHash) S.masterChanged = true;
+      if (res.stockVersion && res.stockVersion !== S.stockVersion) downloadStock().catch(function () {});
       S.lastSyncOk = Date.now();
       return Promise.all([DB.putMany('entries', changed), DB.remove('events', removeIds), saveState()]).then(function () {
         S.syncing = false; render();
@@ -302,6 +308,7 @@
   function show(v) {
     S.view = v;
     document.querySelectorAll('.view').forEach(function (el) { el.classList.toggle('on', el.id === 'v-' + v); });
+    window.scrollTo(0, 0);
     if (v === 'count') { requestWake(); renderCount(); }
     if (v === 'loc') renderLoc();
     if (v === 'status') renderStatus();
@@ -344,12 +351,35 @@
     $('locTotal').textContent = fmt(sum.qty);
     $('locSku').textContent = fmt(sum.sku) + ' SKU' + (S.loc && S.locChecks[S.loc] === 'OK' ? ' · ✓ ตรงกับเซิร์ฟเวอร์' : '');
     $('devTotal').textContent = fmt(deviceTotal());
+    renderSku();
     var q = S.qty || '1';
     $('qtyVal').textContent = q; $('qtyVal').className = q !== '1' ? 'multi' : '';
     if (!S.loc && $('card').className.indexOf('idle') >= 0) {
       $('cardTitle').textContent = S.staff ? 'ยิงป้าย Location เพื่อเริ่ม' : 'ยิงบัตรผู้ตรวจสอบ (EMP:) ก่อน';
       $('cardSub').textContent = ''; $('cardQty').textContent = '';
     }
+  }
+
+  /**
+   * ช่อง SKU (ในกล่อง "ทั้งเครื่อง"): แสดงเฉพาะสินค้าของการยิงครั้งล่าสุด
+   * นับ = ยอดสุทธิของเครื่องนี้ทุก Location (สีเขียว) · Stock = ยอดบัญชีทั้งร้าน (สีน้ำเงิน)
+   * ยิงผิด / ไม่รู้จัก / เปิด Location ใหม่ → เคลียร์
+   */
+  function skuCount(material) {
+    var n = 0;
+    for (var i = 0; i < S.entries.length; i++) if (S.entries[i].material === material) n += S.entries[i].qty;
+    return Math.round(n * 1000) / 1000;
+  }
+  function setSku(item) { S.lastSku = item && item.m ? { m: item.m, c: item.c || '' } : null; renderSku(); }
+  function renderSku() {
+    var box = $('skuBox'), k = S.lastSku;
+    if (!k) { box.className = 'sku empty'; $('skuTail').textContent = '—'; $('skuLine').innerHTML = ''; return; }
+    var cnt = skuCount(k.m), has = S.stock.has(k.m), stk = has ? S.stock.get(k.m) : null;
+    var mark = has ? (cnt === stk ? ' ✓' : cnt > stk ? ' ▲' : '') : '';
+    box.className = 'sku';
+    $('skuTail').textContent = k.c ? k.c.slice(diffStart(k.c)) : k.m;
+    $('skuLine').innerHTML = 'นับ <b class="cnt">' + fmt(cnt) + '</b>' +
+      (has ? ' · ' + (S.stockSource === 'POS' ? 'Stock(POS)' : 'Stock') + ' <b class="stk">' + fmt(stk) + '</b>' + mark : '');
   }
 
   function setCard(kind, title, subHtml, qtyHtml) {
@@ -401,11 +431,12 @@
   }
 
   function scanProduct(code) {
-    if (!S.staff) { SOUND.bad(); setCard('bad', 'ยิงบัตรผู้ตรวจสอบ (EMP:) ก่อน'); return; }
-    if (!S.loc) { SOUND.bad(); setCard('bad', 'ยิงป้าย Location ก่อน', 'รายการนี้ไม่ถูกบันทึก'); return; }
+    clearResume();
+    if (!S.staff) { SOUND.bad(); setSku(null); setCard('bad', 'ยิงบัตรผู้ตรวจสอบ (EMP:) ก่อน'); return; }
+    if (!S.loc) { SOUND.bad(); setSku(null); setCard('bad', 'ยิงป้าย Location ก่อน', 'รายการนี้ไม่ถูกบันทึก'); return; }
     var bc = code.replace(/\s+/g, '');
     var item = S.master.get(bc);
-    if (!item && !validFormat(bc)) { SOUND.bad(); setCard('bad', 'รูปแบบบาร์โค้ดผิด — ยิงใหม่', esc(bc), 'ไม่บันทึก'); return; }
+    if (!item && !validFormat(bc)) { SOUND.bad(); setSku(null); setCard('bad', 'รูปแบบบาร์โค้ดผิด — ยิงใหม่', esc(bc), 'ไม่บันทึก'); return; }
     var qty = parseInt(S.qty || '1', 10) || 1;
     var go = qty > 100 ? confirmBox('จำนวนมาก', 'บันทึก <span class="bignum">' + fmt(qty) + '</span> ชิ้น<br>' + esc(item ? item.n : bc) + ' ?', 'บันทึก') : Promise.resolve(true);
     go.then(function (yes) {
@@ -413,8 +444,8 @@
       return addEntry({ barcode: bc, material: item ? item.m : '', qty: qty, type: 'SCAN' }).then(function () {
         S.qty = '';
         var inLoc = locSummary(S.loc).items.get(item ? item.m : 'BC:' + bc);
-        if (item) { SOUND.ok(); setCard('ok', item.n || item.m, tailHtml(item.c) + ' <span class="muted">' + esc(item.m) + '</span>', '+' + fmt(qty) + ' · ใน ' + S.loc + ' รวม <b>' + fmt(inLoc ? inLoc.qty : qty) + '</b>'); }
-        else { SOUND.warn(); setCard('warn', 'บาร์โค้ดไม่รู้จัก — แยกสินค้าไว้', esc(bc), '+' + fmt(qty) + ' บันทึกแล้ว (ระบบตรวจซ้ำตอนอัปโหลดไฟล์ชุดใหม่)'); }
+        if (item) { SOUND.ok(); setSku(item); setCard('ok', item.n || item.m, codeLine(item.c, bc), '+' + fmt(qty) + ' · ใน ' + S.loc + ' รวม <b>' + fmt(inLoc ? inLoc.qty : qty) + '</b>'); }
+        else { SOUND.warn(); setSku(null); setCard('warn', 'บาร์โค้ดไม่รู้จัก — แยกสินค้าไว้', esc(bc), '+' + fmt(qty) + ' บันทึกแล้ว · ตรวจซ้ำตอนอัปโหลดไฟล์ใหม่'); }
         render();
       });
     });
@@ -440,7 +471,7 @@
     });
     return chain.then(function (ok) {
       if (!ok) { show('count'); return; }
-      S.loc = loc; S.recountBanner = '';
+      S.loc = loc; S.recountBanner = ''; S.lastSku = null; clearResume();
       S.closedLocs = S.closedLocs.filter(function (x) { return x !== loc; });
       SOUND.ok();
       setCard('idle', 'เปิด ' + loc + ' แล้ว — ยิงสินค้าได้เลย');
@@ -479,7 +510,7 @@
     confirmBox('ยกเลิกรายการล่าสุด', esc(it.n) + '<br>' + tailHtml(it.c) + '<br>จำนวน ' + fmt(last.qty) + ' ใน ' + esc(S.loc), 'ยกเลิกรายการนี้').then(function (yes) {
       if (!yes) return;
       addEntry({ barcode: last.barcode, material: last.material, qty: -last.qty, type: 'VOID', refId: last.logId, reason: 'ยกเลิกรายการล่าสุด' }).then(function () {
-        SOUND.warn(); setCard('warn', 'ยกเลิกแล้ว', esc(it.n), '−' + fmt(last.qty)); render();
+        SOUND.warn(); setSku(last.material ? it : null); setCard('warn', 'ยกเลิกแล้ว: ' + it.n, codeLine(it.c, last.barcode), '−' + fmt(last.qty)); render();
       });
     });
   };
@@ -492,14 +523,22 @@
   };
   $('btnLoc').onclick = function () { if (!S.loc) { toast('ยิงป้าย Location ก่อน (แก้ได้เฉพาะ Location ที่เปิดอยู่)', true); return; } show('loc'); };
   $('btnManual').onclick = function () { if (!S.loc) { toast('ยิงป้าย Location ก่อน', true); return; } show('manual'); };
-  $('btnStatus').onclick = function () { show('status'); };
-  $('btnTypeLoc').onclick = function () {
+  $('btnMenu').onclick = function (e) { e.stopPropagation(); $('menu').classList.toggle('hidden'); };
+  document.addEventListener('click', function () { $('menu').classList.add('hidden'); });
+  $('menu').addEventListener('click', function (e) {
+    var b = e.target.closest('button'); if (!b) return;
+    $('menu').classList.add('hidden');
+    if (b.dataset.m === 'status') show('status');
+    else if (b.dataset.m === 'typeloc') typeLocation();
+    else if (b.dataset.m === 'ready') { show('ready'); runChecks(false); }
+  });
+  function typeLocation() {
     modal({ title: 'พิมพ์ Location', html: 'ใช้เมื่อป้ายหาย/ยิงไม่ได้ เช่น A12', input: true, inputmode: 'text', yes: 'เปิด' }).then(function (v) {
       if (v === null) return; var loc = normLoc(v);
       if (!loc) { toast('รูปแบบต้องเป็นตัวอักษรโซน + เลข เช่น A12', true); return; }
       openLocation(loc);
     });
-  };
+  }
 
   // ---------- ดู/แก้ Location ----------
   function renderLoc() {
@@ -612,7 +651,7 @@
         if (!(qty > 0)) { toast('ใส่จำนวนมากกว่า 0', true); return; }
         addEntry({ barcode: item ? item.b : raw, material: item ? item.m : '', qty: qty, type: 'MANUAL', reason: 'ป้อนเอง' }).then(function () {
           S.qty = ''; if (item) SOUND.ok(); else SOUND.warn();
-          setCard(item ? 'ok' : 'warn', item ? item.n : 'บาร์โค้ดไม่รู้จัก ' + raw, item ? tailHtml(item.c) : '', '+' + fmt(qty) + ' (ป้อนเอง)');
+          setSku(item); setCard(item ? 'ok' : 'warn', item ? item.n : 'บาร์โค้ดไม่รู้จัก ' + raw, item ? codeLine(item.c, item.b) : '', '+' + fmt(qty) + ' (ป้อนเอง)');
           show('count');
         });
       });
@@ -709,6 +748,16 @@
     return DB.get('seq').then(function (cur) { if (serverMax > (cur || 0)) return DB.set('seq', serverMax); });
   }
 
+  function downloadStock() {
+    return api('stock', {}, 30000).then(function (r) {
+      var m = new Map();
+      r.rows.forEach(function (x) { m.set(x[0], Number(x[1]) || 0); });
+      S.stock = m; S.stockSource = r.source; S.stockVersion = r.version;
+      if (S.view === 'count') renderSku();
+      return DB.set('stock', { projectId: r.projectId, version: r.version, source: r.source, rows: r.rows });
+    });
+  }
+
   function switchProject(pid) {
     if (pid === S.projectId) return Promise.resolve();
     return loadEntries(pid).then(function () {
@@ -765,6 +814,9 @@
           $('readyHead').textContent = 'กำลังโหลดรายการบาร์โค้ด…';
           masterP = downloadMaster().catch(function (e) { S._masterErr = e.message; });
         }
+        if (b.boot && boot.stockVersion && (boot.stockVersion !== S.stockVersion || !S.stock.size)) {
+          masterP = masterP.then(function () { return downloadStock().catch(function () {}); });
+        }
         return masterP.then(function () {
           if (boot && b.boot && !boot.master.approved) add('รายการบาร์โค้ดตรงเวอร์ชันที่อนุมัติ', 'FAIL', 'Master ยังไม่ได้อนุมัติสำหรับรอบนี้ (หน้า Admin)');
           else if (boot && S.master.size && S.masterHash === boot.master.hash && S.masterProject === boot.project.id) add('รายการบาร์โค้ดตรงเวอร์ชันที่อนุมัติ', offline ? 'WARN' : 'OK', fmt(S.masterList.length) + ' รายการ · v' + (boot.master.version || ''));
@@ -790,6 +842,7 @@
           add('เสียงเขียว/เหลือง/แดงดังครบ', $('ckSound').checked ? 'OK' : 'FAIL', $('ckSound').checked ? '' : 'กดทดสอบเสียง แล้วติ๊กยืนยัน');
           // 12 ปักหมุด
           add('ปักหมุดหน้าจอแล้ว', $('ckPin').checked ? 'OK' : 'WARN', $('ckPin').checked ? '' : 'แนะนำให้ปักหมุดก่อนนับ');
+          add('ปิดหมุนจออัตโนมัติแล้ว', $('ckRotate').checked ? 'OK' : 'WARN', $('ckRotate').checked ? '' : 'ดึงแถบบนของเครื่องลงมา แล้วปิด "หมุนอัตโนมัติ"');
           var pass = items.every(function (i) { return i.result !== 'FAIL'; });
           S.readiness = { project: S.projectId, date: today(), pass: pass, at: Date.now() };
           DB.set('readiness', S.readiness);
@@ -822,7 +875,7 @@
   $('btnUpdate').onclick = updateApp;
 
   $('btnSound').onclick = function () { SOUND.ok(); setTimeout(SOUND.warn, 600); setTimeout(SOUND.bad, 1400); };
-  $('ckSound').onchange = $('ckPin').onchange = function () { this.blur(); runChecks(true); };
+  $('ckSound').onchange = $('ckPin').onchange = $('ckRotate').onchange = function () { this.blur(); DB.set('ckRotate', $('ckRotate').checked); runChecks(true); };
   $('btnRunCheck').onclick = function () { runChecks(false); };
   $('btnReload').onclick = function () {
     $('readyHead').textContent = 'กำลังโหลดรายการบาร์โค้ด…';
@@ -835,18 +888,30 @@
     if ('wakeLock' in navigator && !S.wakeLock) navigator.wakeLock.request('screen').then(function (l) { S.wakeLock = l; l.addEventListener('release', function () { S.wakeLock = null; }); }).catch(function () {});
     if (screen.orientation && screen.orientation.lock) screen.orientation.lock('portrait').catch(function () {});
   }
-  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') { if (S.view === 'count') requestWake(); scheduleSync(200); } });
+  function resume() {
+    // กลับเข้าแอปจากแอปอื่น: วาดใหม่ ขอจอไม่ดับ ล็อกแนวตั้ง แล้วส่งข้อมูลที่ค้าง
+    $('splash').classList.add('hidden');
+    render(); requestWake(); scheduleSync(200);
+  }
+  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') resume(); });
+  window.addEventListener('pageshow', function (e) { if (e.persisted) resume(); });
+  function clearResume() {}
 
   // ---------- เริ่มต้น ----------
   function init() {
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(function () {});
     return DB.open().then(function () {
-      return Promise.all([DB.get('cfg'), DB.get('boot'), DB.get('masterHash'), DB.get('masterProject'), DB.get('projectId'), DB.get('staff'), DB.get('readiness'), DB.all('events')]);
+      return Promise.all([DB.get('cfg'), DB.get('boot'), DB.get('masterHash'), DB.get('masterProject'), DB.get('projectId'), DB.get('staff'), DB.get('readiness'), DB.all('events'), DB.get('stock'), DB.get('ckRotate')]);
     }).then(function (v) {
       S.cfg = v[0] || {}; S.boot = v[1] || null; S.masterHash = v[2] || ''; S.masterProject = v[3] || '';
       S.staff = v[5] || null; S.readiness = v[6] || null; S.events = v[7] || [];
+      var st = v[8];
       var pid = (S.boot && S.boot.project.id) || v[4] || '';
-      return Promise.all([loadMaster(), switchProject(pid), loadConfigJson()]);
+      if (st && st.projectId === pid) { S.stockVersion = st.version; S.stockSource = st.source; st.rows.forEach(function (x) { S.stock.set(x[0], Number(x[1]) || 0); }); }
+      $('ckRotate').checked = !!v[9];
+      // ไฟล์ config ใช้ตอนตั้งค่าเครื่องครั้งแรกเท่านั้น เครื่องที่จับคู่แล้วไม่ต้องรอเน็ต
+      var cfgP = S.cfg.token ? (loadConfigJson(), Promise.resolve()) : loadConfigJson();
+      return Promise.all([loadMaster(), switchProject(pid), cfgP]);
     }).then(function () {
       if (!S.cfg.apiUrl && S.defaultApi) S.cfg.apiUrl = S.defaultApi;
       $('setApi').value = S.cfg.apiUrl || S.defaultApi || '';
@@ -854,9 +919,20 @@
       if (!S.cfg.token) { show('setup'); return; }
       var r = S.readiness;
       if (r && r.pass && r.project === S.projectId && r.date === today()) {
-        S.dwOk = true; show('count'); scheduleSync(500);
-        if (S.loc) setCard('idle', 'อยู่ที่ ' + S.loc + ' — ยิงสินค้าต่อได้');
+        S.dwOk = true;
+        var last = S.entries.length ? S.entries[S.entries.length - 1] : null;
+        show('count'); scheduleSync(500);
+        // แจ้งในการ์ด (ไม่เพิ่มแถบ จะได้ไม่ดันปุ่มตกขอบจอ)
+        if (last) setCard('idle', 'กลับมาทำงานต่อ' + (S.loc ? 'ที่ ' + S.loc : '') + ' · ยิงล่าสุด ' + String(last.scanTime).slice(11, 16),
+          'ข้อมูลในเครื่องครบ ' + fmt(S.entries.length) + ' รายการ', S.loc ? 'ยิงสินค้าต่อได้เลย' : 'ยิงป้าย Location เพื่อเริ่ม');
+        else if (S.loc) setCard('idle', 'อยู่ที่ ' + S.loc + ' — ยิงสินค้าต่อได้');
       } else { show('ready'); runChecks(false); }
+    }).then(function () {
+      window.__SC_READY = true;
+      $('splash').classList.add('hidden');
+    }, function (err) {
+      $('splash').querySelector('.spl-t').textContent = 'เปิดแอปไม่สำเร็จ: ' + (err && err.message || err);
+      $('splashReload').classList.remove('hidden');
     });
   }
 

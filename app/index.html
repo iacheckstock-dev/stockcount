@@ -10,12 +10,27 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<!-- หน้ากำลังเปิด: อยู่ใน HTML จึงขึ้นทันทีแม้ JavaScript ยังโหลดไม่เสร็จ -->
+<div id="splash"><div>
+  <div class="spl-t">กำลังเปิดแอปตรวจนับ…</div>
+  <div class="spl-s">ข้อมูลที่ยิงไปแล้วเก็บอยู่ในเครื่อง ไม่หาย</div>
+  <button class="btn hidden" id="splashReload" onclick="location.reload()">โหลดใหม่</button>
+</div></div>
+<script>setTimeout(function () { if (!window.__SC_READY) document.getElementById('splashReload').classList.remove('hidden'); }, 8000);</script>
+<div id="rotate"><div>หมุนเครื่องเป็นแนวตั้ง<br><span>และปิด "หมุนอัตโนมัติ" ที่แถบด้านบนของเครื่อง</span></div></div>
+
 <div id="topbar">
   <div id="tbLoc">—</div>
   <div id="tbRight">
     <div id="tbStaff">-</div>
     <div id="tbSync"><span id="netDot" class="dot"></span><span id="syncText">-</span></div>
   </div>
+  <button id="btnMenu" aria-label="เมนู">⋮</button>
+</div>
+<div id="menu" class="hidden">
+  <button data-m="status">สถานะ / Export</button>
+  <button data-m="typeloc">พิมพ์ Location (ป้ายหาย)</button>
+  <button data-m="ready">ตรวจความพร้อมใหม่</button>
 </div>
 <div id="banner" class="hidden"></div>
 
@@ -43,6 +58,7 @@
     <button class="btn sec" id="btnSound">ทดสอบเสียง เขียว / เหลือง / แดง</button>
     <label class="tick"><input type="checkbox" id="ckSound"> ได้ยินครบทั้ง 3 เสียง</label>
     <label class="tick"><input type="checkbox" id="ckPin"> ปักหมุดหน้าจอแล้ว (ปุ่มสี่เหลี่ยม → ปักหมุด)</label>
+    <label class="tick"><input type="checkbox" id="ckRotate"> ปิด "หมุนอัตโนมัติ" ของเครื่องแล้ว (ดึงแถบบนลงมา)</label>
     <p class="muted">ยิงบัตรผู้ตรวจสอบ (EMP:) 1 ครั้ง เพื่อทดสอบ DataWedge และเข้างาน</p>
   </div>
   <button class="btn sec" id="btnReload">โหลดรายการบาร์โค้ดลงเครื่องใหม่</button>
@@ -60,7 +76,10 @@
   </div>
   <div class="totals">
     <div><div class="lbl">ยอดรวม Location</div><div id="locTotal" class="num">0</div><div id="locSku" class="muted">0 SKU</div></div>
-    <div><div class="lbl">ทั้งเครื่อง (รอบนี้)</div><div id="devTotal" class="num small">0</div></div>
+    <div>
+      <div class="lbl dev">ทั้งเครื่อง (รอบนี้) <b id="devTotal">0</b></div>
+      <div id="skuBox" class="sku empty"><div id="skuTail">—</div><div id="skuLine"></div></div>
+    </div>
   </div>
   <div class="qtyrow"><span>จำนวนต่อการยิง</span><span id="qtyVal">1</span></div>
   <div class="keypad" id="keypad">
@@ -69,15 +88,11 @@
     <button>7</button><button>8</button><button>9</button>
     <button data-k="C">C</button><button>0</button><button data-k="B">⌫</button>
   </div>
-  <div class="actions">
-    <button class="btn sec" id="btnUndo">ยกเลิกล่าสุด</button>
-    <button class="btn sec" id="btnLoc">ดู/แก้ Location</button>
-    <button class="btn sec" id="btnManual">ป้อนเอง</button>
-    <button class="btn" id="btnClose">ปิด Location</button>
-  </div>
-  <div class="actions two">
-    <button class="btn ghost" id="btnStatus">สถานะ / Export</button>
-    <button class="btn ghost" id="btnTypeLoc">พิมพ์ Location</button>
+  <div class="actions four">
+    <button class="btn sec" id="btnUndo">ยกเลิก<br>ล่าสุด</button>
+    <button class="btn sec" id="btnLoc">ดู/แก้<br>Location</button>
+    <button class="btn sec" id="btnManual">ป้อน<br>เอง</button>
+    <button class="btn" id="btnClose">ปิด<br>Location</button>
   </div>
 </section>
 

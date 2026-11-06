@@ -87,6 +87,15 @@ test('master: 2,330 รายการ (บาร์โค้ด 2,318 + ไม�
   assert.strictEqual(m.rows[0].length, 4);
 });
 
+test('stock: ยอดบัญชีต่อ Material (SAP Qty-UR) และ stockVersion ตรงกับ bootstrap', () => {
+  const s = call('stock'), b = call('bootstrap');
+  assert.strictEqual(s.source, 'SAP');
+  assert.strictEqual(s.version, b.stockVersion);
+  assert.strictEqual(s.rows.length, 2330);
+  const m = Object.fromEntries(s.rows);
+  assert.strictEqual(typeof m[MAT1], 'number');
+});
+
 console.log('\nส่งข้อมูล (sync)');
 test('ส่ง 3 รายการ + เปิด Location → รับ 3, รอบเปลี่ยนเป็น COUNTING', () => {
   const r = call('sync', {

@@ -32,6 +32,7 @@ function doPost(e) {
       case 'pair': out = apiPair_(req); break;
       case 'bootstrap': out = apiBootstrap_(auth_(req)); break;
       case 'master': out = apiMaster_(auth_(req)); break;
+      case 'stock': out = apiStock_(auth_(req)); break;
       case 'sync': out = apiSync_(auth_(req), req); break;
       case 'locStatus': out = apiLocStatus_(auth_(req), req); break;
       case 'check': out = apiCheck_(auth_(req), req); break;
@@ -161,6 +162,7 @@ function apiBootstrap_(a) {
     project: { id: cfg.PROJECT_ID, countDate: cfg.COUNT_DATE, status: cfg.ROUND_STATUS || 'NONE' },
     master: { approved: approvedOk, hash: approvedOk ? cfg.MASTER_APPROVED_HASH : '', version: cfg.MASTER_APPROVED_VERSION, count: cfg.MASTER_APPROVED_COUNT },
     staff: list,
+    stockVersion: stockVersion_(cfg),
     device: { id: a.deviceId, name: a.device.Name || a.deviceId, maxSeq: seqInfo.max, received: seqInfo.count, gaps: seqInfo.gaps,
       maxSeqAll: deviceMaxSeqAll_(a.deviceId) }
   };
@@ -177,6 +179,29 @@ function apiMaster_(a) {
   }
   var rows = readRaw_('Device_Master').slice(1).filter(function (r) { return r[0] || r[1]; });
   return { ok: true, projectId: cfg.PROJECT_ID, hash: cfg.MASTER_APPROVED_HASH, version: cfg.MASTER_APPROVED_VERSION, rows: rows };
+}
+
+// ---------- ยอด Stock สำหรับแสดงบนเครื่อง ----------
+// การแสดงยอดบัญชีบนเครื่องเป็นการยอมรับความเสี่ยง (ดูสเปก: ยอมรับความเสี่ยงเรื่องแสดง Stock)
+// ยอดมาจาก Barcode_Map ปัจจุบัน: SAP Qty-UR ถ้ายังไม่มี SAP ใช้ยอด POS ชั่วคราว
+
+/** เปลี่ยนเมื่อมีการอัปโหลด SAP/POS ใหม่ เครื่องใช้ตัดสินว่าต้องโหลดยอดใหม่หรือไม่ */
+function stockVersion_(cfg) {
+  return String(cfg.SAP_UPLOADED_AT || '') + '|' + String(cfg.POS_UPLOADED_AT || '');
+}
+
+function apiStock_(a) {
+  var cfg = readConfig_();
+  var t = table_('Barcode_Map');
+  var seen = {}, rows = [], source = '';
+  t.rows.forEach(function (r) {
+    var mat = r[t.idx.Material];
+    if (!mat || seen[mat]) return;
+    seen[mat] = true;
+    if (!source) source = r[t.idx.Book_Source];
+    rows.push([mat, Number(r[t.idx.Book_Qty]) || 0]);
+  });
+  return { ok: true, projectId: cfg.PROJECT_ID, version: stockVersion_(cfg), source: source || '', rows: rows };
 }
 
 // ---------- ตรวจลำดับ Seq ----------
@@ -236,6 +261,7 @@ function apiSync_(a, req) {
     res.ok = true;
     var cfg = readConfig_();
     res.masterHash = cfg.MASTER_APPROVED_PROJECT === cfg.PROJECT_ID ? cfg.MASTER_APPROVED_HASH : '';
+    res.stockVersion = stockVersion_(cfg);
     return res;
   } finally {
     lock.releaseLock();

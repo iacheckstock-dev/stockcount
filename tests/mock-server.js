@@ -21,7 +21,8 @@ env.sheets.Staff.data.push(['EMP-NU', 'นุ่น', 'ผู้ตรวจส�
 run('apiSeedDevices(5, "TC21")');
 
 let offline = false;
-let appVersion = '2.0.2';
+let appVersion = '2.1.0';
+let slowMs = 0;
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'application/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.webmanifest': 'application/manifest+json' };
 
 http.createServer((req, res) => {
@@ -41,9 +42,13 @@ http.createServer((req, res) => {
       if (url.pathname === '/debug/loccheck') return send(200, env.sheets.Loc_Checks.data);
       if (url.pathname === '/debug/offline') { offline = url.searchParams.get('on') === '1'; return send(200, { offline }); }
       if (url.pathname === '/debug/import') return send(200, run('apiImportDeviceFile(_t, "e2e.csv")', { _t: body }));
+      if (url.pathname === '/debug/slow') { slowMs = Number(url.searchParams.get('ms') || 0); return send(200, { slowMs }); }
+      if (url.pathname === '/debug/reupload-sap') { run('apiUpload("SAP", _sap, { fileName: "sap2.xls", fileDate: "2026-11-04", d1Confirmed: true })'); return send(200, { ok: true }); }
       if (url.pathname === '/debug/version') { appVersion = url.searchParams.get('v'); return send(200, { appVersion }); }
       if (url.pathname === '/app/config.json') return send(200, { apiUrl: 'http://localhost:' + PORT + '/api', appVersion });
-      if (url.pathname.startsWith('/app/')) {
+      if (url.pathname.startsWith('/app/') && slowMs) return setTimeout(serveStatic, slowMs);   // จำลองเน็ตช้า/เพิ่งต่อ Wi-Fi
+      if (url.pathname.startsWith('/app/')) return serveStatic();
+      function serveStatic() {
         let f = path.join(APP, url.pathname.slice(5) || 'index.html');
         if (fs.existsSync(f) && fs.statSync(f).isDirectory()) f = path.join(f, 'index.html');
         if (!fs.existsSync(f)) return send(404, 'not found', 'text/plain');

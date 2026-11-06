@@ -5,8 +5,17 @@ body { font-family: "Sarabun", "Noto Sans Thai", system-ui, sans-serif; font-siz
 .muted { color: #6b6b6b; font-size: 14px; }
 h2 { font-size: 20px; margin: 8px 0 12px; }
 
-#topbar { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; justify-content: space-between; background: #111; color: #fff; padding: 6px 12px; min-height: 64px; }
-#tbLoc { font-size: 40px; font-weight: 700; letter-spacing: 1px; }
+#topbar { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 8px; background: #111; color: #fff; padding: 4px 4px 4px 12px; min-height: 56px; }
+#tbRight { margin-left: auto; }
+#btnMenu { background: none; border: 0; color: #fff; font-size: 26px; width: 40px; height: 48px; padding: 0; }
+#menu { position: fixed; top: 56px; right: 6px; z-index: 9; background: #fff; border-radius: 12px; box-shadow: 0 6px 24px rgba(0,0,0,.25); overflow: hidden; min-width: 230px; }
+#menu button { display: block; width: 100%; text-align: left; font: inherit; font-size: 17px; padding: 14px 16px; border: 0; border-bottom: 1px solid #eee; background: #fff; }
+#splash { position: fixed; inset: 0; z-index: 20; background: #fafaf8; display: flex; align-items: center; justify-content: center; text-align: center; padding: 24px; }
+.spl-t { font-size: 20px; font-weight: 700; margin-bottom: 8px; } .spl-s { font-size: 14px; color: #555; margin-bottom: 16px; }
+#rotate { display: none; position: fixed; inset: 0; z-index: 30; background: #111; color: #fff; align-items: center; justify-content: center; text-align: center; font-size: 22px; font-weight: 700; padding: 20px; }
+#rotate span { font-size: 15px; font-weight: 400; }
+@media (orientation: landscape) and (max-height: 520px) { #rotate { display: flex; } }
+#tbLoc { font-size: 38px; font-weight: 700; letter-spacing: 1px; }
 #tbRight { text-align: right; font-size: 14px; }
 #tbStaff { font-weight: 600; font-size: 16px; }
 .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #999; margin-right: 6px; vertical-align: middle; }
@@ -14,7 +23,7 @@ h2 { font-size: 20px; margin: 8px 0 12px; }
 #banner { padding: 8px 12px; font-size: 15px; font-weight: 600; background: #f9eeda; color: #7a4a00; }
 #banner.bad { background: #fbebeb; color: #b42318; }
 
-.view { display: none; padding: 10px 12px 20px; }
+.view { display: none; padding: 8px 10px 12px; }
 .view.on { display: block; }
 label { display: block; margin: 12px 0 4px; font-size: 14px; color: #444; }
 .inp { width: 100%; font: inherit; font-size: 22px; padding: 10px 12px; border: 1.5px solid #ccc; border-radius: 10px; background: #fff; user-select: text; }
@@ -38,21 +47,30 @@ details { margin: 10px 0; } summary { color: #555; font-size: 14px; }
 .tick { display: flex; gap: 10px; align-items: center; font-size: 16px; color: #111; margin: 10px 0; }
 .tick input { width: 24px; height: 24px; }
 
-.card { border-radius: 14px; padding: 12px 14px; min-height: 118px; background: #fff; border: 2px solid #ddd; }
+.card { border-radius: 14px; padding: 7px 12px; height: 90px; overflow: hidden; background: #fff; border: 2px solid #ddd; }
+/* ความสูงคงที่: ชื่อยาวหรือข้อความยาวไม่ดันปุ่มล่างตกขอบจอ */
+#cardTitle, #cardSub, #cardQty { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .card.ok { background: #e5f4e4; border-color: #1f7a3a; }
 .card.warn { background: #fff3cd; border-color: #d4a017; }
 .card.bad { background: #fbebeb; border-color: #b42318; }
 .card.idle { background: #fff; }
-#cardTitle { font-size: 18px; font-weight: 600; line-height: 1.3; }
-#cardSub { font-size: 15px; color: #333; margin-top: 4px; }
-#cardSub b.tail { font-size: 30px; letter-spacing: 1px; }
-#cardQty { font-size: 15px; margin-top: 6px; }
-.totals { display: flex; gap: 10px; margin: 10px 0 6px; }
-.totals > div { flex: 1; background: #fff; border: 1px solid #e3e1dc; border-radius: 12px; padding: 6px 10px; }
+#cardTitle { font-size: 17px; font-weight: 600; line-height: 1.25; }
+#cardSub { font-size: 15px; color: #333; margin-top: 1px; line-height: 1.15; }
+#cardSub b.tail { font-size: 26px; letter-spacing: 1px; }
+#cardSub .bc { font-size: 15px; color: #444; }
+#cardQty { font-size: 15px; margin-top: 2px; }
+.totals { display: flex; gap: 8px; margin: 5px 0 0; }
+.totals > div { flex: 1; background: #fff; border: 1px solid #e3e1dc; border-radius: 12px; padding: 4px 10px; }
+.lbl.dev b { font-size: 22px; color: #111; margin-left: 4px; }
+.sku { border-top: 1px solid #e3e1dc; margin-top: 3px; padding-top: 2px; line-height: 1.25; }
+#skuTail { font-size: 15px; font-weight: 700; letter-spacing: .5px; }
+#skuLine { font-size: 15px; } #skuLine b { font-size: 20px; }
+.sku .cnt { color: #1f7a3a; } .sku .stk { color: #1d4ed8; }
+.sku.empty #skuTail { color: #bbb; font-weight: 400; }
 .lbl { font-size: 13px; color: #6b6b6b; }
-.num { font-size: 44px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
-.num.small { font-size: 26px; }
-.qtyrow { display: flex; justify-content: space-between; align-items: center; padding: 4px 6px; font-size: 15px; }
+.num { font-size: 40px; font-weight: 700; line-height: 1.05; font-variant-numeric: tabular-nums; }
+.num.small { font-size: 22px; }
+.qtyrow { display: flex; justify-content: space-between; align-items: center; padding: 0 6px; font-size: 15px; }
 #qtyVal { font-size: 28px; font-weight: 700; min-width: 60px; text-align: right; }
 #qtyVal.multi { color: #b42318; }
 .keypad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
@@ -60,7 +78,8 @@ details { margin: 10px 0; } summary { color: #555; font-size: 14px; }
 .keypad button:active { background: #eee; }
 .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; }
 .actions .btn { margin: 0; font-size: 16px; padding: 12px 6px; }
-.actions.two .btn { font-size: 14px; }
+.actions.four { grid-template-columns: repeat(4, 1fr); gap: 5px; margin-top: 6px; }
+.actions.four .btn { font-size: 14px; line-height: 1.2; padding: 8px 2px; }
 
 .lochead { display: flex; justify-content: space-between; align-items: baseline; }
 .bigloc { font-size: 44px; font-weight: 700; }
