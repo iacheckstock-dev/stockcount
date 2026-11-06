@@ -14,14 +14,27 @@
 |---|---|
 | `gas/` | โค้ด Apps Script: `Code.gs` (เซิร์ฟเวอร์/Admin), `Api.gs` (API ของเครื่อง), `Core.gs` (ตรรกะล้วน), `Admin.html` (หน้า Admin) |
 | `app/` | เว็บแอป TC21 (PWA บน GitHub Pages): `index.html`, `app.js`, `db.js`, `sw.js`, `labels.html` (พิมพ์ป้าย) |
-| `docs/` | คู่มือติดตั้งแต่ละเฟส |
+| `docs/` | เอกสารเทคนิคและคู่มือติดตั้ง (ดูหัวข้อเอกสาร) |
 | `tests/` | ชุดทดสอบบน Node (ไม่ต้องใช้บัญชี Google) |
+
+## เอกสาร
+
+| เอกสาร | เนื้อหา |
+|---|---|
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | ภาพรวม Tech stack แผนภาพสถาปัตยกรรม ส่วนประกอบ หลักการออกแบบ สภาพแวดล้อม |
+| [DATA-FLOW.md](docs/DATA-FLOW.md) | เส้นทางข้อมูลตั้งแต่ไฟล์ SAP/POS ถึงผลนับ และจุดควบคุม C1–C24 |
+| [DATA-DICTIONARY.md](docs/DATA-DICTIONARY.md) | ทุกชีตและคอลัมน์ ความเชื่อมโยง ระดับความลับ |
+| [API.md](docs/API.md) | API ของเครื่อง TC21: action คำขอ คำตอบ ข้อผิดพลาด |
+| [DEPLOY-PHASE1.md](docs/DEPLOY-PHASE1.md) · [DEPLOY-PHASE2.md](docs/DEPLOY-PHASE2.md) | ติดตั้ง ตั้งค่า Deploy อัปเดตเวอร์ชัน DataWedge |
+| [CHANGELOG.md](CHANGELOG.md) | ประวัติเวอร์ชันและวิธีอัปเดต |
+
+เอกสารภายใน (ไม่อยู่ใน repo): สเปกการออกแบบ · การเข้าถึงและความปลอดภัย · Checklist ทดสอบ
 
 ## สถานะ
 
 - [x] เฟส 1 — สร้างชีต, เปิดรอบ, นำเข้า SAP/POS, Barcode_Map, ตรวจความพร้อม, ตัดสินขัดแย้ง, อนุมัติ Master, เทียบ SAP กับ POS → [คู่มือติดตั้ง](docs/DEPLOY-PHASE1.md)
 - [x] เฟส 2 — เว็บแอป TC21 (PWA), จับคู่เครื่อง, ตรวจความพร้อม, หน้านับ, แก้ยอด Location, คิวออฟไลน์, sync, export/นำเข้าไฟล์, พิมพ์ป้าย → [คู่มือติดตั้ง](docs/DEPLOY-PHASE2.md)
-- CHANGELOG: [CHANGELOG.md](CHANGELOG.md) (เวอร์ชันปัจจุบัน 2.1.1)
+- CHANGELOG: [CHANGELOG.md](CHANGELOG.md) (เวอร์ชันปัจจุบัน 2.2.0)
 - [ ] เฟส 3 — Dashboard และการแก้ไขยอดนับ
 - [ ] เฟส 4 — ปิดรอบ, Archive, ประวัติ
 - [ ] เฟส 5 — ทดลองใช้จริง
