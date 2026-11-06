@@ -12,7 +12,7 @@ var SCHEMA_VERSION = 4;
  * เวอร์ชันของระบบ (ใช้เลขเดียวทั้งแอป TC21 และเซิร์ฟเวอร์ ตาม Semantic Versioning MAJOR.MINOR.PATCH)
  * ต้องตรงกับ APP_VERSION ใน app/app.js และ appVersion ใน app/config.json — ดู CHANGELOG.md
  */
-var SYSTEM_VERSION = '2.2.0';
+var SYSTEM_VERSION = '2.2.1';
 
 var SHEETS = {
   Config: ['Key', 'Value', 'Note'],
@@ -207,7 +207,16 @@ function logAdmin_(action, target, detail) {
 function withLock_(fn) {
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(30000)) throw new Error('มีคนกำลังบันทึกข้อมูลอยู่ ลองใหม่อีกครั้ง');
-  try { return fn(); } finally { lock.releaseLock(); }
+  try { return fn(); } finally { releaseLock_(lock); }
+}
+
+/**
+ * ปล่อยล็อกหลังสั่งให้ Sheets บันทึกการเขียนที่ค้างในคิวให้เสร็จก่อน (SpreadsheetApp.flush)
+ * ไม่อย่างนั้นคำขอถัดไปที่ได้ล็อกอาจยังไม่เห็นแถวที่เพิ่งเขียน แล้วเขียนทับแถวเดียวกัน
+ * — ตามคำแนะนำในเอกสาร LockService ของ Google (v2.2.1)
+ */
+function releaseLock_(lock) {
+  try { SpreadsheetApp.flush(); } finally { lock.releaseLock(); }
 }
 
 // ---------- อ่าน/เขียนตาราง ----------
@@ -647,6 +656,6 @@ function apiImportDeviceFile(text, fileName) {
       state: apiDevicesState()
     };
   } finally {
-    lock.releaseLock();
+    releaseLock_(lock);
   }
 }

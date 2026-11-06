@@ -244,5 +244,13 @@ test('ข้อมูลรอบที่นับด้วย v2.1.1 (ไม�
   assert.strictEqual(e2.sheets.Count_Log.data.length, 3);
 });
 
+console.log('\nล็อก');
+test('ทุกครั้งที่ปล่อยล็อก สั่ง flush ก่อน (กันเขียนทับแถวเมื่อหลายเครื่องส่งติดกัน)', () => {
+  const t = env.lockTrace;
+  const releases = t.map((x, i) => x === 'release' ? i : -1).filter(i => i >= 0);
+  assert.ok(releases.length > 10, 'มีการใช้ล็อก ' + releases.length + ' ครั้ง');
+  assert.ok(releases.every(i => t[i - 1] === 'flush'), 'มี release ที่ไม่ได้ flush ก่อน');
+});
+
 console.log('\nผล: ผ่าน ' + pass + ' / ไม่ผ่าน ' + fail);
 process.exit(fail ? 1 : 0);

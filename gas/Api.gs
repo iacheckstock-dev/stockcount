@@ -274,7 +274,7 @@ function apiSync_(a, req) {
     res.stockVersion = stockVersion_(cfg);
     return res;
   } finally {
-    lock.releaseLock();
+    releaseLock_(lock);
   }
 }
 

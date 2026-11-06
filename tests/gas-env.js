@@ -2,6 +2,7 @@
 const fs = require('fs'), path = require('path'), vm = require('vm'), crypto = require('crypto');
 
 function createEnv() {
+  const lockTrace = [];
   function makeSheet(name) {
     const sh = {
       name, data: [], maxRows: 1000, maxCols: 26, prot: [],
@@ -54,9 +55,9 @@ function createEnv() {
 
   const ctx = {
     console,
-    SpreadsheetApp: { getActive: () => ss, getUi: () => { throw new Error('no ui'); }, ProtectionType: { SHEET: 'SHEET' } },
+    SpreadsheetApp: { getActive: () => ss, getUi: () => { throw new Error('no ui'); }, ProtectionType: { SHEET: 'SHEET' }, flush: () => { lockTrace.push('flush'); } },
     Session: { getActiveUser: () => ({ getEmail: () => 'admin@test' }), getEffectiveUser: () => ({ getEmail: () => 'admin@test' }) },
-    LockService: { getDocumentLock: () => ({ tryLock: () => true, releaseLock: () => {} }) },
+    LockService: { getDocumentLock: () => ({ tryLock: () => { lockTrace.push('lock'); return true; }, releaseLock: () => { lockTrace.push('release'); } }) },
     Utilities: {
       formatDate: (d) => d.toISOString().replace('T', ' ').slice(0, 19),
       computeDigest: (alg, s) => Array.from(crypto.createHash('sha256').update(s, 'utf8').digest()).map(b => (b > 127 ? b - 256 : b)),
@@ -77,7 +78,7 @@ function createEnv() {
   for (const f of ['Core.gs', 'Code.gs', 'Api.gs']) vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'gas', f), 'utf8'), ctx, { filename: f });
   const run = (code, vars) => vm.runInContext(code, Object.assign(ctx, vars || {}));
   const post = body => JSON.parse(run('doPost(_req).getContent()', { _req: { postData: { contents: JSON.stringify(body) } } }));
-  return { ctx, sheets, run, post };
+  return { ctx, sheets, run, post, lockTrace };
 }
 
 function loadSamples(Core) {
