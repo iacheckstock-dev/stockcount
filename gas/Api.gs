@@ -14,7 +14,7 @@ var PAIR_MAX_FAILS = 5;
 
 function doGet(e) {
   var p = (e && e.parameter) || {};
-  if (p.action === 'ping') return json_({ ok: true, serverTime: Date.now(), api: API_VERSION });
+  if (p.action === 'ping') return json_({ ok: true, serverTime: Date.now(), api: API_VERSION, serverVersion: SYSTEM_VERSION });
   return HtmlService.createHtmlOutput('<p>Stock Count API v' + API_VERSION + '</p>');
 }
 
@@ -39,10 +39,11 @@ function doPost(e) {
       default: out = { ok: false, error: 'UNKNOWN_ACTION' };
     }
     out.serverTime = Date.now();
+    out.serverVersion = SYSTEM_VERSION;
     return json_(out);
   } catch (err) {
     var code = err && err.code ? err.code : 'SERVER_ERROR';
-    return json_({ ok: false, error: code, message: String(err && err.message || err), serverTime: Date.now() });
+    return json_({ ok: false, error: code, message: String(err && err.message || err), serverTime: Date.now(), serverVersion: SYSTEM_VERSION });
   }
 }
 

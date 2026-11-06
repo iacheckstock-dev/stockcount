@@ -217,7 +217,7 @@ function setState(s) { S = s; CMP = null; render(s); if ($('compare').classList.
 
 function render(s) {
   S = s;
-  $('who').textContent = s.user;
+  $('who').textContent = s.user + ' · ระบบ v' + (s.version || '?');
   var r = s.round;
   $('roundTag').textContent = r.projectId ? r.projectId + ' · นับ ' + r.countDate + ' · ' + r.status : 'ยังไม่เปิดรอบ';
   $('provTag').style.display = s.master.hasPos && !s.master.hasSap ? '' : 'none';
@@ -483,7 +483,12 @@ function testApi() {
   function withTimeout(p, ms) { return Promise.race([p, new Promise(function (_, rej) { setTimeout(function () { rej(new Error('หมดเวลา')); }, ms); })]); }
   var t0 = Date.now();
   var ping = withTimeout(fetch(url + '?action=ping', { redirect: 'follow' }).then(function (r) { return r.json(); }), 15000)
-    .then(function (j) { return j && j.ok ? '<span class="pill ok">✓ ใช้งานได้</span> API v' + esc(j.api) + ' · ' + (Date.now() - t0) + ' ms' : '<span class="pill bad">✗ ตอบกลับผิดรูปแบบ</span>'; },
+    .then(function (j) {
+      if (!j || !j.ok) return '<span class="pill bad">✗ ตอบกลับผิดรูปแบบ</span>';
+      var sv = j.serverVersion || '?', mine = S && S.version;
+      return '<span class="pill ok">✓ ใช้งานได้</span> เซิร์ฟเวอร์ v' + esc(sv) + ' · ' + (Date.now() - t0) + ' ms' +
+        (mine && sv !== mine ? ' <span class="pill warn">โค้ดที่บันทึกเป็น v' + esc(mine) + ' แต่ Web app ยังเป็น v' + esc(sv) + ' — ยังไม่ได้ Deploy New version</span>' : '');
+    },
       function (e) { return '<span class="pill bad">✗ เรียกไม่ได้</span> ' + esc(e.message) + ' (deployment ถูก archive หรือไม่ได้ตั้ง Who has access = Anyone?)'; });
   var cfgUrl = (DEV && DEV.appUrl ? DEV.appUrl.replace(/\/?$/, '/') : '') + 'config.json?t=' + Date.now();
   var same = withTimeout(fetch(cfgUrl, { cache: 'no-store' }).then(function (r) { return r.json(); }), 15000)

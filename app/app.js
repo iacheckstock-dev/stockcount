@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2.1.0';
+  var APP_VERSION = '2.1.1';
   var BATCH = 20;
   var SYNC_EVERY = 2500;
   var STALE_MIN = 30;
@@ -16,7 +16,7 @@
     master: new Map(), masterList: [], masterHash: '', masterProject: '',
     projectId: '', entries: [], oldPending: [], events: [],
     staff: null, loc: null, qty: '', closedLocs: [], locChecks: {},
-    online: null, syncing: false, lastSyncOk: 0, lastErr: '', serverOffset: null,
+    serverVersion: '', online: null, syncing: false, lastSyncOk: 0, lastErr: '', serverOffset: null,
     readiness: null, dwOk: false, view: '', recountBanner: '', masterChanged: false, wakeLock: null,
     stock: new Map(), stockSource: '', stockVersion: '', lastSku: null, resumeMsg: '', resumeUntil: 0
   };
@@ -111,6 +111,7 @@
       .then(function (r) { return r.json(); }, function (e) { throw { code: 'NETWORK', message: 'ติดต่อเซิร์ฟเวอร์ไม่ได้' }; })
       .then(function (res) {
         if (res.serverTime) S.serverOffset = res.serverTime - (t0 + Date.now()) / 2;
+        if (res.serverVersion) S.serverVersion = res.serverVersion;
         setOnline(true);
         if (!res.ok) throw { code: res.error, message: res.message || res.error };
         return res;
@@ -666,7 +667,7 @@
       ['สแกนแล้ว', fmt(S.entries.length)], ['ส่งแล้ว', fmt(S.entries.length - p - rej.length)], ['ค้างส่ง', fmt(p)],
       ['เซิร์ฟเวอร์ไม่รับ', fmt(rej.length)], ['ข้อมูลรอบอื่นค้างส่ง', fmt(S.oldPending.length)], ['รอตรวจ Location', fmt(S.events.length)],
       ['ส่งสำเร็จล่าสุด', S.lastSyncOk ? stamp(new Date(S.lastSyncOk)).slice(11) : '-'], ['เชื่อมต่อ', S.online ? 'ออนไลน์' : S.online === false ? 'ออฟไลน์' : '-'],
-      ['รายการบาร์โค้ด', fmt(S.master.size) + ' · ' + (S.masterHash || '-')], ['เวอร์ชันแอป', APP_VERSION + (S.latestVersion && S.latestVersion !== APP_VERSION ? ' (ล่าสุด ' + S.latestVersion + ')' : '')]
+      ['รายการบาร์โค้ด', fmt(S.master.size) + ' · ' + (S.masterHash || '-')], ['เวอร์ชัน', 'แอป ' + APP_VERSION + ' · เซิร์ฟเวอร์ ' + (S.serverVersion || '-') + (S.latestVersion && S.latestVersion !== APP_VERSION ? ' (มีแอป ' + S.latestVersion + ')' : '')]
     ];
     $('statusKv').innerHTML = rows.map(function (r) { return '<div>' + esc(r[0]) + '</div><div>' + esc(r[1]) + '</div>'; }).join('') +
       (rej.length ? '<div>ไม่รับ</div><div>' + rej.slice(0, 5).map(function (e) { return esc(e.logId + ' ' + e.rejected); }).join('<br>') + '</div>' : '');
@@ -796,7 +797,9 @@
         // 1 เวอร์ชันแอป
         if (!S.latestVersion) add('แอปเป็นเวอร์ชันล่าสุด', 'WARN', 'ตรวจไม่ได้ (ออฟไลน์) ใช้เวอร์ชัน ' + APP_VERSION);
         else if (S.latestVersion !== APP_VERSION) add('แอปเป็นเวอร์ชันล่าสุด', 'FAIL', 'มีเวอร์ชัน ' + S.latestVersion + ' (เครื่องนี้ ' + APP_VERSION + ') — กดปุ่ม "อัปเดตแอปตอนนี้" ด้านล่าง');
-        else add('แอปเป็นเวอร์ชันล่าสุด', 'OK', APP_VERSION);
+        else add('แอปเป็นเวอร์ชันล่าสุด', 'OK', 'แอป ' + APP_VERSION + (S.serverVersion ? ' · เซิร์ฟเวอร์ ' + S.serverVersion : ''));
+        // เลขเดียวทั้งระบบ: ถ้าไม่ตรง แปลว่าอัปเดตไม่ครบฝั่ง (เช่น ลืม Deploy New version ของ Apps Script)
+        if (S.serverVersion && S.serverVersion !== APP_VERSION) add('แอปกับเซิร์ฟเวอร์เป็นรุ่นเดียวกัน', 'WARN', 'แอป ' + APP_VERSION + ' · เซิร์ฟเวอร์ ' + S.serverVersion + ' — แจ้งหัวหน้าทีมตรวจสอบ');
         // 2 จับคู่
         add('เครื่องผูกรหัสเครื่องแล้ว', S.cfg.token ? 'OK' : 'FAIL', S.cfg.deviceId || '');
         // 3 เซิร์ฟเวอร์

@@ -8,6 +8,12 @@
 
 var SCHEMA_VERSION = 3;
 
+/**
+ * เวอร์ชันของระบบ (ใช้เลขเดียวทั้งแอป TC21 และเซิร์ฟเวอร์ ตาม Semantic Versioning MAJOR.MINOR.PATCH)
+ * ต้องตรงกับ APP_VERSION ใน app/app.js และ appVersion ใน app/config.json — ดู CHANGELOG.md
+ */
+var SYSTEM_VERSION = '2.1.1';
+
 var SHEETS = {
   Config: ['Key', 'Value', 'Note'],
   Staff: ['Staff_Code', 'Name', 'Role', 'Active'],
@@ -280,6 +286,7 @@ function apiGetState() {
   var log = readRaw_('Admin_Log');
   return {
     user: who_(),
+    version: SYSTEM_VERSION,
     spreadsheetUrl: SpreadsheetApp.getActive().getUrl(),
     round: { projectId: cfg.PROJECT_ID, countDate: cfg.COUNT_DATE, status: cfg.ROUND_STATUS || 'NONE' },
     files: {
