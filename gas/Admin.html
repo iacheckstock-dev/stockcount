@@ -163,6 +163,12 @@
         <div class="row" id="lblLinks"></div>
         <div class="muted">เปิดหน้าป้ายในแท็บใหม่ แล้วสั่งพิมพ์ (Ctrl+P) ลงกระดาษ A4 / สติกเกอร์</div>
       </div>
+      <div class="card" style="border-color:#e0b100;background:#fffbea">
+        <h3>พิมพ์ชุดทดสอบ <span class="pill warn">สำหรับทดสอบเท่านั้น</span></h3>
+        <div class="row">สินค้ามีในฐานข้อมูล <input type="text" id="tkReal" value="20" size="2"> ไม่มีในฐานข้อมูล <input type="text" id="tkFake" value="5" size="2"></div>
+        <div class="row"><button class="btn sec" onclick="makeTestKit()">สร้างชุดทดสอบ</button> <span id="tkLink"></span></div>
+        <div class="muted">สุ่มบาร์โค้ดจริงจาก Device_Master + เลขปลอม + QR ที่อยู่แอป + บัตรพนักงานที่ไม่ถูกต้อง · ทุกป้ายมีคำว่า TEST · กดสร้างใหม่ได้ชุดสุ่มใหม่</div>
+      </div>
     </div>
     <div class="row" style="margin-top:12px">
       <button class="btn sec" onclick="seedDevices()">สร้างรหัสเครื่อง TC21-01 ถึง</button>
@@ -482,6 +488,19 @@ function renderLabelLinks() {
   $('lblLinks').innerHTML = '<a class="btn sec" style="text-decoration:none" target="_blank" href="' + esc(loc) + '">ป้าย Location</a>' +
     '<a class="btn sec" style="text-decoration:none" target="_blank" href="' + esc(emp) + '">บัตรผู้ตรวจสอบ (' + DEV.staff.filter(function (s) { return s.active; }).length + ')</a>' +
     '<a class="btn sec" style="text-decoration:none" target="_blank" href="' + esc(dev) + '">สติกเกอร์เครื่อง</a>';
+}
+function makeTestKit() {
+  call('apiTestKit', [$('tkReal').value, $('tkFake').value], function (k) {
+    if (!k.appUrl) { toast('ยังไม่ได้ตั้งที่อยู่แอป (APP_URL)', true); return; }
+    var enc = function (a) { return encodeURIComponent(a.join(';')); };
+    var url = k.appUrl.replace(/\/?$/, '/') + 'labels.html#type=TEST' +
+      '&real=' + enc(k.real.map(function (x) { return [x.code, x.material, x.name.replace(/[|;]/g, ' ')].join('|'); })) +
+      '&fake=' + enc(k.fake) +
+      '&staff=' + enc(k.staff.map(function (x) { return [x.code, x.title, x.note].join('|'); })) +
+      '&app=' + encodeURIComponent(k.appUrl) + '&project=' + encodeURIComponent(k.project || '');
+    $('tkLink').innerHTML = '<a class="btn" style="text-decoration:none" target="_blank" href="' + esc(url) + '">เปิดหน้าพิมพ์ชุดทดสอบ</a> <span class="muted">' +
+      k.real.length + ' + ' + k.fake.length + ' สินค้า · ' + k.staff.length + ' บัตร (จาก Master ' + k.masterCount + ' รหัส)</span>';
+  });
 }
 ['lblZones', 'lblFrom', 'lblTo'].forEach(function (id) { $(id).addEventListener('input', renderLabelLinks); });
 function saveApiUrl() {

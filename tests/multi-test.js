@@ -252,5 +252,36 @@ test('ทุกครั้งที่ปล่อยล็อก สั่ง 
   assert.ok(releases.every(i => t[i - 1] === 'flush'), 'มี release ที่ไม่ได้ flush ก่อน');
 });
 
+console.log('\nชุดทดสอบ (apiTestKit)');
+test('สุ่มบาร์โค้ดจริงจาก Device_Master + เลขปลอมที่ไม่มีใน Master + บัตรผิด', () => {
+  env.sheets.Staff.data.push(['EMP-OLD', 'นาย ปิด', 'ผู้ตรวจสอบ', 'N']);
+  const before = JSON.stringify(env.sheets.Device_Master.data);
+  const k = run('apiTestKit(20, 5)');
+  const dm = env.sheets.Device_Master.data.slice(1).filter(r => r[0]);
+  const have = new Set(dm.map(r => String(r[0])));
+  assert.strictEqual(k.real.length, Math.min(20, dm.length));
+  assert.strictEqual(new Set(k.real.map(x => x.code)).size, k.real.length, 'ไม่ซ้ำ');
+  k.real.forEach(x => assert.ok(have.has(x.code), 'จริงต้องมีใน Master ' + x.code));
+  assert.strictEqual(k.fake.length, 5);
+  k.fake.forEach(c => {
+    assert.ok(/^200\d{10}$/.test(c), c);
+    assert.ok(!have.has(c));
+    const s = c.slice(0, 12).split('').reduce((a, d, i) => a + Number(d) * (i % 2 ? 3 : 1), 0);
+    assert.strictEqual(Number(c[12]), (10 - s % 10) % 10, 'check digit');
+  });
+  const codes = k.staff.map(x => x.code);
+  assert.ok(codes.includes('EMP:FAKE01'));
+  assert.ok(codes.includes('EMP:EMP-OLD'), 'พนักงานปิดใช้งาน');
+  assert.ok(codes.includes('EMP:'));
+  assert.ok(codes.some(c => !/^EMP:/.test(c)), 'บัตรไม่มี EMP:');
+  assert.strictEqual(JSON.stringify(env.sheets.Device_Master.data), before, 'อ่านอย่างเดียว');
+});
+test('ทุกบัตรในชุดทดสอบถูกปฏิเสธตอน bootstrap (ไม่อยู่ในรายชื่อที่ส่งลงเครื่อง)', () => {
+  const d = device('TC21-05', 'EMP-K');
+  const boot = d.call('bootstrap');
+  const ok = new Set(boot.staff.map(s => 'EMP:' + s.code));
+  run('apiTestKit(3, 1)').staff.forEach(x => assert.ok(!ok.has(x.code), x.code));
+});
+
 console.log('\nผล: ผ่าน ' + pass + ' / ไม่ผ่าน ' + fail);
 process.exit(fail ? 1 : 0);

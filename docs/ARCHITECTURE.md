@@ -68,7 +68,7 @@ flowchart LR
 | `sw.js` | Service Worker (แคช + network-first) |
 | `style.css` | หน้าจอ 360×568 แนวตั้ง ไม่ลดขนาดแป้นตัวเลข |
 | `config.json` | URL ของ API และเวอร์ชันล่าสุดของแอป |
-| `labels.html` + `code128.js` | พิมพ์ป้าย Location / บัตรผู้ตรวจ / สติกเกอร์เครื่อง (Code 128) |
+| `labels.html` + `code128.js` + `qrcode.js` | พิมพ์ป้าย Location / บัตรผู้ตรวจ / สติกเกอร์เครื่อง (Code 128) และชุดทดสอบ (`#type=TEST`, มี QR) |
 | `manifest.webmanifest`, `icons/` | ติดตั้งเป็นแอป |
 
 ### เซิร์ฟเวอร์ (`gas/`)

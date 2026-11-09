@@ -14,6 +14,15 @@
   .lbl .mid { font-size: 6mm; font-weight: 700; line-height: 1.1; text-align: center; }
   .lbl .small { font-size: 3mm; color: #333; }
   .lbl svg { height: 11mm; display: block; margin-top: 1.5mm; }
+  .sheet.multi { display: block; padding: 0; }
+  .sheet.multi .sheet { padding: 2mm 0 4mm; }
+  .head { width: 198mm; margin: 0 auto; font-size: 4.5mm; font-weight: 800; padding: 3mm 2mm 1mm; border-bottom: 0.4mm solid #111; break-after: avoid; }
+  .head span { font-weight: 400; font-size: 3.2mm; color: #444; }
+  .lbl.t { position: relative; }
+  .lbl.t:before { content: 'TEST'; position: absolute; top: 0.8mm; left: 1.2mm; font-size: 2.6mm; font-weight: 800; color: #fff; background: #b42318; padding: 0 1mm; border-radius: 0.6mm; }
+  .lbl.t .small { text-align: center; max-width: 62mm; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .lbl.t .mid.long { font-size: 4.2mm; max-width: 62mm; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .lbl.qr svg { width: 26mm; height: 26mm; margin: 0; }
   @media print { .bar { display: none; } .lbl { border-color: #ddd; } }
 </style>
 </head>
@@ -22,6 +31,7 @@
   <span style="color:#666;font-size:13px">ตั้งค่าพิมพ์: ขนาดจริง (100%) ไม่ย่อ — ทดสอบยิงด้วย TC21 ก่อนพิมพ์ทั้งชุด</span></div>
 <div class="sheet" id="sheet"></div>
 <script src="code128.js"></script>
+<script src="qrcode.js"></script>
 <script>
 (function () {
   function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
@@ -38,18 +48,38 @@
     });
   } else if (type === 'DEV') {
     (p.items || '').split(';').filter(String).forEach(function (id) { labels.push({ code: 'DEV:' + id.toUpperCase(), mid: id.toUpperCase(), small: 'สติกเกอร์เครื่อง' }); });
+  } else if (type === 'TEST') {
+    var list = function (k) { return (p[k] || '').split(';').filter(String); };
+    var real = list('real'), fake = list('fake'), staff = list('staff');
+    labels.push({ head: '① สินค้าที่มีในฐานข้อมูล', sub: real.length + ' รหัส · ต้องขึ้นชื่อสินค้าและนับได้ปกติ' });
+    real.forEach(function (it) { var a = it.split('|'); labels.push({ t: 1, code: a[0], mid: a[1] || a[0], small: a[2] || '' }); });
+    labels.push({ head: '② สินค้าที่ไม่มีในฐานข้อมูล', sub: fake.length + ' รหัส · ต้องเตือนไม่พบสินค้า' });
+    fake.forEach(function (c) { labels.push({ t: 1, code: c, mid: 'ไม่มีในฐานข้อมูล', small: '' }); });
+    labels.push({ head: '③ บัตรพนักงานที่ไม่ถูกต้อง', sub: staff.length + ' ใบ · เครื่องต้องปฏิเสธทุกใบ' });
+    staff.forEach(function (it) { var a = it.split('|'); labels.push({ t: 1, code: a[0], mid: a[1] || 'บัตรทดสอบ', small: a[2] || '' }); });
+    labels.push({ head: '④ QR ที่อยู่แอป', sub: 'เปิดด้วยกล้องมือถือ/แท็บเล็ต · ถ้ายิงด้วยปุ่มสแกนในแอป ต้องไม่ถูกนับเป็นสินค้า' });
+    if (p.app) labels.push({ t: 1, qr: p.app, small: p.app });
   }
-  document.getElementById('title').textContent = { LOC: 'ป้าย Location', EMP: 'บัตรผู้ตรวจสอบ', DEV: 'สติกเกอร์เครื่อง' }[type] || type;
-  document.getElementById('count').textContent = labels.length + ' ป้าย (' + Math.ceil(labels.length / 21) + ' แผ่น A4)';
-  document.getElementById('sheet').innerHTML = labels.map(function (l) {
+  document.getElementById('title').textContent = { LOC: 'ป้าย Location', EMP: 'บัตรผู้ตรวจสอบ', DEV: 'สติกเกอร์เครื่อง', TEST: 'ชุดทดสอบ (ห้ามใช้ในการนับจริง)' }[type] || type;
+  var nLbl = labels.filter(function (l) { return !l.head; }).length;
+  document.getElementById('count').textContent = nLbl + ' ป้าย' + (type === 'TEST' ? (p.project ? ' · รอบ ' + p.project : '') : ' (' + Math.ceil(nLbl / 21) + ' แผ่น A4)');
+  var multi = labels.some(function (l) { return l.head; });
+  if (multi) document.getElementById('sheet').className = 'sheet multi';
+  var html = labels.map(function (l, i) {
+    if (l.head) return (i ? '</div>' : '') + '<div class="head">' + esc(l.head) + ' <span>' + esc(l.sub || '') + '</span></div><div class="sheet">';
+    if (l.qr) {
+      var q = qrcode(0, 'M'); q.addData(l.qr); q.make();
+      return '<div class="lbl t qr">' + q.createSvgTag({ cellSize: 2, margin: 2, scalable: true }) + '<div class="small" style="white-space:normal;word-break:break-all">' + esc(l.small) + '</div></div>';
+    }
     var mods;
     try { mods = Code128.modules(l.code).length + 20; }
     catch (e) { return '<div class="lbl"><div class="mid" style="color:#b42318">พิมพ์ไม่ได้</div><div class="small">' + esc(l.code) + '<br>รหัสต้องเป็นอักษรอังกฤษ/ตัวเลขเท่านั้น</div></div>'; }
     var w = Math.min(60, mods * 0.33);            // โมดูลประมาณ 0.33 มม. อ่านง่ายด้วย SE4100
-    return '<div class="lbl">' + (l.big ? '<div class="big">' + esc(l.big) + '</div>' : '<div class="mid">' + esc(l.mid) + '</div>') +
+    return '<div class="lbl' + (l.t ? ' t' : '') + '">' + (l.big ? '<div class="big">' + esc(l.big) + '</div>' : '<div class="mid' + (l.t && String(l.mid).length > 11 ? ' long' : '') + '">' + esc(l.mid) + '</div>') +
       Code128.svg(l.code, { module: 2, height: 60 }).replace('<svg ', '<svg style="width:' + w.toFixed(1) + 'mm" preserveAspectRatio="none" ') +
-      '<div class="small">' + esc(l.code) + '</div></div>';
+      '<div class="small">' + esc(l.code) + (l.t && l.small ? '<br>' + esc(l.small) : '') + '</div></div>';
   }).join('');
+  document.getElementById('sheet').innerHTML = multi ? html + '</div>' : html;
 })();
 </script>
 </body>

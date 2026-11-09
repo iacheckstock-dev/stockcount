@@ -600,6 +600,54 @@ function apiSeedDevices(count, prefix) {
   });
 }
 
+/**
+ * ชุดป้ายสำหรับทดสอบ (อ่านอย่างเดียว ไม่เขียนชีต)
+ * - real: สุ่มบาร์โค้ดจาก Device_Master (ที่มีบาร์โค้ด)
+ * - fake: EAN-13 ขึ้นต้น 200 (ช่วงภายในร้าน) check digit ถูก และไม่มีใน Device_Master
+ * - staff: บัตรพนักงานที่ต้องถูกปฏิเสธ
+ */
+function apiTestKit(nReal, nFake) {
+  ensureSetup_();
+  var cfg = readConfig_();
+  nReal = Math.max(1, Math.min(60, Number(nReal) || 20));
+  nFake = Math.max(1, Math.min(20, Number(nFake) || 5));
+  var rows = readRaw_('Device_Master').slice(1).filter(function (r) { return r[0]; });
+  if (!rows.length) throw new Error('ยังไม่มี Device_Master — นำเข้า SAP/POS และอนุมัติ Master ก่อน');
+  var have = {};
+  rows.forEach(function (r) { have[r[0]] = true; });
+  var pool = rows.slice(), real = [];
+  while (real.length < nReal && pool.length) {
+    var r = pool.splice(Math.floor(Math.random() * pool.length), 1)[0];
+    real.push({ code: r[0], material: r[1], name: String(r[3] || '').slice(0, 40) });
+  }
+  var fake = [], guard = 0;
+  while (fake.length < nFake && guard++ < 1000) {
+    var c = ean13_('200' + String(Math.floor(Math.random() * 1e9) + 1e9).slice(1));
+    if (!have[c] && fake.indexOf(c) < 0) fake.push(c);
+  }
+  var staff = table_('Staff');
+  var all = staff.rows.map(function (r) { return rowObj_(staff, r); }).filter(function (s) { return s.Staff_Code; });
+  var codes = {};
+  all.forEach(function (s) { codes[normStaff_(s.Staff_Code)] = true; });
+  var fakeCode = 'FAKE01', i = 1;
+  while (codes[fakeCode]) fakeCode = 'FAKE' + ('0' + (++i)).slice(-2);
+  var bad = [{ code: 'EMP:' + fakeCode, title: 'ไม่มีในรายชื่อ', note: fakeCode }];
+  all.filter(function (s) { return String(s.Active).toUpperCase() === 'N'; }).slice(0, 2).forEach(function (s) {
+    bad.push({ code: 'EMP:' + normStaff_(s.Staff_Code), title: 'ปิดใช้งานแล้ว', note: s.Name || normStaff_(s.Staff_Code) });
+  });
+  bad.push({ code: 'EMP:', title: 'ไม่มีรหัส', note: 'EMP: ว่าง' });
+  var act = all.filter(function (s) { return String(s.Active).toUpperCase() !== 'N'; })[0];
+  if (act) bad.push({ code: normStaff_(act.Staff_Code), title: 'ไม่มี EMP: นำหน้า', note: 'ต้องขึ้นว่าไม่พบสินค้า' });
+  return { appUrl: cfg.APP_URL, project: cfg.PROJECT_ID, real: real, fake: fake, staff: bad, masterCount: rows.length };
+}
+
+/** เติม check digit EAN-13 ให้เลข 12 หลัก */
+function ean13_(d12) {
+  var s = 0;
+  for (var i = 0; i < 12; i++) s += Number(d12.charAt(i)) * (i % 2 ? 3 : 1);
+  return d12 + ((10 - s % 10) % 10);
+}
+
 /** สร้างรหัสจับคู่ 6 หลัก ใช้ได้ 30 นาที ครั้งเดียว; จับคู่ใหม่จะทำให้ token เดิมของเครื่องนั้นใช้ไม่ได้ */
 function apiPairCode(deviceId) {
   return withLock_(function () {
