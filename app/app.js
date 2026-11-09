@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2.2.4';
+  var APP_VERSION = '2.2.5';
   var QTY_CONFIRM = 150;      // จำนวนที่ป้อนเองเกินนี้ต้องยืนยันอีกครั้ง
   var QTY_MAX_DIGITS = 5;     // ยาวกว่านี้ = น่าจะยิงบาร์โค้ดเข้าช่องจำนวน
   var INFO_EVERY = 15000;     // ถามสถานะผู้ช่วย/ผู้ดูแลระหว่างนับร่วมกัน
@@ -108,6 +108,8 @@
 
   function api(action, body, ms) {
     if (!S.cfg.apiUrl) return Promise.reject({ code: 'NO_API', message: 'ยังไม่ได้ตั้งที่อยู่เซิร์ฟเวอร์' });
+    // ยังไม่จับคู่: ถามเซิร์ฟเวอร์ได้อย่างเดียวคือจับคู่ (ไม่อย่างนั้นได้ "ไม่พบเครื่อง" แล้วถูกเข้าใจว่าถูกยกเลิก)
+    if (action !== 'pair' && !S.cfg.token) return Promise.reject({ code: 'NOT_PAIRED', message: 'เครื่องยังไม่ได้จับคู่' });
     var payload = Object.assign({ action: action, deviceId: S.cfg.deviceId, token: S.cfg.token, appVersion: APP_VERSION }, body || {});
     var t0 = Date.now();
     return fetchTimeout(S.cfg.apiUrl, { method: 'POST', body: JSON.stringify(payload), redirect: 'follow' }, ms)
@@ -127,7 +129,7 @@
   /** เครื่องถูกยกเลิก (หน้า Admin) หรือ token ใช้ไม่ได้: หยุดรับการยิงทันที จนกว่าจะจับคู่ใหม่ — ข้อมูลในเครื่องไม่หาย */
   var REVOKE_CODES = ['BAD_TOKEN', 'DEVICE_DISABLED', 'UNKNOWN_DEVICE'];
   function setRevoked(code) {
-    if (S.revoked === code) return;
+    if (!S.cfg.token || S.revoked === code) return;   // เฉพาะเครื่องที่เคยจับคู่แล้วถูกปฏิเสธจริง
     S.revoked = code;
     DB.set('revoked', code);
     if (S.view !== 'setup') { SOUND.bad(); show('revoked'); }
@@ -785,8 +787,10 @@
   $('btnMenu').onclick = function (e) {
     e.stopPropagation();
     // ยังไม่พร้อม: ซ่อนเมนูที่พาเข้าหน้านับ เหลือ สถานะ/Export และ ตรวจความพร้อมใหม่
-    var ok = isReady();
-    document.querySelectorAll('#menu button[data-m=locs], #menu button[data-m=typeloc]').forEach(function (b) { b.classList.toggle('hidden', !ok); });
+    var ok = isReady(), paired = !!S.cfg.token && !S.revoked;
+    document.querySelectorAll('#menu button[data-m=locs], #menu button[data-m=typeloc]').forEach(function (b) { b.classList.toggle('hidden', !ok || !paired); });
+    // ยังไม่จับคู่: เหลือแค่ สถานะ / Export
+    document.querySelectorAll('#menu button[data-m=ready]').forEach(function (b) { b.classList.toggle('hidden', !paired); });
     $('menu').classList.toggle('hidden');
   };
   document.addEventListener('click', function () { $('menu').classList.add('hidden'); });
@@ -1331,7 +1335,7 @@
       if (!S.cfg.apiUrl && S.defaultApi) S.cfg.apiUrl = S.defaultApi;
       $('setApi').value = S.cfg.apiUrl || S.defaultApi || '';
       if (S.cfg.deviceId) $('setDevice').value = S.cfg.deviceId;
-      if (!S.cfg.token) { show('setup'); return; }
+      if (!S.cfg.token) { if (S.revoked) { S.revoked = ''; DB.set('revoked', ''); } show('setup'); return; }
       if (S.revoked) { show('revoked'); return; }
       var r = S.readiness;
       if (r && r.pass && r.project === S.projectId && r.date === today()) {
