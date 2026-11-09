@@ -434,6 +434,19 @@ function exportCompare(exceptionsOnly) {
 }
 
 // ---------- เครื่อง TC21 ----------
+var SILENT_MIN = 10;   // ไม่ติดต่อเกินกี่นาทีจึงเตือน
+/** ติดต่อล่าสุด: เครื่องรายงานตัวทุก 1 นาทีพร้อมจำนวนค้างส่ง (เก็บไว้ 6 ชม.) */
+function contactCell(x, d) {
+  if (!x.active || !x.paired) return '';
+  if (!x.hb) return '<span class="muted">ยังไม่มีสัญญาณ</span>';
+  var min = Math.max(0, Math.floor((d.now - x.hb.at) / 60000));
+  var ago = min < 1 ? 'เมื่อสักครู่' : min + ' นาทีที่แล้ว';
+  var pend = Number(x.hb.pending) || 0;
+  var silent = min >= SILENT_MIN;
+  if (silent && pend) return '<span class="pill bad">ไม่ติดต่อเกิน ' + SILENT_MIN + ' นาที · ค้าง ' + pend + '</span><div class="muted">' + ago + (x.hb.loc ? ' · ' + esc(x.hb.loc) : '') + '</div>';
+  if (silent) return '<span class="pill warn">ไม่ติดต่อ ' + ago + '</span>' + (d.roundStatus === 'COUNTING' ? '<div class="muted">ปิดแอปหรือออกนอก Wi-Fi?</div>' : '');
+  return ago + (pend ? ' <span class="pill warn">ค้าง ' + pend + '</span>' : '') + (x.hb.loc ? '<div class="muted">' + esc(x.hb.loc) + '</div>' : '');
+}
 var DEV = null;
 function loadDevices() { call('apiDevicesState', [], renderDevices); }
 function renderDevices(d) {
@@ -447,13 +460,14 @@ function renderDevices(d) {
   ], true);
   $('qInfo').textContent = d.quarantine ? 'มีข้อมูลรอบอื่นแยกไว้ ' + d.quarantine + ' รายการ (ชีต Quarantine)' : '';
   var now = Date.now();
-  $('devTbl').innerHTML = '<tr><th>เครื่อง</th><th>สถานะ</th><th>ส่งล่าสุด</th><th class="n">Seq ล่าสุด</th><th class="n">Seq ขาด</th><th>ตรวจความพร้อม</th><th>เวอร์ชันแอป</th><th>จับคู่</th><th></th></tr>' +
+  $('devTbl').innerHTML = '<tr><th>เครื่อง</th><th>สถานะ</th><th>ติดต่อล่าสุด</th><th>ส่งล่าสุด</th><th class="n">Seq ล่าสุด</th><th class="n">Seq ขาด</th><th>ตรวจความพร้อม</th><th>เวอร์ชันแอป</th><th>จับคู่</th><th></th></tr>' +
     d.devices.map(function (x) {
-      var st = !x.active ? '<span class="pill bad">ปิดใช้งาน</span>' : x.paired ? '<span class="pill ok">จับคู่แล้ว</span>' : '<span class="pill warn">ยังไม่จับคู่</span>';
+      var st = !x.active ? '<span class="pill bad">ปิดใช้งาน</span><div class="muted">กด "เปิดใช้" แล้วสร้างรหัสจับคู่</div>' :
+        x.paired ? '<span class="pill ok">จับคู่แล้ว</span>' : '<span class="pill warn">ยังไม่จับคู่</span><div class="muted">กด "สร้างรหัสจับคู่" แล้วใส่รหัสที่เครื่อง</div>';
       var pair = x.pairCode ? '<span class="big mono">' + x.pairCode + '</span><br><span class="muted">หมดอายุใน ' + Math.max(0, Math.round((x.pairExpires - now) / 60000)) + ' นาที</span>' : '';
-      return '<tr><td><b>' + esc(x.id) + '</b></td><td>' + st + '</td><td>' + esc(x.lastSync) + '</td><td class="n">' + esc(x.lastSeq) + '</td><td class="n">' +
+      return '<tr><td><b>' + esc(x.id) + '</b></td><td>' + st + '</td><td>' + contactCell(x, d) + '</td><td>' + esc(x.lastSync) + '</td><td class="n">' + esc(x.lastSeq) + '</td><td class="n">' +
         (Number(x.gaps) ? '<span class="pill bad">' + esc(x.gaps) + '</span>' : esc(x.gaps || '')) + '</td><td>' + esc(x.lastCheck) + ' <span class="muted">' + esc(x.lastCheckAt) + '</span></td><td>' + esc(x.appVersion) +
-        '</td><td>' + pair + '</td><td><button class="btn sec" onclick="pairCode(\'' + x.id + '\')">' + (x.paired ? 'จับคู่ใหม่' : 'สร้างรหัสจับคู่') + '</button> ' +
+        '</td><td>' + pair + '</td><td>' + (x.active ? '<button class="btn sec" onclick="pairCode(\'' + x.id + '\')">' + (x.paired ? 'จับคู่ใหม่' : 'สร้างรหัสจับคู่') + '</button> ' : '') +
         (x.active ? '<button class="btn sec" onclick="setActive(\'' + x.id + '\', false)">ยกเลิกเครื่อง</button>' : '<button class="btn sec" onclick="setActive(\'' + x.id + '\', true)">เปิดใช้</button>') + '</td></tr>';
     }).join('');
   // Location: ผู้ดูแล / ผู้ช่วย / ธงตรวจซ้ำ — หัวหน้าทีมส่งงานแทนหรือโอนการดูแลได้ (บันทึกผู้กดและเหตุผล)

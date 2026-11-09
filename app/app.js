@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2.2.1';
+  var APP_VERSION = '2.2.2';
   var QTY_CONFIRM = 150;      // จำนวนที่ป้อนเองเกินนี้ต้องยืนยันอีกครั้ง
   var QTY_MAX_DIGITS = 5;     // ยาวกว่านี้ = น่าจะยิงบาร์โค้ดเข้าช่องจำนวน
   var INFO_EVERY = 15000;     // ถามสถานะผู้ช่วย/ผู้ดูแลระหว่างนับร่วมกัน
@@ -229,6 +229,10 @@
 
   function deviceTotal() { return Math.round(S.entries.reduce(function (a, e) { return a + e.qty; }, 0) * 1000) / 1000; }
   function pending() { return S.entries.filter(function (e) { return !e.synced && !e.rejected; }); }
+  /** Location นี้ยังมีรายการหรือเหตุการณ์ที่ยังไม่ได้ส่งหรือไม่ */
+  function locPending(loc) {
+    return pending().some(function (e) { return e.location === loc; }) || S.events.some(function (ev) { return ev.location === loc; });
+  }
   function info(item) {
     var m = item.material ? S.masterList.find(function (r) { return r.m === item.material; }) : S.master.get(item.barcode);
     return m || { n: item.barcode ? 'บาร์โค้ดไม่รู้จัก ' + item.barcode : item.material, c: '', m: item.material, b: item.barcode };
@@ -273,6 +277,8 @@
       };
     }).then(function (e) {
       S.entries.push(e);
+      // มีรายการใหม่ใน Location → ผล "ส่งครบ" ครั้งก่อนไม่เป็นจริงแล้ว
+      if (e.location && S.locChecks[e.location]) { delete S.locChecks[e.location]; saveState(); }
       scheduleSync(600);
       return e;
     });
@@ -322,7 +328,8 @@
       events: evs.map(function (ev) {
         return { id: ev.id, type: ev.type, projectId: ev.projectId, location: ev.location, staff: ev.staff, time: ev.time, lines: ev.lines, qty: ev.qty,
           fromSeq: ev.fromSeq, upToSeq: ev.upToSeq, total: ev.total, auto: ev.auto, at: ev.at };
-      })
+      }),
+      pendingAfter: rest.length, location: S.loc || ''
     };
     return api('sync', payload, 30000).then(function (res) {
       var done = {};
@@ -378,7 +385,14 @@
   setInterval(function () {
     if (pending().length || S.oldPending.length || S.events.some(function (e) { return e.nextTry <= Date.now(); })) syncNow();
   }, SYNC_EVERY);
-  setInterval(function () { if (S.cfg.apiUrl && S.cfg.token && !S.syncing) api('ping', {}, 8000).catch(function () {}); }, 60000);
+  // รายงานตัวทุก 1 นาที: หน้า Admin เห็นว่าเครื่องยังติดต่อได้และค้างกี่รายการ · ถ้าเครื่องถูกยกเลิก จะรู้ภายใน 1 นาที
+  function hello() {
+    if (!S.cfg.apiUrl || !S.cfg.token || S.syncing) return;
+    api('hello', { pending: pending().length + S.oldPending.length, location: S.loc || '' }, 8000).catch(function (err) {
+      if (err && (err.code === 'BAD_TOKEN' || err.code === 'DEVICE_DISABLED' || err.code === 'UNKNOWN_DEVICE')) { S.lastErr = err.code; render(); }
+    });
+  }
+  setInterval(hello, 60000);
   window.addEventListener('online', function () { scheduleSync(200); });
   window.addEventListener('offline', function () { setOnline(false); });
 
@@ -403,8 +417,8 @@
     $('tbRole').className = helper ? 'helper' : '';
     $('tbStaff').textContent = S.staff ? (S.staff.name || S.staff.code) : 'ยังไม่เข้างาน';
     var p = pending().length;
-    var synced = S.entries.length - p - S.entries.filter(function (e) { return e.rejected; }).length;
-    $('syncText').textContent = 'สแกน ' + fmt(S.entries.length) + ' · ส่ง ' + fmt(synced) + ' · ค้าง ' + fmt(p);
+    // นับเป็น "รายการ" (บรรทัดที่บันทึก รวมลบ/แก้) ไม่ใช่ชิ้น — จำนวนที่ส่งแล้วดูได้ที่หน้าสถานะ
+    $('syncText').textContent = 'รายการ ' + fmt(S.entries.length) + ' · ค้าง ' + fmt(p);
     $('netDot').className = 'dot ' + (S.syncing ? 'busy' : S.online === true ? 'on' : S.online === false ? 'off' : '');
     renderBanner();
   }
@@ -436,7 +450,7 @@
     fitText($('locTotal'), 40, 20);
     // หลายเครื่อง: ยอดรวม = ทุกเครื่อง และบอกยอดของเครื่องนี้แยก
     $('locSku').textContent = sum.multi ? 'ของฉัน ' + fmt(sum.mine.qty) + ' · ' + (S.info[S.loc].members.length) + ' เครื่อง' :
-      fmt(sum.sku) + ' SKU' + (S.loc && S.locChecks[S.loc] === 'OK' ? ' · ✓ ส่งครบ' : '');
+      fmt(sum.sku) + ' SKU' + (S.loc && S.locChecks[S.loc] === 'OK' && !locPending(S.loc) ? ' · ✓ ส่งครบ' : '');
     $('locLbl').textContent = sum.multi ? 'ยอดรวม Location (ทุกเครื่อง)' : 'ยอดรวม Location';
     $('devTotal').textContent = fmt(deviceTotal());
     fitText($('devTotal'), 22, 13);
@@ -978,7 +992,8 @@
     var p = pending().length, rej = S.entries.filter(function (e) { return e.rejected; });
     var rows = [
       ['เครื่อง', S.cfg.deviceId || '-'], ['รอบ', S.projectId || '-'], ['ผู้ตรวจสอบ', S.staff ? S.staff.code : '-'],
-      ['สแกนแล้ว', fmt(S.entries.length)], ['ส่งแล้ว', fmt(S.entries.length - p - rej.length)], ['ค้างส่ง', fmt(p)],
+      ['รายการที่บันทึก', fmt(S.entries.length)], ['รายการที่ส่งแล้ว', fmt(S.entries.length - p - rej.length)], ['รายการค้างส่ง', fmt(p)],
+      ['ยอดรวมทั้งเครื่อง (ชิ้น)', fmt(deviceTotal())],
       ['เซิร์ฟเวอร์ไม่รับ', fmt(rej.length)], ['ข้อมูลรอบอื่นค้างส่ง', fmt(S.oldPending.length)], ['รอตรวจ Location', fmt(S.events.length)],
       ['ส่งสำเร็จล่าสุด', S.lastSyncOk ? stamp(new Date(S.lastSyncOk)).slice(11) : '-'], ['เชื่อมต่อ', S.online ? 'ออนไลน์' : S.online === false ? 'ออฟไลน์' : '-'],
       ['รายการบาร์โค้ด', fmt(S.master.size) + ' · ' + (S.masterHash || '-')], ['เวอร์ชัน', 'แอป ' + APP_VERSION + ' · เซิร์ฟเวอร์ ' + (S.serverVersion || '-') + (S.latestVersion && S.latestVersion !== APP_VERSION ? ' (มีแอป ' + S.latestVersion + ')' : '')]
@@ -1002,11 +1017,26 @@
     });
   };
   $('btnUnpair').onclick = function () {
-    if (pending().length || S.oldPending.length) { toast('ยังมีข้อมูลค้างส่ง ส่งหรือ Export ก่อน', true); return; }
+    if (pending().length || S.oldPending.length || S.events.length) { toast('ยังมีข้อมูลค้างส่ง ส่งหรือ Export ก่อน', true); return; }
     confirmBox('ยกเลิกการจับคู่', 'ต้องใช้รหัสจับคู่ใหม่จากหัวหน้าทีมจึงจะใช้เครื่องนี้ได้อีก', 'ยกเลิกการจับคู่').then(function (y) {
-      if (!y) return; S.cfg.token = ''; DB.set('cfg', S.cfg).then(function () { show('setup'); });
+      if (!y) return;
+      // แจ้งเซิร์ฟเวอร์ก่อน ให้หน้า Admin ขึ้น "ยังไม่จับคู่" ตรงกับเครื่อง
+      return api('unpair', { staff: S.staff ? S.staff.code : '' }, 10000).then(function () { return true; }, function (err) {
+        if (err && (err.code === 'BAD_TOKEN' || err.code === 'DEVICE_DISABLED' || err.code === 'UNKNOWN_DEVICE')) return true;   // เซิร์ฟเวอร์ยกเลิกไว้แล้ว
+        return confirmBox('ติดต่อเซิร์ฟเวอร์ไม่ได้', 'หน้า Admin จะยังขึ้นว่าเครื่องนี้จับคู่อยู่ ให้แจ้งหัวหน้าทีมกด "ยกเลิกเครื่อง" ในหน้า Admin', 'ยกเลิกการจับคู่ต่อ');
+      }).then(function (go) {
+        if (!go) return;
+        return resetPairing().then(function () { show('setup'); toast('ยกเลิกการจับคู่แล้ว'); });
+      });
     });
   };
+
+  /** หลังยกเลิกการจับคู่: ล้าง token และสถานะ Location ของรอบนี้ (ข้อมูลที่นับไว้ส่งครบแล้วจึงยกเลิกได้ ยังเก็บไว้ในเครื่อง) */
+  function resetPairing() {
+    S.cfg.token = ''; S.lastErr = '';
+    S.roles = {}; S.locChecks = {}; S.info = {}; S.myLocs = {}; S.loc = null; S.staff = null;
+    return Promise.all([DB.set('cfg', S.cfg), saveState()]);
+  }
 
   function csvCell(v) { var s = v === null || v === undefined ? '' : String(v); return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
   function exportFile(auto) {

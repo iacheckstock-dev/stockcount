@@ -74,6 +74,10 @@ function createEnv() {
   ctx.ScriptApp = { getService: () => ({ getUrl: () => 'http://localhost/api' }) };
   ctx.Utilities.getUuid = () => crypto.randomUUID();
   ctx.LockService.getScriptLock = ctx.LockService.getDocumentLock;
+  const cacheStore = {};
+  const cache = { put: (k, v) => { cacheStore[k] = String(v); }, get: k => cacheStore[k] || null, remove: k => { delete cacheStore[k]; },
+    getAll: ks => { const o = {}; ks.forEach(k => { if (k in cacheStore) o[k] = cacheStore[k]; }); return o; } };
+  ctx.CacheService = { getScriptCache: () => cache };
   vm.createContext(ctx);
   for (const f of ['Core.gs', 'Code.gs', 'Api.gs']) vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'gas', f), 'utf8'), ctx, { filename: f });
   const run = (code, vars) => vm.runInContext(code, Object.assign(ctx, vars || {}));

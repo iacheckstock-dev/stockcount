@@ -1,4 +1,4 @@
-# API ของเครื่อง TC21 (API_VERSION 2 · v2.2.0)
+# API ของเครื่อง TC21 (API_VERSION 2 · v2.2.2)
 
 Web app ของ Apps Script (`gas/Api.gs`) Deploy แบบ **Execute as: Me · Who has access: Anyone**
 URL ลงท้าย `/exec` ตั้งไว้ใน `app/config.json` (`apiUrl`) และชีต Config (`API_URL`)
@@ -31,6 +31,8 @@ URL ลงท้าย `/exec` ตั้งไว้ใน `app/config.json` (`a
 | `locInfo` | ใช่ | เปิด Location / ดูยอดรวม / ก่อนแก้ยอดหรือปิด | Loc_Members (ย้ายข้อมูลครั้งแรก) |
 | `myLocs` | ใช่ | หน้า Location ที่นับแล้ว / หลังจับคู่ใหม่ | — |
 | `check` | ใช่ | ส่งผลตรวจความพร้อม | Device_Checks, Devices |
+| `hello` | ใช่ | รายงานตัวทุก 1 นาที (v2.2.2) | CacheService เท่านั้น (ไม่เขียนชีต) |
+| `unpair` | ใช่ | ผู้ใช้กด "ยกเลิกการจับคู่เครื่องนี้" (v2.2.2) | Devices (ล้าง token), Admin_Log |
 | `locStatus` | ใช่ | แอปรุ่นก่อน 2.2.0 (เก็บไว้ให้เข้ากันได้) | — |
 
 ---
@@ -162,6 +164,20 @@ sequenceDiagram
 
 ## check
 คำขอ: `{ staff, items: [{ title, result: "OK"|"WARN"|"FAIL", detail }] }` → คำตอบ `{ ok, pass }` (ไม่มี FAIL = ผ่าน)
+
+## hello (v2.2.2)
+คำขอ: `{ pending, location }` → `{ ok }`
+- เก็บ `{ at, pending, loc }` ใน CacheService key `hb_<Device_ID>` อายุ 6 ชม. ไม่เขียนชีตและไม่ใช้ล็อก
+- `sync` บันทึกค่าเดียวกันด้วย (`pendingAfter` = จำนวนที่ยังค้างหลังชุดนี้)
+- หน้า Admin → เครื่อง TC21 → คอลัมน์ "ติดต่อล่าสุด": แดงเมื่อไม่ติดต่อเกิน 10 นาทีและครั้งล่าสุดรายงานว่ามีค้าง, เหลืองเมื่อไม่ติดต่อเกิน 10 นาที
+- เครื่องที่ถูกยกเลิกจะได้ `DEVICE_DISABLED` / `BAD_TOKEN` ภายใน 1 นาที และขึ้นแถบแดงทันที
+- ข้อจำกัด: ถ้าเครื่องออฟไลน์แล้วยิงต่อ เซิร์ฟเวอร์จะเห็นจำนวนค้างของครั้งสุดท้ายที่ติดต่อได้ ไม่ใช่ของปัจจุบัน
+
+## unpair (v2.2.2)
+คำขอ: `{ staff }` → `{ ok }` · ล้าง Token_Hash/Pair_Code ของเครื่อง ลบ heartbeat และบันทึก `DEVICE_UNPAIRED` ใน Admin_Log
+- แอปยอมให้กดได้เมื่อไม่มีรายการและเหตุการณ์ค้างส่งเท่านั้น
+- ติดต่อเซิร์ฟเวอร์ไม่ได้ → แอปถามยืนยัน และบอกให้แจ้งหัวหน้าทีมกด "ยกเลิกเครื่อง" ในหน้า Admin
+- หลังยกเลิก แอปล้างบทบาท/ผล Location ของรอบนี้และผู้ตรวจสอบ (รายการที่ส่งแล้วยังเก็บในเครื่อง) จับคู่ใหม่ด้วยรหัสใหม่ได้ทันที
 
 ## locStatus (รุ่นเก่า)
 คำขอ: `{ location }` → `{ ok, location, status, openByOther, devices, counters }` — ใช้โดยแอปก่อน 2.2.0 เท่านั้น

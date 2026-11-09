@@ -39,6 +39,8 @@ function doPost(e) {
       case 'locInfo': out = apiLocInfo_(auth_(req), req); break;
       case 'myLocs': out = apiMyLocs_(auth_(req)); break;
       case 'check': out = apiCheck_(auth_(req), req); break;
+      case 'hello': out = apiHello_(auth_(req), req); break;
+      case 'unpair': out = apiUnpair_(auth_(req), req); break;
       default: out = { ok: false, error: 'UNKNOWN_ACTION' };
     }
     out.serverTime = Date.now();
@@ -156,6 +158,43 @@ function apiPair_(req) {
   });
 }
 
+// ---------- สัญญาณจากเครื่อง (heartbeat) ----------
+// เก็บใน CacheService ไม่เขียนชีต: เวลาติดต่อล่าสุด + จำนวนรายการค้างส่งที่เครื่องรายงาน
+var HB_TTL = 21600;   // 6 ชม. (สูงสุดของ CacheService)
+
+function heartbeat_(deviceId, pending, loc) {
+  try {
+    CacheService.getScriptCache().put('hb_' + deviceId, JSON.stringify({ at: Date.now(), pending: Math.max(0, Number(pending) || 0), loc: loc || '' }), HB_TTL);
+  } catch (e) { /* heartbeat ไม่สำคัญพอจะทำให้คำขอล้ม */ }
+}
+
+function heartbeats_(ids) {
+  try {
+    var got = CacheService.getScriptCache().getAll(ids.map(function (id) { return 'hb_' + id; })) || {};
+    var out = {};
+    ids.forEach(function (id) { if (got['hb_' + id]) out[id] = JSON.parse(got['hb_' + id]); });
+    return out;
+  } catch (e) { return {}; }
+}
+
+/** เครื่องรายงานตัวทุก 1 นาที (ไม่เขียนชีต) — ถ้าเครื่องถูกยกเลิก auth_ จะตอบ error ให้เครื่องรู้ทันที */
+function apiHello_(a, req) {
+  heartbeat_(a.deviceId, req.pending, req.location);
+  return { ok: true };
+}
+
+/** เครื่องยกเลิกการจับคู่เอง: ล้าง token ฝั่งเซิร์ฟเวอร์ให้หน้า Admin เห็นตรงกัน */
+function apiUnpair_(a, req) {
+  return withLock_(function () {
+    var t = table_('Devices');
+    var i = findDevice_(t, a.deviceId);
+    putRow_(t, i, { Token_Hash: '', Pair_Code: '', Pair_Expires: '' });
+    try { CacheService.getScriptCache().remove('hb_' + a.deviceId); } catch (e) { }
+    logAdmin_('DEVICE_UNPAIRED', a.deviceId, 'ยกเลิกการจับคู่จากตัวเครื่อง' + (req.staff ? ' โดย ' + req.staff : ''));
+    return { ok: true };
+  });
+}
+
 function apiBootstrap_(a) {
   var cfg = readConfig_();
   var staff = table_('Staff');
@@ -269,6 +308,7 @@ function apiSync_(a, req) {
     var res = ingest_(a.deviceId, req.entries || [], req.events || [], 'SYNC', a.device, a.appVersion);
     putRow_(a.table, a.row, { Last_Seq: res.seq.max, Last_Sync: now_(), App_Version: a.appVersion, Gaps: res.seq.gaps.length });
     res.ok = true;
+    if (req.pendingAfter !== undefined) heartbeat_(a.deviceId, req.pendingAfter, req.location);
     var cfg = readConfig_();
     res.masterHash = cfg.MASTER_APPROVED_PROJECT === cfg.PROJECT_ID ? cfg.MASTER_APPROVED_HASH : '';
     res.stockVersion = stockVersion_(cfg);

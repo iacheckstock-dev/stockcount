@@ -21,6 +21,7 @@ h2 { font-size: 20px; margin: 8px 0 12px; }
 #tbRole:empty { display: none; }
 #tbRight { text-align: right; font-size: 14px; }
 #tbStaff { font-weight: 600; font-size: 16px; }
+#tbSync { white-space: nowrap; }
 .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #999; margin-right: 6px; vertical-align: middle; }
 .dot.on { background: #34c759; } .dot.off { background: #ff3b30; } .dot.busy { background: #ffcc00; }
 #banner { padding: 8px 12px; font-size: 15px; font-weight: 600; background: #f9eeda; color: #7a4a00; }

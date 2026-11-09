@@ -283,5 +283,37 @@ test('ทุกบัตรในชุดทดสอบถูกปฏิเ�
   run('apiTestKit(3, 1)').staff.forEach(x => assert.ok(!ok.has(x.code), x.code));
 });
 
+console.log('\nสัญญาณเครื่อง / ยกเลิกการจับคู่ (v2.2.2)');
+test('hello และ sync บันทึกเวลาติดต่อ + จำนวนค้างส่ง ให้หน้า Admin เห็น (ไม่เขียนชีต)', () => {
+  const d = device('TC21-04', 'EMP-K');
+  const before = env.sheets.Devices.data.map(r => r.join('|')).join('\n');
+  assert.ok(d.call('hello', { pending: 7, location: 'H1' }).ok);
+  assert.strictEqual(env.sheets.Devices.data.map(r => r.join('|')).join('\n'), before, 'hello ไม่เขียนชีต');
+  let x = run('apiDevicesState()').devices.find(v => v.id === 'TC21-04');
+  assert.strictEqual(x.hb.pending, 7); assert.strictEqual(x.hb.loc, 'H1');
+  d.scan('H1', BC1, MAT1, 1);
+  d.call('sync', { entries: d.entries.slice(-1), events: [], pendingAfter: 0, location: 'H1' });
+  x = run('apiDevicesState()').devices.find(v => v.id === 'TC21-04');
+  assert.strictEqual(x.hb.pending, 0);
+});
+test('ยกเลิกการจับคู่จากเครื่อง → Admin ขึ้นยังไม่จับคู่ + บันทึก Admin_Log + token เดิมใช้ไม่ได้', () => {
+  const d = device('TC21-03', 'EMP-C');
+  assert.ok(run('apiDevicesState()').devices.find(v => v.id === 'TC21-03').paired);
+  assert.ok(d.call('unpair', { staff: 'EMP-C' }).ok);
+  const x = run('apiDevicesState()').devices.find(v => v.id === 'TC21-03');
+  assert.ok(!x.paired && x.active && !x.hb);
+  assert.ok(env.sheets.Admin_Log.data.some(r => r[2] === 'DEVICE_UNPAIRED' && r[3] === 'TC21-03'));
+  const r = d.call('hello', { pending: 0 });
+  assert.strictEqual(r.error, 'BAD_TOKEN');
+  const d2 = device('TC21-03', 'EMP-C');   // จับคู่ใหม่ได้ทันทีด้วยรหัสใหม่
+  assert.ok(d2.call('hello', { pending: 0 }).ok);
+});
+test('เครื่องที่ถูกยกเลิกในหน้า Admin: hello ตอบ DEVICE_DISABLED ให้เครื่องรู้ภายใน 1 นาที', () => {
+  const d = device('TC21-02', 'EMP-KH');
+  run('apiSetDeviceActive("TC21-02", false)');
+  assert.strictEqual(d.call('hello', { pending: 0 }).error, 'DEVICE_DISABLED');
+  run('apiSetDeviceActive("TC21-02", true)');
+});
+
 console.log('\nผล: ผ่าน ' + pass + ' / ไม่ผ่าน ' + fail);
 process.exit(fail ? 1 : 0);

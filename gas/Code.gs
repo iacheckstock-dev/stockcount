@@ -12,7 +12,7 @@ var SCHEMA_VERSION = 4;
  * เวอร์ชันของระบบ (ใช้เลขเดียวทั้งแอป TC21 และเซิร์ฟเวอร์ ตาม Semantic Versioning MAJOR.MINOR.PATCH)
  * ต้องตรงกับ APP_VERSION ใน app/app.js และ appVersion ใน app/config.json — ดู CHANGELOG.md
  */
-var SYSTEM_VERSION = '2.2.1';
+var SYSTEM_VERSION = '2.2.2';
 
 var SHEETS = {
   Config: ['Key', 'Value', 'Note'],
@@ -532,12 +532,16 @@ function apiDevicesState() {
       pairCode: pairLive ? d.Pair_Code : '', pairExpires: pairLive ? Number(d.Pair_Expires) : 0
     };
   });
+  var hb = heartbeats_(devices.map(function (x) { return x.id; }));
+  devices.forEach(function (x) { if (hb[x.id]) x.hb = hb[x.id]; });
   var staff = table_('Staff');
   var q = readRaw_('Quarantine');
   var locs = table_('Locations');
   return {
     apiUrl: cfg.API_URL || '',
     appUrl: cfg.APP_URL,
+    now: Date.now(),
+    roundStatus: cfg.ROUND_STATUS || 'NONE',
     projectId: cfg.PROJECT_ID,
     devices: devices,
     staff: staff.rows.map(function (r) { return rowObj_(staff, r); }).filter(function (s) { return s.Staff_Code; })
