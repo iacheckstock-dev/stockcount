@@ -43,6 +43,11 @@
   details summary { cursor:pointer; color:var(--acc); font-size:12px; }
   #toast { position:fixed; bottom:16px; left:50%; transform:translateX(-50%); padding:10px 16px; border-radius:8px; background:#111; color:#fff; display:none; max-width:80%; z-index:10; }
   #toast.err { background:var(--bad); }
+  #revDlg { position:fixed; inset:0; background:rgba(0,0,0,.35); display:none; align-items:center; justify-content:center; z-index:8; }
+  #revDlg.on { display:flex; }
+  #revDlg .box { background:#fff; border-radius:10px; padding:18px 20px; width:560px; max-width:94vw; max-height:90vh; overflow:auto; }
+  #revDlg label.opt { display:block; border:1px solid var(--line); border-radius:8px; padding:8px 10px; margin:6px 0; cursor:pointer; }
+  #revDlg label.opt:has(input:checked) { border-color:#111; background:var(--soft); }
   #busy { position:fixed; inset:0; background:rgba(255,255,255,.6); display:none; align-items:center; justify-content:center; z-index:9; font-size:15px; }
   .chips button { font:inherit; font-size:12px; padding:3px 10px; border-radius:12px; border:1px solid var(--line); background:#fff; cursor:pointer; }
   .chips button.on { background:#111; color:#fff; border-color:#111; }
@@ -186,6 +191,22 @@
     <div class="scroll"><table id="logTbl"></table></div>
   </section>
 </main>
+<div id="revDlg"><div class="box">
+  <h3 style="margin-top:0">ยกเลิกเครื่อง <span id="revId"></span></h3>
+  <div id="revImpact"></div>
+  <div style="margin-top:10px"><b>เหตุผล</b></div>
+  <label class="opt"><input type="radio" name="revWhy" value="TEMP"> <b>หยุดใช้ชั่วคราว / กดผิด</b>
+    <div class="muted">นำกลับมาได้: เปิดใช้ → สร้างรหัสจับคู่ → ที่เครื่องกด "จับคู่ใหม่ (เก็บข้อมูลเดิม)" รายการค้างส่งต่อได้ปกติ</div></label>
+  <label class="opt"><input type="radio" name="revWhy" value="REPLACE"> <b>เครื่องเสีย / เปลี่ยนเครื่อง</b>
+    <div class="muted">จับคู่เครื่องสำรองด้วยรหัสเดิมเพื่อรับบทบาทต่อ · ถ้าเครื่องเสียยังเปิดได้ ให้ Export ไฟล์แล้วนำเข้าที่หน้านี้</div></label>
+  <label class="opt"><input type="radio" name="revWhy" value="LOST"> <b>เครื่องหาย / สงสัยการใช้งาน</b>
+    <div class="muted">รายการที่ยิงหลังเวลานี้ (ก่อนจับคู่ใหม่) จะขึ้น "ต้องตรวจซ้ำ" ที่ Location นั้น · ควรใช้รหัสเครื่องใหม่แทน</div></label>
+  <div class="row" style="margin-top:8px">หมายเหตุ <input type="text" id="revNote" style="flex:1" placeholder="ไม่บังคับ"></div>
+  <div class="row" style="margin-top:12px;justify-content:flex-end">
+    <button class="btn sec" onclick="$('revDlg').classList.remove('on')">ไม่ยกเลิก</button>
+    <button class="btn" style="background:var(--bad);border-color:var(--bad)" onclick="doRevoke()">ยกเลิกเครื่อง</button>
+  </div>
+</div></div>
 <div id="busy">กำลังทำงาน…</div>
 <div id="toast"></div>
 
@@ -462,8 +483,10 @@ function renderDevices(d) {
   var now = Date.now();
   $('devTbl').innerHTML = '<tr><th>เครื่อง</th><th>สถานะ</th><th>ติดต่อล่าสุด</th><th>ส่งล่าสุด</th><th class="n">Seq ล่าสุด</th><th class="n">Seq ขาด</th><th>ตรวจความพร้อม</th><th>เวอร์ชันแอป</th><th>จับคู่</th><th></th></tr>' +
     d.devices.map(function (x) {
-      var st = !x.active ? '<span class="pill bad">ปิดใช้งาน</span><div class="muted">กด "เปิดใช้" แล้วสร้างรหัสจับคู่</div>' :
-        x.paired ? '<span class="pill ok">จับคู่แล้ว</span>' : '<span class="pill warn">ยังไม่จับคู่</span><div class="muted">กด "สร้างรหัสจับคู่" แล้วใส่รหัสที่เครื่อง</div>';
+      var rev = x.revokedAt ? '<div class="muted">ยกเลิก ' + esc(x.revokedAt.slice(5, 16)) + ' · ' + esc(x.revokeReasonText) + (x.repairedAt ? ' · จับคู่ใหม่ ' + esc(x.repairedAt.slice(5, 16)) : '') + '</div>' : '';
+      var st = !x.active ? '<span class="pill bad">ปิดใช้งาน</span>' + rev + '<div class="muted">นำกลับ: กด "เปิดใช้" → "สร้างรหัสจับคู่"</div>' :
+        x.paired ? '<span class="pill ok">จับคู่แล้ว</span>' + (x.repairedAt ? rev : '') :
+        '<span class="pill warn">ยังไม่จับคู่</span>' + rev + '<div class="muted">กด "สร้างรหัสจับคู่" แล้วใส่รหัสที่เครื่อง' + (x.revokedAt ? ' (เครื่องเดิม: กด "จับคู่ใหม่ (เก็บข้อมูลเดิม)")' : '') + '</div>';
       var pair = x.pairCode ? '<span class="big mono">' + x.pairCode + '</span><br><span class="muted">หมดอายุใน ' + Math.max(0, Math.round((x.pairExpires - now) / 60000)) + ' นาที</span>' : '';
       return '<tr><td><b>' + esc(x.id) + '</b></td><td>' + st + '</td><td>' + contactCell(x, d) + '</td><td>' + esc(x.lastSync) + '</td><td class="n">' + esc(x.lastSeq) + '</td><td class="n">' +
         (Number(x.gaps) ? '<span class="pill bad">' + esc(x.gaps) + '</span>' : esc(x.gaps || '')) + '</td><td>' + esc(x.lastCheck) + ' <span class="muted">' + esc(x.lastCheckAt) + '</span></td><td>' + esc(x.appVersion) +
@@ -565,8 +588,29 @@ function pairCode(id) {
   call('apiPairCode', [id], function (d) { renderDevices(d); toast('รหัสจับคู่ ' + id + ' ใช้ได้ 30 นาที'); });
 }
 function setActive(id, on) {
-  if (!on && !confirm('ยกเลิกเครื่อง ' + id + '?\nเครื่องจะส่งข้อมูลไม่ได้จนกว่าจะจับคู่ใหม่ (ข้อมูลในเครื่องไม่หาย export เป็นไฟล์ได้)')) return;
-  call('apiSetDeviceActive', [id, on], renderDevices);
+  if (on) { call('apiSetDeviceActive', [id, true], function (d) { renderDevices(d); toast('เปิดใช้ ' + id + ' แล้ว — กด "สร้างรหัสจับคู่" ต่อ'); }); return; }
+  // ก่อนยกเลิก: แสดงผลกระทบ (Location ที่ดูแล/ช่วยนับและยังไม่ส่งงาน, รายการค้างที่เครื่องรายงานล่าสุด)
+  var x = DEV.devices.filter(function (v) { return v.id === id; })[0] || {};
+  var mine = (DEV.members || []).filter(function (m) { return m.device === id && m.state !== 'CLOSED' && m.state !== 'SUBMITTED'; });
+  var own = mine.filter(function (m) { return m.role === 'OWNER'; });
+  var lines = [];
+  lines.push('<div>เครื่องจะส่งข้อมูลและยิงสินค้าไม่ได้ (รู้ภายใน 1 นาที) · <b>ข้อมูลในเครื่องไม่หาย</b></div>');
+  if (x.hb) lines.push('<div>ค้างส่งล่าสุดที่เครื่องรายงาน: <b>' + (Number(x.hb.pending) || 0) + '</b> รายการ</div>');
+  if (mine.length) lines.push('<div style="margin-top:6px"><span class="pill warn">ยังนับอยู่</span> ' + mine.map(function (m) {
+    return '<b>' + esc(m.location) + '</b> (' + (m.role === 'OWNER' ? 'ผู้ดูแล' : 'ผู้ช่วย') + ')'; }).join(', ') + '</div>');
+  if (own.length) lines.push('<div class="muted">ถ้าเครื่องจะไม่กลับมา ให้ "โอนการดูแล" ' + own.map(function (m) { return esc(m.location); }).join(', ') + ' ให้เครื่องอื่น (ตาราง Location ด้านล่าง)</div>');
+  if (mine.some(function (m) { return m.role === 'HELPER'; })) lines.push('<div class="muted">Location ที่เป็นผู้ช่วย: ผู้ดูแลปิดไม่ได้จนกว่าจะ "ส่งงานแทน"</div>');
+  $('revId').textContent = id; $('revImpact').innerHTML = lines.join('');
+  document.querySelectorAll('input[name=revWhy]').forEach(function (r) { r.checked = false; });
+  $('revNote').value = '';
+  $('revDlg').classList.add('on');
+}
+function doRevoke() {
+  var r = document.querySelector('input[name=revWhy]:checked');
+  if (!r) { toast('เลือกเหตุผลก่อน', true); return; }
+  var id = $('revId').textContent;
+  $('revDlg').classList.remove('on');
+  call('apiSetDeviceActive', [id, false, r.value, $('revNote').value.trim()], function (d) { renderDevices(d); toast('ยกเลิกเครื่อง ' + id + ' แล้ว'); });
 }
 function importDevFile() {
   var file = $('devFile').files[0];

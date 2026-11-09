@@ -315,5 +315,66 @@ test('เครื่องที่ถูกยกเลิกในหน้�
   run('apiSetDeviceActive("TC21-02", true)');
 });
 
+console.log('\nยกเลิกเครื่อง / จับคู่ใหม่ระหว่างรอบ (v2.2.3)');
+const T = (m) => '2026-11-04 1' + m;   // เวลา scanTime แบบง่าย
+function setRevokeTimes(id, at, rep) {
+  const t = env.sheets.Devices; const h = t.data[0];
+  const r = t.data.find(x => x[0] === id);
+  r[h.indexOf('Revoked_At')] = at; if (rep !== undefined) r[h.indexOf('Repaired_At')] = rep;
+}
+test('ยกเลิกต้องมีเหตุผล บันทึกเวลา/เหตุผล และ Admin_Log', () => {
+  device('TC21-05', 'EMP-K');
+  const st = run('apiSetDeviceActive("TC21-05", false, "TEMP", "ทดสอบ")');
+  const x = st.devices.find(v => v.id === 'TC21-05');
+  assert.ok(!x.active && !x.paired && x.revokedAt && x.revokeReason === 'TEMP' && !x.repairedAt);
+  assert.ok(env.sheets.Admin_Log.data.some(r => r[2] === 'DEVICE_REVOKE' && /หยุดใช้ชั่วคราว/.test(r[4]) && /ทดสอบ/.test(r[4])));
+});
+test('เครื่องเดิมกลับมา (TEMP): จับคู่ใหม่ → Repaired_At + log ค้างส่ง · ของค้างส่งต่อได้ ไม่ติดธง', () => {
+  run('apiSetDeviceActive("TC21-05", true)');
+  const code = run('apiPairCode("TC21-05")').devices.find(x => x.id === 'TC21-05').pairCode;
+  const r = env.post({ action: 'pair', deviceId: 'TC21-05', code, pendingCount: 2, pendingFrom: 11, pendingTo: 12, staff: 'EMP-K' });
+  assert.ok(r.ok);
+  const x = run('apiDevicesState()').devices.find(v => v.id === 'TC21-05');
+  assert.ok(x.paired && x.repairedAt);
+  const log = env.sheets.Admin_Log.data.filter(l => l[2] === 'DEVICE_REPAIRED' && l[3] === 'TC21-05').pop();
+  assert.ok(log && /ค้างส่งในเครื่อง 2 รายการ \(Seq 11–12/.test(log[4]), log && log[4]);
+});
+test('เหตุผล LOST: รายการที่ยิงในช่วงยกเลิก → ต้องตรวจซ้ำ เฉพาะ Location นั้น · ก่อนยกเลิก/หลังจับคู่ใหม่ ไม่ติดธง', () => {
+  const d = device('TC21-04', 'EMP-K');
+  run('apiSetDeviceActive("TC21-04", false, "LOST")');
+  setRevokeTimes('TC21-04', T('1:00:00'));
+  run('apiSetDeviceActive("TC21-04", true)');
+  const code = run('apiPairCode("TC21-04")').devices.find(x => x.id === 'TC21-04').pairCode;
+  const tok = env.post({ action: 'pair', deviceId: 'TC21-04', code }).token;
+  setRevokeTimes('TC21-04', T('1:00:00'), T('2:00:00'));
+  const mk = (seq, loc, t) => ({ logId: 'TC21-04-' + String(seq).padStart(6, '0'), seq, projectId: '2026Q4', staff: 'EMP-K', location: loc, barcode: BC1,
+    material: MAT1, qty: 1, type: 'SCAN', refId: '', reason: '', note: '', scanTime: t });
+  const base = d.seq + 100;
+  const res = env.post({ action: 'sync', deviceId: 'TC21-04', token: tok, appVersion: '2.2.3', events: [], entries: [
+    mk(base + 1, 'R1', T('0:59:00')), mk(base + 2, 'R2', T('1:30:00')), mk(base + 3, 'R2', T('1:31:00')), mk(base + 4, 'R3', T('2:05:00'))] });
+  assert.strictEqual(res.accepted.length, 4, JSON.stringify(res.rejected) + JSON.stringify(res.duplicate));
+  const locs = run('apiDevicesState()').locations;
+  const flag = l => String((locs.find(x => x.Location === l) || {}).Flag_Check || '');
+  assert.ok(/หลังถูกยกเลิก/.test(flag('R2')), 'R2 ติดธง: ' + flag('R2'));
+  assert.ok(/ตรวจซ้ำ/.test(String(locs.find(x => x.Location === 'R2').Flag)), 'คอลัมน์ธงในหน้า Admin');
+  assert.ok(!/หลังถูกยกเลิก/.test(flag('R1')) && !/หลังถูกยกเลิก/.test(flag('R3')), 'R1/R3 ไม่ติดธง');
+  assert.ok(env.sheets.Admin_Log.data.some(r => r[2] === 'REVOKED_DEVICE_DATA' && /2 รายการ/.test(r[4]) && /ต้องตรวจซ้ำ/.test(r[4])));
+  assert.ok(env.sheets.Loc_Checks.data.some(r => r[4] === 'REVOKED_DATA' && r[3] === 'R2'));
+});
+test('เหตุผล TEMP: รายการในช่วงยกเลิก บันทึก log แต่ไม่ติดธง', () => {
+  const d = device('TC21-02', 'EMP-KH');
+  run('apiSetDeviceActive("TC21-02", false, "TEMP")'); setRevokeTimes('TC21-02', T('1:00:00'));
+  run('apiSetDeviceActive("TC21-02", true)');
+  const code = run('apiPairCode("TC21-02")').devices.find(x => x.id === 'TC21-02').pairCode;
+  const tok = env.post({ action: 'pair', deviceId: 'TC21-02', code }).token;
+  setRevokeTimes('TC21-02', T('1:00:00'), T('2:00:00'));
+  const seq = d.seq + 100;
+  env.post({ action: 'sync', deviceId: 'TC21-02', token: tok, appVersion: '2.2.3', events: [], entries: [{ logId: 'TC21-02-' + String(seq).padStart(6, '0'), seq,
+    projectId: '2026Q4', staff: 'EMP-KH', location: 'R5', barcode: BC1, material: MAT1, qty: 1, type: 'SCAN', refId: '', reason: '', note: '', scanTime: T('1:10:00') }] });
+  const l = run('apiDevicesState()').locations.find(x => x.Location === 'R5') || {};
+  assert.ok(!/หลังถูกยกเลิก/.test(String(l.Flag_Check || '')));
+  assert.ok(env.sheets.Admin_Log.data.some(r => r[2] === 'REVOKED_DEVICE_DATA' && r[3] === 'TC21-02' && !/ต้องตรวจซ้ำ/.test(r[4])));
+});
+
 console.log('\nผล: ผ่าน ' + pass + ' / ไม่ผ่าน ' + fail);
 process.exit(fail ? 1 : 0);

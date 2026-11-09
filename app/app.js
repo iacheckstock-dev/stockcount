@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2.2.2';
+  var APP_VERSION = '2.2.3';
   var QTY_CONFIRM = 150;      // จำนวนที่ป้อนเองเกินนี้ต้องยืนยันอีกครั้ง
   var QTY_MAX_DIGITS = 5;     // ยาวกว่านี้ = น่าจะยิงบาร์โค้ดเข้าช่องจำนวน
   var INFO_EVERY = 15000;     // ถามสถานะผู้ช่วย/ผู้ดูแลระหว่างนับร่วมกัน
@@ -116,9 +116,21 @@
         if (res.serverTime) S.serverOffset = res.serverTime - (t0 + Date.now()) / 2;
         if (res.serverVersion) S.serverVersion = res.serverVersion;
         setOnline(true);
-        if (!res.ok) throw { code: res.error, message: res.message || res.error };
+        if (!res.ok) {
+          if (action !== 'pair' && REVOKE_CODES.indexOf(res.error) >= 0) setRevoked(res.error);
+          throw { code: res.error, message: res.message || res.error };
+        }
         return res;
       }, function (e) { if (e && e.code === 'NETWORK') setOnline(false); throw e; });
+  }
+
+  /** เครื่องถูกยกเลิก (หน้า Admin) หรือ token ใช้ไม่ได้: หยุดรับการยิงทันที จนกว่าจะจับคู่ใหม่ — ข้อมูลในเครื่องไม่หาย */
+  var REVOKE_CODES = ['BAD_TOKEN', 'DEVICE_DISABLED', 'UNKNOWN_DEVICE'];
+  function setRevoked(code) {
+    if (S.revoked === code) return;
+    S.revoked = code;
+    DB.set('revoked', code);
+    if (S.view !== 'setup') { SOUND.bad(); show('revoked'); }
   }
 
   function setOnline(on) {
@@ -398,12 +410,15 @@
 
   // ---------- หน้าจอ ----------
   function show(v) {
+    if (S.revoked && v !== 'setup' && v !== 'revoked') v = 'revoked';
     S.view = v;
     document.querySelectorAll('.view').forEach(function (el) { el.classList.toggle('on', el.id === 'v-' + v); });
     window.scrollTo(0, 0);
     if (v === 'count') { requestWake(); renderCount(); }
     if (v === 'loc') { renderLoc(); fetchInfo(S.loc); }
     if (v === 'status') renderStatus();
+    if (v === 'revoked') renderRevoked();
+    renderBanner();
     if (v === 'locs') { renderLocs(); loadMyLocs(); }
     if (v === 'manual') { $('manQ').value = ''; renderManual(); setTimeout(function () { $('manQ').focus(); }, 50); }
     renderTop();
@@ -428,7 +443,8 @@
     var p = pending();
     var oldest = p.length ? Math.min.apply(null, p.map(function (e) { return e.createdAt; })) : 0;
     var rejected = S.entries.filter(function (e) { return e.rejected; }).length;
-    if (S.lastErr === 'BAD_TOKEN' || S.lastErr === 'DEVICE_DISABLED' || S.lastErr === 'UNKNOWN_DEVICE') { msg = 'เครื่องนี้ถูกยกเลิกหรือต้องจับคู่ใหม่ ข้อมูลในเครื่องไม่หาย ให้ Export ไฟล์ แล้วแจ้งหัวหน้าทีม'; bad = true; }
+    if (S.view === 'revoked') msg = '';   // หน้าหยุดยิงอธิบายเองแล้ว
+    else if (S.lastErr === 'BAD_TOKEN' || S.lastErr === 'DEVICE_DISABLED' || S.lastErr === 'UNKNOWN_DEVICE') { msg = 'เครื่องนี้ถูกยกเลิกหรือต้องจับคู่ใหม่ ข้อมูลในเครื่องไม่หาย ให้ Export ไฟล์ แล้วแจ้งหัวหน้าทีม'; bad = true; }
     else if (oldest && Date.now() - oldest > STALE_MIN * 60000) { msg = 'มีรายการค้างส่งเกิน ' + STALE_MIN + ' นาที — ไปจุดที่มี Wi-Fi หรือ Export ไฟล์'; bad = true; }
     else if (rejected) { msg = 'มี ' + rejected + ' รายการที่เซิร์ฟเวอร์ไม่รับ ดูที่หน้าสถานะ'; bad = true; }
     else if (S.masterChanged) msg = 'หัวหน้าทีมอนุมัติรายการบาร์โค้ดชุดใหม่ ไปที่สถานะ → ตรวจความพร้อมใหม่ เพื่อโหลด';
@@ -537,6 +553,7 @@
     var code = String(raw).trim(), up = code.toUpperCase();
     if (!code) return;
     if (S.view === 'setup') { if (/^DEV:/.test(up)) $('setDevice').value = up.slice(4); return; }
+    if (S.revoked) { SOUND.bad(); toast('เครื่องนี้ถูกยกเลิก ยิงไม่ได้ — กด "จับคู่ใหม่ (เก็บข้อมูลเดิม)"', true); return; }
     if (/^EMP:/.test(up)) return setStaff(up.slice(4));
     if (/^DEV:/.test(up)) { toast('นี่คือสติกเกอร์เครื่อง ' + up.slice(4)); return; }
     if (S.view === 'ready') { toast('ยิงบัตรผู้ตรวจสอบ (EMP:) เพื่อทดสอบ', true); return; }
@@ -1031,6 +1048,27 @@
     });
   };
 
+  function renderRevoked() {
+    var p = pending(), seqs = p.map(function (e) { return e.seq; });
+    $('revWhy').textContent = S.revoked === 'DEVICE_DISABLED' ? 'หัวหน้าทีมยกเลิกเครื่องนี้ในหน้า Admin' :
+      S.revoked === 'UNKNOWN_DEVICE' ? 'ไม่พบรหัสเครื่องนี้ในระบบ' : 'รหัสยืนยันของเครื่องใช้ไม่ได้แล้ว (ถูกยกเลิก หรือจับคู่รหัสนี้กับเครื่องอื่น)';
+    $('revKv').innerHTML = [['เครื่อง', S.cfg.deviceId || '-'], ['รายการในเครื่อง', fmt(S.entries.length)],
+      ['ค้างส่ง', p.length ? fmt(p.length) + ' รายการ (Seq ' + Math.min.apply(null, seqs) + '–' + Math.max.apply(null, seqs) + ')' : '0'],
+      ['รอตรวจ Location', fmt(S.events.length)]]
+      .map(function (r) { return '<div>' + esc(r[0]) + '</div><div>' + esc(r[1]) + '</div>'; }).join('');
+  }
+  $('btnRePair').onclick = function () {
+    $('setDevice').value = S.cfg.deviceId || ''; $('setCode').value = '';
+    $('setApi').value = S.cfg.apiUrl || S.defaultApi || '';
+    show('setup');
+    var p = pending().length;
+    setupMsg('ใส่รหัสจับคู่ 6 หลักจากหัวหน้าทีม (หน้า Admin: เปิดใช้ → สร้างรหัสจับคู่)' + (p ? ' — ค้างส่ง ' + p + ' รายการจะส่งต่อหลังจับคู่' : ''), true);
+    $('btnSetupBack').classList.remove('hidden');
+    setTimeout(function () { $('setCode').focus(); }, 50);
+  };
+  $('btnSetupBack').onclick = function () { $('btnSetupBack').classList.add('hidden'); show('revoked'); };
+  $('btnRevExport').onclick = function () { exportFile(false); };
+
   /** หลังยกเลิกการจับคู่: ล้าง token และสถานะ Location ของรอบนี้ (ข้อมูลที่นับไว้ส่งครบแล้วจึงยกเลิกได้ ยังเก็บไว้ในเครื่อง) */
   function resetPairing() {
     S.cfg.token = ''; S.lastErr = '';
@@ -1068,10 +1106,16 @@
     if (!/^[A-Z0-9-]+$/.test(dev)) return setupMsg('ใส่รหัสเครื่อง เช่น TC21-01');
     if (!/^\d{6}$/.test(code)) return setupMsg('รหัสจับคู่ต้องเป็นตัวเลข 6 หลัก');
     if (!/^(https:\/\/|http:\/\/localhost[:/])/.test(apiUrl)) return setupMsg('ยังไม่มีที่อยู่เซิร์ฟเวอร์ (ใส่ในหัวข้อ "ที่อยู่เซิร์ฟเวอร์")');
+    var oldId = S.cfg.deviceId, p = pending(), seqs = p.map(function (e) { return e.seq; });
+    if (oldId && dev !== oldId && (p.length || S.events.length || S.oldPending.length)) {
+      return setupMsg('เครื่องนี้มีข้อมูลของ ' + oldId + ' ค้างส่ง ' + (p.length + S.oldPending.length) + ' รายการ ต้องจับคู่เป็น ' + oldId + ' (หรือ Export ไฟล์ให้หัวหน้าทีมนำเข้าก่อน)');
+    }
     S.cfg = { apiUrl: apiUrl, deviceId: dev, token: '' };
     setupMsg('กำลังจับคู่…', true);
-    api('pair', { code: code }, 20000).then(function (r) {
-      S.cfg.token = r.token; S.lastErr = '';
+    api('pair', { code: code, pendingCount: p.length, pendingFrom: seqs.length ? Math.min.apply(null, seqs) : 0, pendingTo: seqs.length ? Math.max.apply(null, seqs) : 0,
+      staff: S.staff ? S.staff.code : '' }, 20000).then(function (r) {
+      S.cfg.token = r.token; S.lastErr = ''; S.revoked = ''; DB.set('revoked', '');
+      $('btnSetupBack').classList.add('hidden');
       return bumpSeq(r.maxSeqAll).then(function () { return DB.set('cfg', S.cfg); }).then(function () { setupMsg('จับคู่สำเร็จ: ' + r.deviceName, true); show('ready'); runChecks(false); });
     }, function (e) { setupMsg((e && e.message) || 'จับคู่ไม่สำเร็จ'); });
   };
@@ -1256,8 +1300,9 @@
   function init() {
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(function () {});
     return DB.open().then(function () {
-      return Promise.all([DB.get('cfg'), DB.get('boot'), DB.get('masterHash'), DB.get('masterProject'), DB.get('projectId'), DB.get('staff'), DB.get('readiness'), DB.all('events'), DB.get('stock'), DB.get('ckRotate')]);
+      return Promise.all([DB.get('cfg'), DB.get('boot'), DB.get('masterHash'), DB.get('masterProject'), DB.get('projectId'), DB.get('staff'), DB.get('readiness'), DB.all('events'), DB.get('stock'), DB.get('ckRotate'), DB.get('revoked')]);
     }).then(function (v) {
+      S.revoked = v[10] || '';
       S.cfg = v[0] || {}; S.boot = v[1] || null; S.masterHash = v[2] || ''; S.masterProject = v[3] || '';
       S.staff = v[5] || null; S.readiness = v[6] || null; S.events = v[7] || [];
       S.events.forEach(function (ev) { if (!ev.at) ev.at = 0; if (ev.at > lastAt) lastAt = ev.at; });
@@ -1273,6 +1318,7 @@
       $('setApi').value = S.cfg.apiUrl || S.defaultApi || '';
       if (S.cfg.deviceId) $('setDevice').value = S.cfg.deviceId;
       if (!S.cfg.token) { show('setup'); return; }
+      if (S.revoked) { show('revoked'); return; }
       var r = S.readiness;
       if (r && r.pass && r.project === S.projectId && r.date === today()) {
         S.dwOk = true;

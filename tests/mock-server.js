@@ -21,7 +21,7 @@ env.sheets.Staff.data.push(['EMP-NU', 'นุ่น', 'ผู้ตรวจส�
 run('apiSeedDevices(5, "TC21")');
 
 let offline = false;
-let appVersion = '2.2.2';
+let appVersion = '2.2.3';
 let slowMs = 0;
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'application/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.webmanifest': 'application/manifest+json' };
 
@@ -39,6 +39,9 @@ http.createServer((req, res) => {
       }
       if (url.pathname === '/debug/paircode') return send(200, run(`apiPairCode(${JSON.stringify(url.searchParams.get('d'))})`).devices.find(d => d.id === url.searchParams.get('d')));
       if (url.pathname === '/debug/log') return send(200, env.sheets.Count_Log.data);
+      if (url.pathname === '/debug/revoke') return send(200, run(`apiSetDeviceActive(${JSON.stringify(url.searchParams.get('d'))}, false, ${JSON.stringify(url.searchParams.get('r') || 'TEMP')}, "e2e")`));
+      if (url.pathname === '/debug/enable') return send(200, run(`apiSetDeviceActive(${JSON.stringify(url.searchParams.get('d'))}, true)`));
+      if (url.pathname === '/debug/adminlog') return send(200, env.sheets.Admin_Log.data);
       if (url.pathname === '/debug/locations') return send(200, run('apiDevicesState()'));
       if (url.pathname === '/debug/loccheck') return send(200, env.sheets.Loc_Checks.data);
       if (url.pathname === '/debug/offline') { offline = url.searchParams.get('on') === '1'; return send(200, { offline }); }

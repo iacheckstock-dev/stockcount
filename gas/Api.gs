@@ -151,9 +151,15 @@ function apiPair_(req) {
       throw apiError_('BAD_PAIR_CODE', fails >= PAIR_MAX_FAILS ? 'ใส่รหัสผิดเกินกำหนด รหัสถูกยกเลิก ให้สร้างรหัสใหม่' : 'รหัสจับคู่ไม่ถูกต้อง');
     }
     var token = Utilities.getUuid().replace(/-/g, '') + Utilities.getUuid().replace(/-/g, '');
-    putRow_(t, i, { Token_Hash: sha_(token), Pair_Code: '', Pair_Expires: '', Pair_Fails: 0, Paired_At: now_(), App_Version: req.appVersion || '' });
+    var repair = !!d.Revoked_At && !d.Repaired_At;
+    var upd = { Token_Hash: sha_(token), Pair_Code: '', Pair_Expires: '', Pair_Fails: 0, Paired_At: now_(), App_Version: req.appVersion || '' };
+    if (repair) upd.Repaired_At = upd.Paired_At;   // ปิดช่วงเวลาที่เครื่องถูกยกเลิก
+    putRow_(t, i, upd);
     var maxSeq = deviceMaxSeqAll_(deviceId);
-    logAdmin_('DEVICE_PAIRED', deviceId, 'จับคู่เครื่องสำเร็จ (Seq ล่าสุดที่เซิร์ฟเวอร์มี ' + maxSeq + ')');
+    var pend = Number(req.pendingCount) || 0;
+    logAdmin_(repair ? 'DEVICE_REPAIRED' : 'DEVICE_PAIRED', deviceId, (repair ? 'จับคู่ใหม่หลังยกเลิก (ยกเลิกเมื่อ ' + d.Revoked_At + ' เหตุผล: ' +
+      (REVOKE_REASONS[d.Revoke_Reason] || '-') + ') · ' : 'จับคู่เครื่องสำเร็จ · ') + 'Seq ล่าสุดที่เซิร์ฟเวอร์มี ' + maxSeq +
+      ' · ค้างส่งในเครื่อง ' + pend + ' รายการ' + (pend ? ' (Seq ' + req.pendingFrom + '–' + req.pendingTo + ' จะส่งต่ออัตโนมัติ)' : '') + (req.staff ? ' · ผู้ตรวจ ' + req.staff : ''));
     return { ok: true, deviceId: deviceId, token: token, deviceName: d.Name || deviceId, maxSeqAll: maxSeq };
   });
 }
@@ -369,6 +375,7 @@ function ingest_(deviceId, entries, events, source, device, appVersion) {
     appendRows_(SpreadsheetApp.getActive().getSheetByName('Quarantine'), qrows);
     logAdmin_('QUARANTINE', deviceId, qrows.length + ' รายการจากรอบอื่น/รอบที่ปิดแล้ว');
   }
+  var revokedLocs = rows.length && device && device.Revoked_At ? revokeWindow_(project, deviceId, device, entries, out.accepted) : [];
   if (rows.length && cfg.ROUND_STATUS === 'SETUP') {
     setConfig_({ ROUND_STATUS: 'COUNTING' });
     logAdmin_('ROUND_COUNTING', project, 'เริ่มนับ (ได้รับรายการแรกจาก ' + deviceId + ')');
@@ -379,6 +386,7 @@ function ingest_(deviceId, entries, events, source, device, appVersion) {
   // รายการที่อาจเปลี่ยนสถานะ Location (ส่งงานแล้วแต่ยิงต่อ / เข้ามาหลังปิด / ยังไม่มีสมาชิก)
   var need = needRefresh_(project, deviceId, Object.keys(touched));
   if (basis) basis.problems.forEach(function (p) { if (need.indexOf(p.loc) < 0) need.push(p.loc); });
+  revokedLocs.forEach(function (l) { if (need.indexOf(l) < 0) need.push(l); });
   if (need.length) refreshLocations_(project, need);
   out.seq = seqStats_(idx.rows, deviceId, project);
   return out;
@@ -787,12 +795,38 @@ function basisChecker_(project) {
   };
 }
 
+/**
+ * รายการที่ยิงในช่วงที่เครื่องถูกยกเลิก (Revoked_At ถึง Repaired_At): บันทึกใน Admin_Log ทุกเหตุผล
+ * เหตุผล LOST (หาย / สงสัย) → Location นั้นขึ้น "ต้องตรวจซ้ำ"
+ */
+function revokeWindow_(project, deviceId, device, entries, accepted) {
+  var from = String(device.Revoked_At), to = String(device.Repaired_At || '');
+  var ok = {};
+  accepted.forEach(function (id) { ok[id] = true; });
+  var hit = entries.filter(function (e) {
+    var t = String(e.scanTime || '');
+    return ok[String(e.logId)] && t >= from && (!to || t < to);
+  });
+  if (!hit.length) return [];
+  var byLoc = {}, seqs = hit.map(function (e) { return Number(e.seq); });
+  hit.forEach(function (e) { var l = normLoc_(e.location) || '(ไม่มี Location)'; byLoc[l] = (byLoc[l] || 0) + 1; });
+  var lost = device.Revoke_Reason === 'LOST';
+  logAdmin_('REVOKED_DEVICE_DATA', deviceId, 'รับรายการที่ยิงหลังยกเลิกเครื่อง ' + hit.length + ' รายการ (Seq ' + Math.min.apply(null, seqs) + '–' +
+    Math.max.apply(null, seqs) + ') ' + Object.keys(byLoc).map(function (l) { return l + ' ' + byLoc[l]; }).join(', ') + (lost ? ' → ต้องตรวจซ้ำ' : ''));
+  if (!lost) return [];
+  var locs = Object.keys(byLoc).filter(function (l) { return l.charAt(0) !== '('; });
+  flagCheck_(project, deviceId, locs.map(function (l) {
+    return { loc: l, type: 'REVOKED_DATA', note: deviceId + ' ยิง ' + byLoc[l] + ' รายการหลังถูกยกเลิก (เครื่องหาย/สงสัย)' };
+  }));
+  return locs;
+}
+
 function flagCheck_(project, deviceId, problems) {
   if (!problems.length) return;
   var locs = table_('Locations');
   var rows = [];
   var byLoc = {};
-  problems.forEach(function (p) { (byLoc[p.loc] || (byLoc[p.loc] = [])).push(p.note); rows.push([now_(), project, deviceId, p.loc, 'EDIT_CONFLICT', '', '', '', '', '', 'ต้องตรวจซ้ำ', '', p.note]); });
+  problems.forEach(function (p) { (byLoc[p.loc] || (byLoc[p.loc] = [])).push(p.note); rows.push([now_(), project, deviceId, p.loc, p.type || 'EDIT_CONFLICT', '', '', '', '', '', 'ต้องตรวจซ้ำ', '', p.note]); });
   Object.keys(byLoc).forEach(function (loc) {
     var li = locIdx_(locs, loc);
     var cur = li >= 0 ? String(rowObj_(locs, locs.rows[li]).Flag_Check || '') : '';

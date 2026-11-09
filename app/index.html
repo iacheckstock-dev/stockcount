@@ -48,6 +48,17 @@
   </details>
   <button class="btn big" id="btnPair">จับคู่เครื่อง</button>
   <p id="setupMsg" class="msg"></p>
+  <button class="btn sec hidden" id="btnSetupBack">กลับ</button>
+</section>
+
+<!-- เครื่องถูกยกเลิก: หยุดรับการยิง ข้อมูลในเครื่องไม่หาย -->
+<section id="v-revoked" class="view">
+  <h2 style="color:#b42318">เครื่องนี้ถูกยกเลิก — หยุดยิงก่อน</h2>
+  <p id="revWhy" class="muted"></p>
+  <div id="revKv" class="kv"></div>
+  <p><b>ข้อมูลในเครื่องไม่หาย</b> แจ้งหัวหน้าทีมให้กด "เปิดใช้" และ "สร้างรหัสจับคู่" ในหน้า Admin แล้วกดปุ่มด้านล่าง รายการที่ค้างจะส่งต่อเองหลังจับคู่</p>
+  <button class="btn big" id="btnRePair">จับคู่ใหม่ (เก็บข้อมูลเดิม)</button>
+  <button class="btn sec" id="btnRevExport">Export ไฟล์ทั้งรอบ (.csv)</button>
 </section>
 
 <!-- ตรวจความพร้อม -->

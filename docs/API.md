@@ -1,4 +1,4 @@
-# API ของเครื่อง TC21 (API_VERSION 2 · v2.2.2)
+# API ของเครื่อง TC21 (API_VERSION 2 · v2.2.3)
 
 Web app ของ Apps Script (`gas/Api.gs`) Deploy แบบ **Execute as: Me · Who has access: Anyone**
 URL ลงท้าย `/exec` ตั้งไว้ใน `app/config.json` (`apiUrl`) และชีต Config (`API_URL`)
@@ -45,6 +45,13 @@ URL ลงท้าย `/exec` ตั้งไว้ใน `app/config.json` (`a
 - `maxSeqAll` = Seq สูงสุดที่เซิร์ฟเวอร์เคยได้รับจากเครื่องนี้ (ทุกรอบ) เครื่องต้องเริ่ม Seq ต่อจากเลขนี้
 
 ข้อผิดพลาด: `UNKNOWN_DEVICE` · `DEVICE_DISABLED` · `NO_PAIR_CODE` (ไม่มี/หมดอายุ) · `BAD_PAIR_CODE` (ผิดครบ 5 ครั้ง รหัสถูกยกเลิก)
+
+### pair: เครื่องเดิมกลับมาหลังถูกยกเลิก (v2.2.3)
+คำขอเพิ่ม `pendingCount, pendingFrom, pendingTo, staff` (ไม่บังคับ) เพื่อบันทึกใน Admin_Log
+- ถ้าเครื่องมี Revoked_At และยังไม่มี Repaired_At → ตั้ง Repaired_At = เวลาจับคู่ และบันทึก `DEVICE_REPAIRED`
+- แอปเรียกจากหน้า "เครื่องนี้ถูกยกเลิก" → จับคู่ใหม่ (เก็บข้อมูลเดิม) · รายการค้างส่งต่อด้วย sync ตามปกติ (ตัดซ้ำด้วย Log_ID)
+- sync: รายการที่ scanTime อยู่ในช่วง Revoked_At–Repaired_At → `REVOKED_DEVICE_DATA` · เหตุผล LOST → Flag_Check "ต้องตรวจซ้ำ"
+- แอปจำสถานะถูกยกเลิก (`BAD_TOKEN` / `DEVICE_DISABLED` / `UNKNOWN_DEVICE` จาก action ใดก็ได้ยกเว้น pair) และหยุดรับการยิงจนกว่าจะจับคู่สำเร็จ
 
 ## bootstrap
 คำตอบ:

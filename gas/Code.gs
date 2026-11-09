@@ -6,19 +6,19 @@
  * (API สำหรับ TC21 จะเพิ่มในเฟส 2 แยกต่างหาก และต้องใช้ device token)
  */
 
-var SCHEMA_VERSION = 4;
+var SCHEMA_VERSION = 5;
 
 /**
  * เวอร์ชันของระบบ (ใช้เลขเดียวทั้งแอป TC21 และเซิร์ฟเวอร์ ตาม Semantic Versioning MAJOR.MINOR.PATCH)
  * ต้องตรงกับ APP_VERSION ใน app/app.js และ appVersion ใน app/config.json — ดู CHANGELOG.md
  */
-var SYSTEM_VERSION = '2.2.2';
+var SYSTEM_VERSION = '2.2.3';
 
 var SHEETS = {
   Config: ['Key', 'Value', 'Note'],
   Staff: ['Staff_Code', 'Name', 'Role', 'Active'],
   Devices: ['Device_ID', 'Name', 'Active', 'Last_Seq', 'Last_Sync', 'Gaps', 'App_Version', 'Last_Check_At', 'Last_Check',
-    'Paired_At', 'Token_Hash', 'Pair_Code', 'Pair_Expires', 'Pair_Fails'],
+    'Paired_At', 'Token_Hash', 'Pair_Code', 'Pair_Expires', 'Pair_Fails', 'Revoked_At', 'Revoke_Reason', 'Repaired_At'],
   Locations: ['Location', 'Zone', 'Status', 'Open_By', 'Counters', 'Devices', 'Opened_At', 'Closed_Time', 'Last_Check', 'Edits',
     'Updated_At', 'Owner', 'Members', 'Status_Detail', 'Flag', 'Flag_Check', 'Close_Cover', 'Close_Total'],
   // ผู้ดูแล/ผู้ช่วยต่อ Location ต่อเครื่อง (v2.2.0)
@@ -58,7 +58,7 @@ var TEXT_COLS = {
   Loc_Members: ['Location', 'Device_ID'],
   Quarantine: ['Device_ID', 'Log_ID'],
   Staff: ['Staff_Code'],
-  Devices: ['Device_ID', 'Pair_Code']
+  Devices: ['Device_ID', 'Pair_Code', 'Revoked_At', 'Repaired_At']
 };
 
 var CONFIG_DEFAULTS = [
@@ -529,7 +529,8 @@ function apiDevicesState() {
     return {
       id: d.Device_ID, name: d.Name, active: d.Active === 'Y', paired: !!d.Token_Hash, lastSeq: d.Last_Seq, lastSync: d.Last_Sync,
       gaps: d.Gaps, appVersion: d.App_Version, lastCheckAt: d.Last_Check_At, lastCheck: d.Last_Check, pairedAt: d.Paired_At,
-      pairCode: pairLive ? d.Pair_Code : '', pairExpires: pairLive ? Number(d.Pair_Expires) : 0
+      pairCode: pairLive ? d.Pair_Code : '', pairExpires: pairLive ? Number(d.Pair_Expires) : 0,
+      revokedAt: d.Revoked_At || '', revokeReason: d.Revoke_Reason || '', revokeReasonText: REVOKE_REASONS[d.Revoke_Reason] || '', repairedAt: d.Repaired_At || ''
     };
   });
   var hb = heartbeats_(devices.map(function (x) { return x.id; }));
@@ -665,15 +666,24 @@ function apiPairCode(deviceId) {
   });
 }
 
-function apiSetDeviceActive(deviceId, active) {
+/** เหตุผลการยกเลิกเครื่อง — LOST: รายการที่ยิงหลังเวลายกเลิก (ก่อนจับคู่ใหม่) ขึ้น "ต้องตรวจซ้ำ" */
+var REVOKE_REASONS = { TEMP: 'หยุดใช้ชั่วคราว / กดผิด', REPLACE: 'เครื่องเสีย / เปลี่ยนเครื่อง', LOST: 'เครื่องหาย / สงสัยการใช้งาน' };
+
+function apiSetDeviceActive(deviceId, active, reason, note) {
   return withLock_(function () {
     var t = table_('Devices');
     var i = findDevice_(t, deviceId);
     if (i < 0) throw new Error('ไม่พบเครื่อง ' + deviceId);
     var upd = { Active: active ? 'Y' : 'N' };
-    if (!active) { upd.Token_Hash = ''; upd.Pair_Code = ''; upd.Pair_Expires = ''; }
+    if (!active) {
+      reason = REVOKE_REASONS[reason] ? reason : 'TEMP';
+      upd.Token_Hash = ''; upd.Pair_Code = ''; upd.Pair_Expires = '';
+      upd.Revoked_At = now_(); upd.Revoke_Reason = reason; upd.Repaired_At = '';
+    }
     putRow_(t, i, upd);
-    logAdmin_(active ? 'DEVICE_ENABLE' : 'DEVICE_REVOKE', deviceId, active ? 'เปิดใช้งาน' : 'ยกเลิกเครื่อง (token เดิมใช้ไม่ได้)');
+    try { CacheService.getScriptCache().remove('hb_' + deviceId); } catch (e) { }
+    logAdmin_(active ? 'DEVICE_ENABLE' : 'DEVICE_REVOKE', deviceId, active ? 'เปิดใช้งาน' :
+      'ยกเลิกเครื่อง (token เดิมใช้ไม่ได้) เหตุผล: ' + REVOKE_REASONS[reason] + (note ? ' · ' + note : ''));
     return apiDevicesState();
   });
 }
