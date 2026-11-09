@@ -57,13 +57,20 @@ with sync_playwright() as p:
 
     print('ตรวจความพร้อม')
     scan('EMP:EMP-XX'); check('ไม่พบรหัสผู้ตรวจสอบ' in pg.inner_text('#toast'), 'บัตรที่ไม่มีในระบบ → ปฏิเสธ')
+    pg.click('#btnMenu'); pg.wait_for_timeout(200)
+    check(not pg.is_visible('#menu button[data-m=locs]') and not pg.is_visible('#menu button[data-m=typeloc]') and pg.is_visible('#menu button[data-m=status]'),
+          'ยังไม่พร้อม: เมนู ⋮ ไม่มีทางเข้าหน้านับ (เหลือ สถานะ / ตรวจความพร้อม)')
+    pg.click('#tbStaff'); pg.wait_for_timeout(200)
+    scan('LOC:A9'); pg.wait_for_timeout(200)
+    check(pg.locator('#v-ready.on').count() == 1 and 'ยังไม่ผ่าน' in pg.inner_text('#toast'), 'ยังไม่พร้อม: ยิงป้าย Location ไม่เปิด (' + pg.inner_text('#toast') + ')')
+    check('ยิงบัตรจริง' in pg.inner_text('#readyList'), 'ข้อ DataWedge บอกว่าต้องยิงบัตรจริง')
     pg.check('#ckSound'); pg.wait_for_timeout(300); pg.check('#ckPin'); pg.wait_for_timeout(300); pg.check('#ckRotate'); pg.wait_for_timeout(300)
     scan('EMP:EMP-NU', click=False)   # ยิงต่อทันทีหลังติ๊ก (โฟกัสเคยค้างที่ช่องติ๊ก)
     pg.wait_for_timeout(300)
     pg.wait_for_function("/พร้อมนับ ✓/.test(document.querySelector('#readyHead').textContent)", timeout=10000)
     shot('03-ready-pass')
     check(pg.is_visible('#btnStart'), 'ผ่านทุกข้อ ขึ้นปุ่มเริ่มนับ')
-    check('แอป 2.2.3 · เซิร์ฟเวอร์ 2.2.3' in pg.inner_text('#readyList'), 'แสดงเวอร์ชันแอปและเซิร์ฟเวอร์ตรงกัน')
+    check('แอป 2.2.4 · เซิร์ฟเวอร์ 2.2.4' in pg.inner_text('#readyList'), 'แสดงเวอร์ชันแอปและเซิร์ฟเวอร์ตรงกัน')
     pg.click('#btnStart'); pg.wait_for_selector('#v-count.on')
     check('นุ่น' in pg.inner_text('#tbStaff'), 'เข้างานเป็น นุ่น')
 
@@ -174,7 +181,7 @@ with sync_playwright() as p:
     check('9.9.9' in pg.inner_text('#readyList'), 'มีเวอร์ชันใหม่ → ขึ้น ✗ พร้อมปุ่ม "อัปเดตแอปตอนนี้"')
     shot('11-update')
     pg.click('#btnUpdate'); pg.wait_for_load_state('load'); pg.wait_for_timeout(1500)
-    get('/debug/version?v=2.2.3')
+    get('/debug/version?v=2.2.4')
     pg.wait_for_selector('.view.on', timeout=10000)
     check('รายการ 38' in pg.inner_text('#syncText'), 'หลังกดอัปเดต แอปโหลดใหม่ ข้อมูลในเครื่องยังครบ 38 รายการ')
 

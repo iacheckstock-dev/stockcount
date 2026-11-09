@@ -3,7 +3,7 @@
  *   → อัปเดตแอปได้ทันทีที่เปิดใหม่ ไม่ค้างเวอร์ชันเก่าจากแคชของ GitHub Pages
  * - ข้อมูลการนับอยู่ใน IndexedDB ไม่ใช่ที่นี่ ล้าง cache นี้ได้โดยข้อมูลไม่หาย
  */
-var CACHE = 'stockcount-2.2.3';
+var CACHE = 'stockcount-2.2.4';
 var NET_TIMEOUT = 3000;      // หน้าแอป
 var NET_TIMEOUT_SUB = 1500;  // ไฟล์ประกอบ (JS/CSS/รูป)
 var FILES = ['./', 'index.html', 'app.js', 'db.js', 'style.css', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png'];

@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2.2.3';
+  var APP_VERSION = '2.2.4';
   var QTY_CONFIRM = 150;      // จำนวนที่ป้อนเองเกินนี้ต้องยืนยันอีกครั้ง
   var QTY_MAX_DIGITS = 5;     // ยาวกว่านี้ = น่าจะยิงบาร์โค้ดเข้าช่องจำนวน
   var INFO_EVERY = 15000;     // ถามสถานะผู้ช่วย/ผู้ดูแลระหว่างนับร่วมกัน
@@ -556,7 +556,12 @@
     if (S.revoked) { SOUND.bad(); toast('เครื่องนี้ถูกยกเลิก ยิงไม่ได้ — กด "จับคู่ใหม่ (เก็บข้อมูลเดิม)"', true); return; }
     if (/^EMP:/.test(up)) return setStaff(up.slice(4));
     if (/^DEV:/.test(up)) { toast('นี่คือสติกเกอร์เครื่อง ' + up.slice(4)); return; }
-    if (S.view === 'ready') { toast('ยิงบัตรผู้ตรวจสอบ (EMP:) เพื่อทดสอบ', true); return; }
+    if (S.view === 'ready' || !isReady()) {
+      SOUND.bad();
+      toast(isReady() ? 'กด "เริ่มนับ" ก่อน' : 'ตรวจความพร้อมยังไม่ผ่าน — แก้ข้อ ✗ ก่อน' + (S.dwOk ? '' : ' (ยิงบัตรผู้ตรวจสอบ EMP:)'), true);
+      if (S.view !== 'ready') show('ready');
+      return;
+    }
     if (S.view === 'status') return;
     if (/^LOC:/.test(up)) { var loc = normLoc(up); if (!loc) { SOUND.bad(); toast('ป้าย Location ไม่ถูกต้อง', true); return; } return openLocation(loc); }
     if (S.view !== 'count') show('count');
@@ -604,6 +609,7 @@
    * 3) เช็กเบื้องหลัง: ถ้ามีเครื่องอื่นเป็นผู้ดูแล → ถามเข้าร่วม · ถ้าผู้ดูแลปิดแล้ว → ไม่รับการยิง
    */
   function openLocation(loc) {
+    if (!isReady()) { SOUND.bad(); toast('ตรวจความพร้อมยังไม่ผ่าน — แก้ข้อ ✗ ก่อน', true); show('ready'); return Promise.resolve(); }
     if (!S.staff) { SOUND.bad(); setCard('bad', 'ยิงบัตรผู้ตรวจสอบ (EMP:) ก่อน'); show('count'); return Promise.resolve(); }
     if (S.loc === loc) { show('count'); toast('อยู่ที่ ' + loc + ' แล้ว'); return Promise.resolve(); }
     var r = S.roles[loc] || null;
@@ -774,7 +780,15 @@
   $('btnLoc').onclick = function () { if (!S.loc) { toast('ยิงป้าย Location ก่อน หรือเลือกจาก ⋮ → Location ที่นับแล้ว', true); return; } show('loc'); };
   $('tbLoc').onclick = function () { if (S.view === 'count' || S.view === 'loc') show('locs'); };
   $('btnManual').onclick = function () { if (!S.loc) { toast('ยิงป้าย Location ก่อน', true); return; } show('manual'); };
-  $('btnMenu').onclick = function (e) { e.stopPropagation(); $('menu').classList.toggle('hidden'); };
+  /** ตรวจความพร้อมผ่านแล้ว (รอบนี้) — ยังไม่ผ่านห้ามเข้าหน้านับทุกทาง */
+  function isReady() { return !!(S.readiness && S.readiness.pass && S.readiness.project === S.projectId); }
+  $('btnMenu').onclick = function (e) {
+    e.stopPropagation();
+    // ยังไม่พร้อม: ซ่อนเมนูที่พาเข้าหน้านับ เหลือ สถานะ/Export และ ตรวจความพร้อมใหม่
+    var ok = isReady();
+    document.querySelectorAll('#menu button[data-m=locs], #menu button[data-m=typeloc]').forEach(function (b) { b.classList.toggle('hidden', !ok); });
+    $('menu').classList.toggle('hidden');
+  };
   document.addEventListener('click', function () { $('menu').classList.add('hidden'); });
   $('menu').addEventListener('click', function (e) {
     var b = e.target.closest('button'); if (!b) return;
@@ -1236,7 +1250,7 @@
           if (!bat) add('แบตเตอรี่ ≥ 50%', 'WARN', 'อ่านค่าไม่ได้');
           else add('แบตเตอรี่ ≥ 50%', bat.level >= 0.5 || bat.charging ? 'OK' : 'WARN', Math.round(bat.level * 100) + '%' + (bat.charging ? ' (กำลังชาร์จ)' : ''));
           // 10 DataWedge
-          add('DataWedge: ได้ครบทุกหลักพร้อม Enter', S.dwOk ? 'OK' : 'FAIL', S.dwOk ? 'ผู้ตรวจสอบ ' + (S.staff ? S.staff.code : '') : 'ยิงบัตรผู้ตรวจสอบ (EMP:) 1 ครั้ง');
+          add('DataWedge: ได้ครบทุกหลักพร้อม Enter', S.dwOk ? 'OK' : 'FAIL', S.dwOk ? 'ผู้ตรวจสอบ ' + (S.staff ? S.staff.code : '') : 'ยิงบัตรผู้ตรวจสอบ (EMP:) 1 ครั้ง — ต้องยิงบัตรจริง เพื่อทดสอบหัวยิงไปด้วย (บัตรเสีย: พิมพ์ใหม่จากหน้า Admin)');
           // 11 เสียง
           add('เสียงเขียว/เหลือง/แดงดังครบ', $('ckSound').checked ? 'OK' : 'FAIL', $('ckSound').checked ? '' : 'กดทดสอบเสียง แล้วติ๊กยืนยัน');
           // 12 ปักหมุด
