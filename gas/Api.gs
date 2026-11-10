@@ -11,6 +11,9 @@ var ENTRY_TYPES = ['SCAN', 'MANUAL', 'VOID', 'FOUND', 'RECOUNT_SET', 'SWAP', 'SA
 var SYNC_STATUSES = ['SETUP', 'COUNTING', 'COUNT_CLOSED'];
 var PAIR_MINUTES = 30;
 var PAIR_MAX_FAILS = 5;
+/** ความจำต่อคำขอ (v2.3.0): Config / ตารางเล็ก / ดัชนี Count_Log อ่านครั้งเดียวต่อคำขอ · null = ไม่จำ (หน้า Admin) */
+var REQ_ = null;
+var REQ_TABLES = ['Locations', 'Loc_Members', 'Staff'];
 
 function doGet(e) {
   var p = (e && e.parameter) || {};
@@ -20,6 +23,10 @@ function doGet(e) {
 
 function doPost(e) {
   var t0 = Date.now();   // วัดเวลาทำงานฝั่งเซิร์ฟเวอร์ (v2.2.6) — เครื่องเทียบกับเวลาไป-กลับทั้งหมด
+  REQ_ = {};
+  try { return doPost__(e, t0); } finally { REQ_ = null; }
+}
+function doPost__(e, t0) {
   var req;
   try {
     req = JSON.parse(e.postData.contents);
@@ -72,13 +79,17 @@ function apiError_(code, message) {
 // ---------- ตารางแบบอ้างคอลัมน์ด้วยชื่อ ----------
 
 function table_(name) {
+  var memo = REQ_ && REQ_TABLES.indexOf(name) >= 0;
+  if (memo && REQ_['t_' + name]) return REQ_['t_' + name];
   var sh = SpreadsheetApp.getActive().getSheetByName(name);
   var lastRow = sh.getLastRow(), lastCol = Math.max(sh.getLastColumn(), 1);
   var values = lastRow ? sh.getRange(1, 1, lastRow, lastCol).getDisplayValues() : [[]];
   var header = values[0];
   var idx = {};
   header.forEach(function (h, i) { if (h) idx[h] = i; });
-  return { sh: sh, header: header, idx: idx, rows: values.slice(1) };
+  var t = { sh: sh, header: header, idx: idx, rows: values.slice(1) };
+  if (memo) REQ_['t_' + name] = t;
+  return t;
 }
 
 function rowObj_(t, row) {
@@ -108,6 +119,7 @@ function appendRows_(sh, rows) {
   var need = start + rows.length - 1 - sh.getMaxRows();
   if (need > 0) sh.insertRowsAfter(sh.getMaxRows(), need + 500);
   sh.getRange(start, 1, rows.length, rows[0].length).setValues(rows);
+  return start;
 }
 
 function sha_(s) {
@@ -280,6 +292,210 @@ function apiStock_(a) {
   return { ok: true, projectId: cfg.PROJECT_ID, version: stockVersion_(cfg), source: source || '', rows: rows };
 }
 
+// ---------- ดัชนี Count_Log (ขั้น C, v2.3.0) ----------
+//
+// ปัญหา: ทุกครั้งที่ส่งข้อมูล เซิร์ฟเวอร์อ่าน Count_Log ทั้งชีตหลายรอบ (กันซ้ำ / ตรวจยอด / สรุป Location)
+//         ข้อมูลเต็มรอบ ~11,000–16,000 แถว ใช้เวลาหลายวินาทีขณะถือล็อก เครื่องอื่นต้องรอคิว
+// ทางแก้: เก็บสรุปไว้ใน CacheService — ช่วง Seq ที่ได้รับแล้วของแต่ละเครื่อง + ยอดต่อ Location (ต่อเครื่อง / ต่อ SKU)
+//         Count_Log ยังเป็นข้อมูลจริงเสมอ ดัชนีเป็นแค่สำเนาสรุปที่สร้างใหม่ได้จากชีตทุกเมื่อ
+// ความถูกต้อง
+// - lx_meta.last = จำนวนแถวของชีตที่ดัชนีครอบคลุม · ชีตมีแถวเพิ่มจากทางอื่น → อ่านเฉพาะแถวที่เพิ่ม
+// - ชีตแถวน้อยลง / รอบเปลี่ยน / ดัชนีหาย (cache หมดอายุ 6 ชม.) → อ่านทั้งชีตครั้งเดียวแล้วสร้างใหม่
+// - ยอดแต่ละ Location เก็บ upto (แถวที่รวมแล้ว) กันนับซ้ำเมื่ออ่านขณะเครื่องอื่นกำลังบันทึก
+// - บันทึกดัชนีกลับเฉพาะตอนถือล็อก (ingest_) · คำขออ่านอย่างเดียว (locInfo) คำนวณในหน่วยความจำ ไม่เขียน
+
+var LX_VER = 1;
+var LX_TTL = 21600;
+var LX_COLS = 14;
+var LX_PREFIX = 'lx_L_';
+
+/** ช่วงตัวเลข [[a,b],...] เรียงและไม่ซ้อนกัน */
+function rgAdd_(rg, n) {
+  for (var i = 0; i < rg.length; i++) {
+    var r = rg[i];
+    if (n >= r[0] && n <= r[1]) return;
+    if (n === r[1] + 1) { r[1] = n; if (rg[i + 1] && rg[i + 1][0] === n + 1) { r[1] = rg[i + 1][1]; rg.splice(i + 1, 1); } return; }
+    if (n === r[0] - 1) { r[0] = n; return; }
+    if (n < r[0]) { rg.splice(i, 0, [n, n]); return; }
+  }
+  rg.push([n, n]);
+}
+function rgHas_(rg, n) {
+  for (var i = 0; i < (rg || []).length; i++) if (n >= rg[i][0] && n <= rg[i][1]) return true;
+  return false;
+}
+function rgStats_(rg) {
+  rg = rg || [];
+  var count = 0, gaps = [];
+  rg.forEach(function (r, i) {
+    count += r[1] - r[0] + 1;
+    if (i) for (var s = rg[i - 1][1] + 1; s < r[0] && gaps.length < 50; s++) gaps.push(s);
+  });
+  return { count: count, min: rg.length ? rg[0][0] : 0, max: rg.length ? rg[rg.length - 1][1] : 0, gaps: gaps };
+}
+/** Log_ID มาตรฐาน DEVICE-###### → { dev, seq } (รูปแบบอื่น เช่น Dolphin → null) */
+function lxId_(id) {
+  var m = String(id).match(/^(.+)-(\d{6,})$/);
+  return m ? { dev: m[1], seq: parseInt(m[2], 10) } : null;
+}
+
+/** เก็บใน cache แบบย่อ (cache รับได้ ~100KB ต่อรายการ → ~1,500 SKU ต่อ Location) · Material ได้จากคีย์ */
+function lxPack_(L) {
+  var it = {};
+  Object.keys(L.items).forEach(function (k) { var x = L.items[k]; it[k] = [x.barcode, x.qty, x.byDevice]; });
+  var dv = {};
+  Object.keys(L.devices).forEach(function (d) { var x = L.devices[d]; dv[d] = [x.lines, x.qty, x.maxSeq, x.lastTime]; });
+  return JSON.stringify({ d: dv, i: it, q: L.qty, n: L.lines, u: L.upto });
+}
+function lxUnpack_(s) {
+  var o = JSON.parse(s), L = { devices: {}, items: {}, qty: o.q, lines: o.n, upto: o.u };
+  Object.keys(o.d).forEach(function (d) { var x = o.d[d]; L.devices[d] = { lines: x[0], qty: x[1], maxSeq: x[2], lastTime: x[3] }; });
+  Object.keys(o.i).forEach(function (k) { var x = o.i[k]; L.items[k] = { key: k, material: k.indexOf('BC:') === 0 ? '' : k, barcode: x[0], qty: x[1], byDevice: x[2] }; });
+  return L;
+}
+
+function lxNewLoc_() { return { devices: {}, items: {}, qty: 0, lines: 0, upto: 0 }; }
+/** รวมแถว Count_Log (ค่าแสดงผล คอลัมน์ A–N) เข้ายอดของ Location */
+function lxAddRow_(L, r) {
+  var qty = Number(r[8]) || 0, seq = Number(r[3]) || 0;
+  var d = L.devices[r[2]] || (L.devices[r[2]] = { lines: 0, qty: 0, maxSeq: 0, lastTime: '' });
+  d.lines++; d.qty = r3_(d.qty + qty); if (seq > d.maxSeq) d.maxSeq = seq; if (String(r[13]) > d.lastTime) d.lastTime = String(r[13]);
+  var k = itemKey_(r[7], r[6]);
+  var it = L.items[k] || (L.items[k] = { key: k, material: r[7], barcode: r[6], qty: 0, byDevice: {} });
+  it.qty = r3_(it.qty + qty); it.byDevice[r[2]] = r3_((it.byDevice[r[2]] || 0) + qty);
+  if (!it.barcode && r[6]) it.barcode = r[6];
+  L.qty = r3_(L.qty + qty); L.lines++;
+}
+
+/**
+ * เปิดดัชนีของรอบ project · opt.write = ถือล็อกอยู่ บันทึกกลับได้
+ * คืน { loc(names) → {loc: D}, has(dev, seq), stats(dev), maxAll(dev), add(rows, firstRow), save(), sh, last, rebuilt }
+ */
+function logIdx_(project, opt) {
+  opt = opt || {};
+  if (REQ_ && REQ_.lx && REQ_.lx.project === project) { if (opt.write) REQ_.lx.write = true; return REQ_.lx; }
+  var cache = CacheService.getScriptCache();
+  var sh = SpreadsheetApp.getActive().getSheetByName('Count_Log');
+  var last = sh.getLastRow();
+  var meta = null;
+  try { meta = JSON.parse(cache.get('lx_meta') || 'null'); } catch (e) { meta = null; }
+  var X = { project: project, sh: sh, last: last, locs: {}, dirty: {}, rebuilt: false, write: !!opt.write, cache: cache, tail: [] };
+
+  function build(rows, firstRow) {
+    // rows = ค่าแสดงผลคอลัมน์ A–N เริ่มที่แถว firstRow ของชีต
+    rows.forEach(function (r, i) {
+      var p = lxId_(r[0]);
+      if (p) {
+        rgAdd_(X.meta.ids[p.dev] || (X.meta.ids[p.dev] = []), p.seq);
+      } else X.meta.odd++;
+      if (r[1] !== project) return;
+      var seq = Number(r[3]) || 0;
+      if (seq > 0) rgAdd_(X.meta.pseq[r[2]] || (X.meta.pseq[r[2]] = []), seq);
+      var loc = r[5];
+      if (!loc) return;
+      if (X.meta.locs.indexOf(loc) < 0) X.meta.locs.push(loc);
+      var L = X.locs[loc] || (X.locs[loc] = lxNewLoc_());
+      if (firstRow + i <= L.upto) return;
+      lxAddRow_(L, r);
+      X.dirty[loc] = true;
+    });
+  }
+  function rebuild() {
+    last = X.last = sh.getLastRow();   // อ่านใหม่: อาจเรียกหลังเพิ่มแถวแล้ว
+    X.meta = { v: LX_VER, project: project, last: last, ids: {}, pseq: {}, odd: 0, locs: [] };
+    X.locs = {}; X.dirty = {}; X.rebuilt = true;
+    var rows = last > 1 ? sh.getRange(2, 1, last - 1, LX_COLS).getDisplayValues() : [];
+    build(rows, 2);
+    Object.keys(X.locs).forEach(function (l) { X.locs[l].upto = last; X.dirty[l] = true; });
+    X.full = true;
+  }
+
+  if (meta && meta.v === LX_VER && meta.project === project && meta.last <= last) {
+    X.meta = meta;
+    if (meta.last < last) {
+      // มีแถวเพิ่มจากทางอื่น (หรือเครื่องอื่นกำลังบันทึก) → อ่านเฉพาะแถวที่เพิ่ม
+      var rows = sh.getRange(meta.last + 1, 1, last - meta.last, LX_COLS).getDisplayValues();
+      var need = {};
+      rows.forEach(function (r) { if (r[1] === project && r[5]) need[r[5]] = true; });
+      if (!lxLoad_(X, Object.keys(need))) rebuild();
+      else { build(rows, meta.last + 1); X.meta.last = last; Object.keys(X.dirty).forEach(function (l) { X.locs[l].upto = last; }); }
+    }
+  } else rebuild();
+
+  X.loc = function (names) {
+    if (!X.full && !lxLoad_(X, names)) { rebuild(); }
+    var out = {};
+    names.forEach(function (n) { if (X.locs[n]) out[n] = X.locs[n]; });
+    return out;
+  };
+  X.has = function (dev, seq) { return rgHas_(X.meta.ids[dev], seq); };
+  X.hasP = function (dev, seq) { return rgHas_(X.meta.pseq[dev], seq); };
+  X.stats = function (dev) { return rgStats_(X.meta.pseq[dev]); };
+  X.maxAll = function (dev) { return rgStats_(X.meta.ids[dev]).max; };
+  /** หลังเพิ่มแถวลงชีต: rows = แถวที่เพิ่ม (รูปแบบเดียวกับ ingest_) เริ่มที่แถว firstRow */
+  X.add = function (rows, firstRow) {
+    if (!rows.length) return;
+    var need = {};
+    rows.forEach(function (r) { if (r[1] === project && r[5]) need[r[5]] = true; });
+    if (!X.full && !lxLoad_(X, Object.keys(need))) { rebuild(); return; }   // rebuild อ่านชีตที่มีแถวใหม่แล้ว
+    var disp = rows.map(function (r) { return r.slice(0, LX_COLS).map(function (v) { return v === null || v === undefined ? '' : String(v); }); });
+    build(disp, firstRow);
+    X.last = X.meta.last = firstRow + rows.length - 1;
+    Object.keys(X.dirty).forEach(function (l) { X.locs[l].upto = X.last; });
+  };
+  X.save = function () {
+    if (!X.write) return;
+    var put = {};
+    Object.keys(X.dirty).forEach(function (l) { put[LX_PREFIX + project + '_' + l] = lxPack_(X.locs[l]); });
+    try {
+      if (Object.keys(put).length) cache.putAll(put, LX_TTL);
+      cache.put('lx_meta', JSON.stringify(X.meta), LX_TTL);   // meta หลังสุด: ถ้าบันทึกไม่ครบ ครั้งหน้าจะเห็นแถวเพิ่มแล้วอ่านซ้ำเอง
+    } catch (e) {
+      // บันทึกไม่ได้ (เช่น Location ใหญ่เกิน) → ทิ้งดัชนี ครั้งหน้าอ่านชีตเหมือนรุ่นก่อน (ช้าแต่ถูก)
+      try { cache.remove('lx_meta'); } catch (e2) { }
+      try { logAdmin_('INDEX_SAVE_FAIL', project, String(e && e.message || e).slice(0, 200)); } catch (e3) { }
+    }
+    X.dirty = {};
+  };
+  if (REQ_) REQ_.lx = X;
+  return X;
+}
+
+/** โหลดยอด Location จาก cache · Location ที่ดัชนีรู้จักแต่หายจาก cache → false (ต้องสร้างใหม่) */
+function lxLoad_(X, names) {
+  var want = names.filter(function (n) { return !X.locs[n] && X.meta.locs.indexOf(n) >= 0; });
+  if (!want.length) return true;
+  var got = X.cache.getAll(want.map(function (n) { return LX_PREFIX + X.project + '_' + n; })) || {};
+  for (var i = 0; i < want.length; i++) {
+    var s = got[LX_PREFIX + X.project + '_' + want[i]];
+    if (!s) return false;
+    X.locs[want[i]] = lxUnpack_(s);
+  }
+  return true;
+}
+
+/** ทิ้งดัชนี (ชีต Count_Log ถูกแก้นอกระบบ / ปิดรอบ) — ครั้งต่อไปสร้างใหม่จากชีต */
+function lxReset_() {
+  try { CacheService.getScriptCache().remove('lx_meta'); } catch (e) { }
+  if (REQ_) REQ_.lx = null;
+}
+
+/**
+ * สร้างดัชนีใหม่ทันที — เลือกฟังก์ชันนี้ในหน้า Apps Script แล้วกด Run
+ * ใช้เมื่อมีคนแก้ค่าในชีต Count_Log ด้วยมือ (ปกติไม่ต้องใช้: ระบบสร้างใหม่เองเมื่อแถวเพิ่ม/ลด หรือ cache หมดอายุ)
+ */
+function rebuildCountIndex() {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) throw new Error('มีเครื่องกำลังส่งข้อมูลอยู่ ลองใหม่อีกครั้ง');
+  try {
+    lxReset_();
+    var X = logIdx_(readConfig_().PROJECT_ID, { write: true });
+    X.save();
+    logAdmin_('INDEX_REBUILD', X.project, 'สร้างดัชนี Count_Log ใหม่ ' + (X.last - 1) + ' แถว · ' + X.meta.locs.length + ' Location');
+    return { rows: X.last - 1, locations: X.meta.locs.length };
+  } finally { releaseLock_(lock); }
+}
+
 // ---------- ตรวจลำดับ Seq ----------
 
 /** อ่าน Log_ID ทั้งหมด (คอลัมน์ A–D) ครั้งเดียว ใช้ทั้งกันซ้ำและตรวจช่องว่าง */
@@ -313,13 +529,13 @@ function deviceMaxSeqAll_(deviceId) {
       if (String(id).indexOf(prefix) === 0) { var n = parseInt(String(id).slice(prefix.length), 10); if (n > max) max = n; }
     });
   }
-  scan(Object.keys(logIndex_().ids));
+  max = logIdx_(readConfig_().PROJECT_ID).maxAll(deviceId);   // ดัชนี (v2.3.0) แทนการอ่าน Count_Log ทั้งชีต
   scan(Object.keys(quarantineIds_()));
   return max;
 }
 
 function deviceSeqInfo_(deviceId, projectId) {
-  return seqStats_(logIndex_().rows, deviceId, projectId);
+  return logIdx_(projectId).stats(deviceId);
 }
 
 // ---------- รับข้อมูลการนับ ----------
@@ -333,21 +549,24 @@ function apiSync_(a, req) {
   var lock = LockService.getScriptLock();
   var w0 = Date.now();
   if (!lock.tryLock(25000)) throw apiError_('BUSY', 'เซิร์ฟเวอร์กำลังรับข้อมูลจากเครื่องอื่น จะลองส่งใหม่อัตโนมัติ');
-  var h0 = Date.now();
+  var h0 = Date.now(), res;
   try {
-    var res = ingest_(a.deviceId, req.entries || [], req.events || [], 'SYNC', a.device, a.appVersion);
-    putRow_(a.table, a.row, { Last_Seq: res.seq.max, Last_Sync: now_(), App_Version: a.appVersion, Gaps: res.seq.gaps.length });
-    res.ok = true;
-    if (req.pendingAfter !== undefined) heartbeat_(a.deviceId, req.pendingAfter, req.location);
-    var cfg = readConfig_();
-    res.masterHash = cfg.MASTER_APPROVED_PROJECT === cfg.PROJECT_ID ? cfg.MASTER_APPROVED_HASH : '';
-    res.stockVersion = stockVersion_(cfg);
-    res.lockWait = h0 - w0;          // รอคิวล็อก (เครื่องอื่นกำลังบันทึก)
-    res.lockHold = Date.now() - h0;  // ถือล็อก (งานบันทึกจริง) — เป้าขั้น C: ≤ 500 ms
-    return res;
+    res = ingest_(a.deviceId, req.entries || [], req.events || [], 'SYNC', a.device, a.appVersion);
   } finally {
+    var f0 = Date.now();
     releaseLock_(lock);
+    if (res) res.prof.flush = Date.now() - f0;
   }
+  res.lockWait = h0 - w0;          // รอคิวล็อก (เครื่องอื่นกำลังบันทึก)
+  res.lockHold = Date.now() - h0;  // ถือล็อก (งานบันทึกจริง รวม flush) — เป้าขั้น C: ≤ 1 วิ
+  // งานที่เป็นของเครื่องนี้เท่านั้น ทำหลังปล่อยล็อก เครื่องอื่นไม่ต้องรอ (v2.3.0)
+  putRow_(a.table, a.row, { Last_Seq: res.seq.max, Last_Sync: now_(), App_Version: a.appVersion, Gaps: res.seq.gaps.length });
+  res.ok = true;
+  if (req.pendingAfter !== undefined) heartbeat_(a.deviceId, req.pendingAfter, req.location);
+  var cfg = readConfig_();
+  res.masterHash = cfg.MASTER_APPROVED_PROJECT === cfg.PROJECT_ID ? cfg.MASTER_APPROVED_HASH : '';
+  res.stockVersion = stockVersion_(cfg);
+  return res;
 }
 
 /**
@@ -358,20 +577,31 @@ function ingest_(deviceId, entries, events, source, device, appVersion) {
   var cfg = readConfig_();
   var project = cfg.PROJECT_ID;
   var statusOk = SYNC_STATUSES.indexOf(cfg.ROUND_STATUS) >= 0;
-  var idx = logIndex_();
-  var out = { accepted: [], duplicate: [], quarantined: [], rejected: [], events: [] };
+  var p0 = Date.now(), prof = {};
+  var X = logIdx_(project, { write: true });   // ดัชนีแทนการอ่าน Count_Log ทั้งชีต (v2.3.0) — ถือล็อกอยู่
+  prof.index = Date.now() - p0;
+  var seen = {}, oddIds = null;
+  // Log_ID มาตรฐาน (DEVICE-######) ตรวจซ้ำจากช่วง Seq ในดัชนี · รูปแบบอื่น (ไฟล์ Dolphin) อ่านคอลัมน์ Log_ID ครั้งเดียว
+  function dup(id) {
+    if (seen[id]) return true;
+    var p = lxId_(id);
+    if (p) return X.has(p.dev, p.seq);
+    if (!oddIds) oddIds = logIndex_().ids;
+    return !!oddIds[id];
+  }
+  var out = { accepted: [], duplicate: [], quarantined: [], rejected: [], events: [], prof: prof };
   var rows = [], qrows = [];
   var received = now_();
   var qIds = null;
   if (project && statusOk) migrateMembers_(project);
-  var basis = source === 'SYNC' ? basisChecker_(project) : null;
+  var basis = source === 'SYNC' ? basisChecker_(project, X) : null;
   var touched = {};
 
   entries.forEach(function (e) {
     var logId = String(e.logId || '');
     var bad = validateEntry_(e, deviceId, source);
     if (bad) { out.rejected.push({ logId: logId, reason: bad }); return; }
-    if (idx.ids[logId]) { out.duplicate.push(logId); return; }
+    if (dup(logId)) { out.duplicate.push(logId); return; }
     if (e.projectId !== project || !statusOk) {
       // ข้อมูลรอบอื่น / รอบปิดแล้ว: แยกไว้ ไม่รวมยอด แจ้ง Admin
       if (!qIds) qIds = quarantineIds_();
@@ -383,7 +613,7 @@ function ingest_(deviceId, entries, events, source, device, appVersion) {
       out.quarantined.push(logId);
       return;
     }
-    idx.ids[logId] = true;
+    seen[logId] = true;
     var loc = normLoc_(e.location);
     if (basis) { basis.check(e, loc, deviceId); basis.added(e, loc, deviceId); }
     if (loc) touched[loc] = true;
@@ -392,11 +622,12 @@ function ingest_(deviceId, entries, events, source, device, appVersion) {
       String(e.scanTime || ''), received, source, normStaff_(e.enteredBy || e.staff), normStaff_(e.requestedBy || ''),
       e.basis === undefined || e.basis === null ? '' : String(e.basis)];
     rows.push(row);
-    idx.rows.push([logId, project, deviceId, String(e.seq)]);
     out.accepted.push(logId);
   });
 
-  appendRows_(idx.sh, rows);
+  p0 = Date.now();
+  if (rows.length) X.add(rows, appendRows_(X.sh, rows));
+  prof.append = Date.now() - p0;
   if (qrows.length) {
     appendRows_(SpreadsheetApp.getActive().getSheetByName('Quarantine'), qrows);
     logAdmin_('QUARANTINE', deviceId, qrows.length + ' รายการจากรอบอื่น/รอบที่ปิดแล้ว');
@@ -408,7 +639,9 @@ function ingest_(deviceId, entries, events, source, device, appVersion) {
   }
 
   // เหตุการณ์ก่อน (ล้าง Location = ปิดธงเดิม) แล้วค่อยติดธงจากการแก้ที่ชนกันในชุดนี้ — ธงใหม่จึงไม่ถูกล้างทิ้ง (v2.2.8)
-  if (events.length) out.events = applyLocEvents_(deviceId, events, project, source);
+  p0 = Date.now();
+  if (events.length) out.events = applyLocEvents_(deviceId, events, project, source, X);
+  prof.events = Date.now() - p0;
   if (basis && basis.problems.length) {
     flagCheck_(project, deviceId, basis.problems);
     out.flags = basis.problems.map(function (p) { return { location: p.loc, note: p.note }; });   // แจ้งเครื่องผู้แก้ทันที
@@ -417,8 +650,14 @@ function ingest_(deviceId, entries, events, source, device, appVersion) {
   var need = needRefresh_(project, deviceId, Object.keys(touched));
   if (basis) basis.problems.forEach(function (p) { if (need.indexOf(p.loc) < 0) need.push(p.loc); });
   revokedLocs.forEach(function (l) { if (need.indexOf(l) < 0) need.push(l); });
+  p0 = Date.now();
   if (need.length) refreshLocations_(project, need);
-  out.seq = seqStats_(idx.rows, deviceId, project);
+  prof.refresh = Date.now() - p0;
+  out.seq = X.stats(deviceId);
+  p0 = Date.now();
+  X.save();
+  prof.save = Date.now() - p0;
+  if (X.rebuilt) prof.rebuilt = 1;   // สร้างดัชนีใหม่จากชีตในคำขอนี้ (cache หาย / ชีตถูกแก้)
   return out;
 }
 
@@ -478,6 +717,8 @@ function itemKey_(material, barcode) { return material ? String(material) : 'BC:
 
 /** อ่าน Count_Log ครั้งเดียว สรุปต่อ Location: ต่อเครื่อง และต่อ SKU (รวมทุกเครื่อง) */
 function locData_(project, onlyLocs) {
+  // เฉพาะบาง Location (ทางที่ใช้บ่อย: ส่งข้อมูล / ถามสถานะ) → ดัชนี · ทุก Location (ย้ายข้อมูลรุ่นเก่า / Admin) → อ่านชีต
+  if (onlyLocs) return logIdx_(project).loc(onlyLocs);
   var sh = SpreadsheetApp.getActive().getSheetByName('Count_Log');
   var n = sh.getLastRow() - 1;
   var vals = n > 0 ? sh.getRange(2, 1, n, 14).getDisplayValues() : [];
@@ -585,19 +826,15 @@ function migrateMembers_(project) {
  * ev.lines/qty/fromSeq/upToSeq = ยอดของเครื่องนี้ใน Location (ตรวจว่าเซิร์ฟเวอร์ได้รับครบ)
  * ev.total = ยอดรวมทุกเครื่องที่ผู้ดูแลเห็นตอนปิด · ev.auto = ส่งงานอัตโนมัติ (ยิงป้ายที่อื่น) · ev.at = เวลาสร้าง (ms)
  */
-function applyLocEvents_(deviceId, events, project, source) {
+function applyLocEvents_(deviceId, events, project, source, X) {
   migrateMembers_(project);
-  var log = SpreadsheetApp.getActive().getSheetByName('Count_Log');
-  var n = log.getLastRow() - 1;
-  var all = n > 0 ? log.getRange(2, 1, n, 9).getDisplayValues() : [];
+  X = X || logIdx_(project);
   var locs = table_('Locations');
   var mt = membersTable_();
   var checks = [];
   var out = [];
   var touched = {};
-  var have = {};
   var evCache = CacheService.getScriptCache();
-  all.forEach(function (r) { if (r[1] === project && r[2] === deviceId) have[Number(r[3])] = true; });
   events.forEach(function (ev) {
     if (ev.projectId !== project) { out.push({ id: ev.id, location: ev.location, match: 'SKIP' }); return; }
     var loc = normLoc_(ev.location);
@@ -606,12 +843,11 @@ function applyLocEvents_(deviceId, events, project, source) {
     var ck = 'ev_' + deviceId + '_' + ev.id, prev = null;
     try { prev = evCache.get(ck); } catch (e) { }
     if (prev) { out.push(JSON.parse(prev)); return; }
-    var srvLines = 0, srvQty = 0, upTo = Number(ev.upToSeq) || 0, missing = 0;
-    all.forEach(function (r) {
-      if (r[1] === project && r[2] === deviceId && r[5] === loc) { srvLines++; srvQty += Number(r[8]) || 0; }
-    });
+    var upTo = Number(ev.upToSeq) || 0, missing = 0;
+    var mine = ((X.loc([loc])[loc] || { devices: {} }).devices[deviceId]) || { lines: 0, qty: 0 };
+    var srvLines = mine.lines, srvQty = mine.qty;
     // ยังได้รับรายการของเครื่องนี้ไม่ครบถึง upToSeq → ยังตัดสินไม่ได้ (WAIT)
-    for (var s = Number(ev.fromSeq) || upTo + 1; s <= upTo; s++) if (!have[s]) { missing++; break; }
+    for (var s = Number(ev.fromSeq) || upTo + 1; s <= upTo; s++) if (!X.hasP(deviceId, s)) { missing++; break; }
     srvQty = r3_(srvQty);
     var match = missing ? 'WAIT' : (srvLines === Number(ev.lines) && srvQty === Number(ev.qty) ? 'OK' : 'MISMATCH');
     var res = applyRole_(mt, locs, project, loc, deviceId, ev, match, upTo);
@@ -809,14 +1045,16 @@ function refreshLocations_(project, locNames, locs, mt) {
  * ไม่ตรง = มีเครื่องอื่นยิง/แก้ SKU นี้ระหว่างนั้น → ติดธง "ต้องตรวจซ้ำ"
  * แก้จากแอปรุ่นเก่า (ไม่มี basis) ขณะ Location มีหลายเครื่อง → ติดธงเช่นกัน
  */
-function basisChecker_(project) {
-  var map = null, devs = null;
-  function load() {
-    map = {}; devs = {};
-    var sh = SpreadsheetApp.getActive().getSheetByName('Count_Log');
-    var n = sh.getLastRow() - 1;
-    var vals = n > 0 ? sh.getRange(2, 1, n, 9).getDisplayValues() : [];
-    vals.forEach(function (r) { if (r[1] === project) add(r[5], r[7], r[6], r[8], r[2]); });
+function basisChecker_(project, X) {
+  // ยอดบนเซิร์ฟเวอร์จากดัชนี (v2.3.0) + รายการก่อนหน้าในชุดเดียวกัน (ยังไม่ได้บันทึก)
+  var map = {}, devs = {}, loaded = {};
+  function load(loc) {
+    if (loaded[loc]) return;
+    loaded[loc] = true;
+    var D = (X || logIdx_(project)).loc([loc])[loc];
+    if (!D) return;
+    Object.keys(D.items).forEach(function (k) { map[loc + '|' + k] = r3_((map[loc + '|' + k] || 0) + D.items[k].qty); });
+    Object.keys(D.devices).forEach(function (d) { (devs[loc] || (devs[loc] = {}))[d] = true; });
   }
   function add(loc, mat, bc, qty, dev) {
     var k = loc + '|' + itemKey_(mat, bc);
@@ -827,7 +1065,7 @@ function basisChecker_(project) {
   return {
     check: function (e, loc, deviceId) {
       if (e.type !== 'RECOUNT_SET') return;
-      if (!map) load();
+      load(loc);
       var k = loc + '|' + itemKey_(e.material, e.barcode);
       var cur = map[k] || 0;
       if (e.basis === undefined || e.basis === null || e.basis === '') {
@@ -837,7 +1075,7 @@ function basisChecker_(project) {
       }
       if (r3_(e.basis) !== cur) problems.push({ loc: loc, note: 'ยอดเปลี่ยนระหว่างแก้ ' + (e.material || e.barcode) + ': เห็น ' + r3_(e.basis) + ' เซิร์ฟเวอร์ ' + cur });
     },
-    added: function (e, loc, deviceId) { if (map) add(loc, e.material, e.barcode, e.qty, deviceId); },
+    added: function (e, loc, deviceId) { if (loaded[loc]) add(loc, e.material, e.barcode, e.qty, deviceId); },
     problems: problems
   };
 }
@@ -1045,4 +1283,62 @@ function apiCheck_(a, req) {
     [[now_(), a.deviceId, normStaff_(req.staff), a.appVersion, pass ? 'ผ่าน' : 'ไม่ผ่าน', detail]]);
   putRow_(a.table, a.row, { Last_Check_At: now_(), Last_Check: pass ? 'ผ่าน' : 'ไม่ผ่าน', App_Version: a.appVersion });
   return { ok: true, pass: pass };
+}
+
+// ---------- ทดสอบแรงงาน (ขั้น C) — เรียกจากหน้า Apps Script เท่านั้น ไม่มีปุ่มในหน้า Admin ----------
+//
+// loadTestSeed(): เติมแถวปลอมลง Count_Log ให้ใกล้ข้อมูลเต็มรอบ แล้ววัดเวลาจาก TC21 จริง (หน้าสถานะ)
+//   เครื่อง LOADTEST-1..4 · Location ZZ1..ZZ300 · Source = LOADTEST · ใช้บาร์โค้ดจริงจาก Device_Master
+//   ระหว่างมีแถวปลอม ยอดเทียบ SAP ในหน้า Admin จะไม่ถูกต้อง — ใช้เฉพาะรอบทดสอบ
+// loadTestClear(): ลบแถว Source = LOADTEST ออกทั้งหมด (แถวจริงไม่ถูกแตะ)
+
+var LOADTEST_SRC = 'LOADTEST';
+
+function loadTestSeed(rows) {
+  rows = Math.min(Number(rows) || 11000, 20000);
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) throw new Error('มีเครื่องกำลังส่งข้อมูลอยู่ ลองใหม่อีกครั้ง');
+  try {
+    var cfg = readConfig_(), project = cfg.PROJECT_ID;
+    if (!project) throw new Error('ยังไม่ได้เปิดรอบ');
+    var items = readRaw_('Device_Master').slice(1).filter(function (r) { return r[0] && r[1]; }).slice(0, 500);
+    if (!items.length) throw new Error('ยังไม่มี Device_Master (อนุมัติ Master ก่อน)');
+    var sh = SpreadsheetApp.getActive().getSheetByName('Count_Log');
+    var seq = {}, out = [], now = now_();
+    sh.getRange(2, 1, Math.max(sh.getLastRow() - 1, 1), 4).getDisplayValues().forEach(function (r) {
+      if (String(r[2]).indexOf('LOADTEST-') === 0) seq[r[2]] = Math.max(seq[r[2]] || 0, Number(r[3]) || 0);
+    });
+    for (var i = 0; i < rows; i++) {
+      var dev = 'LOADTEST-' + (1 + i % 4), s = seq[dev] = (seq[dev] || 0) + 1;
+      var it = items[i % items.length];
+      out.push([dev + '-' + ('000000' + s).slice(-6), project, dev, s, 'LOADTEST', 'ZZ' + (1 + Math.floor(i * 300 / rows)), it[0], it[1], 1,
+        'SCAN', '', '', 'ข้อมูลทดสอบแรงงาน', now, now, LOADTEST_SRC, 'LOADTEST', '', '']);
+    }
+    for (var k = 0; k < out.length; k += 5000) appendRows_(sh, out.slice(k, k + 5000));
+    lxReset_();
+    var X = logIdx_(project, { write: true }); X.save();
+    logAdmin_('LOADTEST_SEED', project, 'เติมแถวทดสอบแรงงาน ' + rows + ' แถว (Count_Log รวม ' + (X.last - 1) + ' แถว) — ลบด้วย loadTestClear()');
+    return 'เติม ' + rows + ' แถว · Count_Log รวม ' + (X.last - 1) + ' แถว';
+  } finally { releaseLock_(lock); }
+}
+
+function loadTestClear() {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) throw new Error('มีเครื่องกำลังส่งข้อมูลอยู่ ลองใหม่อีกครั้ง');
+  try {
+    var sh = SpreadsheetApp.getActive().getSheetByName('Count_Log');
+    var n = sh.getLastRow();
+    if (n < 2) return 'ไม่มีข้อมูล';
+    var width = sh.getLastColumn();
+    var vals = sh.getRange(2, 1, n - 1, width).getValues();   // ค่าจริง (ไม่ใช่ค่าแสดงผล) เขียนกลับได้เหมือนเดิม
+    var srcCol = SHEETS.Count_Log.indexOf('Source');
+    var keep = vals.filter(function (r) { return r[srcCol] !== LOADTEST_SRC; });
+    var removed = vals.length - keep.length;
+    if (!removed) return 'ไม่มีแถวทดสอบแรงงาน';
+    sh.getRange(2, 1, n - 1, width).clearContent();
+    if (keep.length) sh.getRange(2, 1, keep.length, width).setValues(keep);
+    lxReset_();
+    logAdmin_('LOADTEST_CLEAR', readConfig_().PROJECT_ID, 'ลบแถวทดสอบแรงงาน ' + removed + ' แถว (เหลือ ' + keep.length + ' แถว)');
+    return 'ลบ ' + removed + ' แถว · เหลือ ' + keep.length + ' แถว';
+  } finally { releaseLock_(lock); }
 }

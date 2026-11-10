@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2.2.9';
+  var APP_VERSION = '2.3.0';
   var QTY_CONFIRM = 150;      // จำนวนที่ป้อนเองเกินนี้ต้องยืนยันอีกครั้ง
   var QTY_MAX_DIGITS = 5;     // ยาวกว่านี้ = น่าจะยิงบาร์โค้ดเข้าช่องจำนวน
   var INFO_EVERY = 15000;     // ถามสถานะผู้ช่วย/ผู้ดูแลระหว่างนับร่วมกัน
@@ -444,6 +444,8 @@
       pendingAfter: rest.length, location: S.loc || ''
     };
     return api('sync', payload, 30000).then(function (res) {
+      // แยกเวลางานในเซิร์ฟเวอร์ของการส่งครั้งล่าสุด (ขั้น C v2.3.0) — ดูที่หน้าสถานะ
+      if (res.prof) S.lastProf = { p: res.prof, srv: res.ms, wait: res.lockWait, hold: res.lockHold, n: batch.length, ev: evs.length };
       var done = {};
       res.accepted.concat(res.duplicate).forEach(function (id) { done[id] = 'ok'; });
       res.quarantined.forEach(function (id) { done[id] = 'q'; });
@@ -1256,6 +1258,13 @@
       var x = pr[k]; if (!x || !(x.n || x.to || x.err || x.off)) return;
       prow.push('<tr><td>' + PNAME[k] + '</td><td>' + x.n + '</td><td>' + sec(x.avg) + '</td><td>' + sec(x.max) + '</td><td' + (x.to ? ' class="bad"' : '') + '>' + x.to + '</td><td>' + x.off + '</td><td' + (x.err ? ' class="bad"' : '') + '>' + x.err + '</td></tr>');
       if (k === 'sync' && x.n) prow.push('<tr class="sub"><td colspan="7">ส่งข้อมูล: ที่เซิร์ฟเวอร์ ' + sec(x.srv) + ' · รอคิว ' + sec(x.wait) + ' · บันทึก ' + sec(x.hold) + ' วิ (เฉลี่ย)</td></tr>');
+      var L = S.lastProf;
+      if (k === 'sync' && L) {
+        var q = L.p, ms = function (v) { return Number(v) || 0; };
+        prow.push('<tr class="sub"><td colspan="7">ครั้งล่าสุด (' + L.n + ' รายการ' + (L.ev ? ' + ' + L.ev + ' เหตุการณ์' : '') + '): บันทึก ' + ms(L.hold) + ' ms = ดัชนี ' + ms(q.index) +
+          ' · เขียนแถว ' + ms(q.append) + ' · Location ' + ms(q.events) + ' · สถานะ ' + ms(q.refresh) + ' · เก็บดัชนี ' + ms(q.save) + ' · flush ' + ms(q.flush) +
+          (q.rebuilt ? ' · <b>สร้างดัชนีใหม่</b>' : '') + '</td></tr>');
+      }
     });
     $('perfBox').innerHTML = prow.length ? '<div class="muted">เวลาตอบของเซิร์ฟเวอร์ ตั้งแต่เปิดแอป (วินาที)</div><table class="perf"><tr><th></th><th>ครั้ง</th><th>เฉลี่ย</th><th>ช้าสุด</th><th>หมดเวลา</th><th>ออฟไลน์</th><th>ผิดพลาด</th></tr>' + prow.join('') + '</table>' : '';
     $('statusKv').innerHTML = rows.map(function (r) { return '<div>' + esc(r[0]) + '</div><div>' + esc(r[1]) + '</div>'; }).join('') +

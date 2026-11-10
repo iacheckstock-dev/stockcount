@@ -12,7 +12,7 @@ var SCHEMA_VERSION = 5;
  * เวอร์ชันของระบบ (ใช้เลขเดียวทั้งแอป TC21 และเซิร์ฟเวอร์ ตาม Semantic Versioning MAJOR.MINOR.PATCH)
  * ต้องตรงกับ APP_VERSION ใน app/app.js และ appVersion ใน app/config.json — ดู CHANGELOG.md
  */
-var SYSTEM_VERSION = '2.2.9';
+var SYSTEM_VERSION = '2.3.0';
 
 var SHEETS = {
   Config: ['Key', 'Value', 'Note'],
@@ -170,12 +170,16 @@ function ensureSetup_() {
 // ---------- Config / Log ----------
 
 function readConfig_() {
+  // ในคำขอจากเครื่อง อ่านครั้งเดียวต่อคำขอ (v2.3.0) — คืนสำเนา ผู้เรียกแก้ได้โดยไม่กระทบกัน
+  if (typeof REQ_ !== 'undefined' && REQ_ && REQ_.cfg) return Object.assign({}, REQ_.cfg);
   var sh = SpreadsheetApp.getActive().getSheetByName('Config');
   var out = {};
-  if (!sh || sh.getLastRow() < 2) return out;
-  sh.getRange(2, 1, sh.getLastRow() - 1, 2).getDisplayValues().forEach(function (r) {
+  if (!sh) return out;
+  var n = sh.getLastRow();
+  if (n >= 2) sh.getRange(2, 1, n - 1, 2).getDisplayValues().forEach(function (r) {
     if (r[0]) out[r[0]] = r[1];
   });
+  if (typeof REQ_ !== 'undefined' && REQ_) REQ_.cfg = Object.assign({}, out);
   return out;
 }
 
@@ -187,6 +191,7 @@ function setConfig_(obj) {
     var v = obj[k] === null || obj[k] === undefined ? '' : String(obj[k]);
     if (i >= 0) sh.getRange(i + 2, 2).setValue(v);
     else { sh.appendRow([k, v, '']); keys.push(k); }
+    if (typeof REQ_ !== 'undefined' && REQ_ && REQ_.cfg) REQ_.cfg[k] = v;
   });
 }
 
@@ -375,6 +380,7 @@ function apiOpenRound(projectId, countDate) {
       throw new Error('รอบ ' + cfg.PROJECT_ID + ' อยู่ในสถานะ ' + st + ' ต้องปิดรอบก่อนจึงเปิดรอบใหม่ได้');
     }
     setConfig_({ PROJECT_ID: projectId, COUNT_DATE: countDate, ROUND_STATUS: 'SETUP' });
+    lxReset_();   // ดัชนี Count_Log ของรอบเดิมไม่ใช้ต่อ (v2.3.0)
     logAdmin_('OPEN_ROUND', projectId, 'วันนับ ' + countDate + (st === 'SETUP' && cfg.PROJECT_ID ? ' (แก้จาก ' + cfg.PROJECT_ID + ' ' + cfg.COUNT_DATE + ')' : ''));
     return apiGetState();
   });
