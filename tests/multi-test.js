@@ -406,5 +406,28 @@ test('เครื่องหมดเวลารอแล้วส่งเ�
   assert.strictEqual(r1.events[0].match, 'OK');
 });
 
+console.log('\nโอนการดูแล / hello บอกจำนวนเครื่อง (v2.2.7)');
+test('hello บอกจำนวนเครื่องใน Location ที่อยู่', () => {
+  const a = device('TC21-05', 'EMP-K'); a.seq = 950;
+  const b = device('TC21-04', 'EMP-K'); b.seq = 950;
+  a.sync([a.scan('Q1', BC1, MAT1, 1)], [a.ev('OPEN', 'Q1')]);
+  assert.strictEqual(a.call('hello', { pending: 0, location: 'Q1' }).members, 1);
+  b.sync([b.scan('Q1', BC1, MAT1, 1)], [b.ev('JOIN', 'Q1')]);
+  assert.strictEqual(a.call('hello', { pending: 0, location: 'Q1' }).members, 2);
+  assert.strictEqual(a.call('hello', { pending: 0 }).members, undefined);
+});
+test('โอนการดูแล: ต้องเป็นเครื่องที่เปิดใช้ + จับคู่แล้ว + มีเหตุผล', () => {
+  assert.throws(() => run('apiLocTransfer("Q1", "TC21-99", "x")'), /ไม่พบเครื่อง/);
+  run('apiSeedDevices(7, "TC21")');
+  assert.throws(() => run('apiLocTransfer("Q1", "TC21-07", "x")'), /ยังไม่จับคู่/);
+  run('apiSetDeviceActive("TC21-04", false, "TEMP")');
+  assert.throws(() => run('apiLocTransfer("Q1", "TC21-04", "x")'), /ถูกยกเลิก/);
+  run('apiSetDeviceActive("TC21-04", true)');
+  device('TC21-04', 'EMP-K');
+  assert.throws(() => run('apiLocTransfer("Q1", "TC21-04", "  ")'), /เหตุผล/);
+  run('apiLocTransfer("Q1", "TC21-04", "เครื่องผู้ดูแลเสีย")');
+  assert.strictEqual(mem('Q1', 'TC21-04').role, 'OWNER');
+});
+
 console.log('\nผล: ผ่าน ' + pass + ' / ไม่ผ่าน ' + fail);
 process.exit(fail ? 1 : 0);

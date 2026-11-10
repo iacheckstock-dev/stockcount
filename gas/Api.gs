@@ -204,7 +204,11 @@ function perfSummary_(p) {
 /** เครื่องรายงานตัวทุก 1 นาที (ไม่เขียนชีต) — ถ้าเครื่องถูกยกเลิก auth_ จะตอบ error ให้เครื่องรู้ทันที */
 function apiHello_(a, req) {
   heartbeat_(a.deviceId, req.pending, req.location, perfSummary_(req.perf));
-  return { ok: true };
+  // บอกจำนวนเครื่องใน Location ที่เครื่องอยู่ (อ่าน Loc_Members ซึ่งเล็ก) — ผู้ดูแลรู้ว่ามีผู้ช่วยเข้ามา โดยไม่ต้องถาม locInfo ตลอด (v2.2.7)
+  var out = { ok: true };
+  var loc = normLoc_(req.location);
+  if (loc) out.members = membersOf_(membersTable_(), readConfig_().PROJECT_ID, loc).length;
+  return out;
 }
 
 /** เครื่องยกเลิกการจับคู่เอง: ล้าง token ฝั่งเซิร์ฟเวอร์ให้หน้า Admin เห็นตรงกัน */
@@ -974,7 +978,12 @@ function adminTransfer_(loc, toDevice, reason) {
   migrateMembers_(project);
   loc = normLoc_(loc);
   var dt = table_('Devices');
-  if (findDevice_(dt, toDevice) < 0) throw new Error('ไม่พบเครื่อง ' + toDevice);
+  var di = findDevice_(dt, toDevice);
+  if (di < 0) throw new Error('ไม่พบเครื่อง ' + toDevice);
+  var dv = rowObj_(dt, dt.rows[di]);
+  if (String(dv.Active).toUpperCase() === 'N') throw new Error(toDevice + ' ถูกยกเลิกอยู่ — เปิดใช้และจับคู่ก่อน');
+  if (!dv.Token_Hash) throw new Error(toDevice + ' ยังไม่จับคู่ — จับคู่ก่อนจึงรับโอนได้');
+  if (!String(reason || '').trim()) throw new Error('ต้องระบุเหตุผลการโอน');
   var mt = membersTable_();
   var owner = ownerOf_(mt, project, loc);
   if (owner && owner.m.Device_ID === toDevice) throw new Error(toDevice + ' เป็นผู้ดูแลอยู่แล้ว');

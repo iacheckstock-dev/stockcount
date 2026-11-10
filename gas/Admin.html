@@ -43,11 +43,11 @@
   details summary { cursor:pointer; color:var(--acc); font-size:12px; }
   #toast { position:fixed; bottom:16px; left:50%; transform:translateX(-50%); padding:10px 16px; border-radius:8px; background:#111; color:#fff; display:none; max-width:80%; z-index:10; }
   #toast.err { background:var(--bad); }
-  #revDlg { position:fixed; inset:0; background:rgba(0,0,0,.35); display:none; align-items:center; justify-content:center; z-index:8; }
-  #revDlg.on { display:flex; }
-  #revDlg .box { background:#fff; border-radius:10px; padding:18px 20px; width:560px; max-width:94vw; max-height:90vh; overflow:auto; }
-  #revDlg label.opt { display:block; border:1px solid var(--line); border-radius:8px; padding:8px 10px; margin:6px 0; cursor:pointer; }
-  #revDlg label.opt:has(input:checked) { border-color:#111; background:var(--soft); }
+  #trDlg, #revDlg { position:fixed; inset:0; background:rgba(0,0,0,.35); display:none; align-items:center; justify-content:center; z-index:8; }
+  #trDlg.on, #revDlg.on { display:flex; }
+  #trDlg .box, #revDlg .box { background:#fff; border-radius:10px; padding:18px 20px; width:560px; max-width:94vw; max-height:90vh; overflow:auto; }
+  #trDlg label.opt, #revDlg label.opt { display:block; border:1px solid var(--line); border-radius:8px; padding:8px 10px; margin:6px 0; cursor:pointer; }
+  #trDlg label.opt:has(input:checked), #revDlg label.opt:has(input:checked) { border-color:#111; background:var(--soft); }
   #busy { position:fixed; inset:0; background:rgba(255,255,255,.6); display:none; align-items:center; justify-content:center; z-index:9; font-size:15px; }
   .chips button { font:inherit; font-size:12px; padding:3px 10px; border-radius:12px; border:1px solid var(--line); background:#fff; cursor:pointer; }
   .chips button.on { background:#111; color:#fff; border-color:#111; }
@@ -191,6 +191,16 @@
     <div class="scroll"><table id="logTbl"></table></div>
   </section>
 </main>
+<div id="trDlg" class="dlg"><div class="box">
+  <h3 style="margin-top:0">โอนการดูแล <span id="trLoc"></span></h3>
+  <div class="muted">ผู้ดูแลเดิม <b id="trFrom"></b> จะกลายเป็นผู้ช่วยที่ส่งงานแล้ว (ยอดเดิมยังอยู่) · เลือกได้เฉพาะเครื่องที่เปิดใช้และจับคู่แล้ว</div>
+  <div id="trList" style="margin-top:8px"></div>
+  <div class="row" style="margin-top:8px">เหตุผล <input type="text" id="trWhy" style="flex:1" placeholder="เช่น เครื่องผู้ดูแลเสีย (บังคับ)"></div>
+  <div class="row" style="margin-top:12px;justify-content:flex-end">
+    <button class="btn sec" onclick="$('trDlg').classList.remove('on')">ยกเลิก</button>
+    <button class="btn" onclick="doTransfer()">โอนการดูแล</button>
+  </div>
+</div></div>
 <div id="revDlg"><div class="box">
   <h3 style="margin-top:0">ยกเลิกเครื่อง <span id="revId"></span></h3>
   <div id="revImpact"></div>
@@ -585,11 +595,27 @@ function submitFor(loc, dev) {
 }
 /** เครื่องผู้ดูแลเสีย: โอนให้เครื่องอื่น ผู้ดูแลเดิมกลายเป็นผู้ช่วยที่ส่งงานแล้ว */
 function transferLoc(loc) {
-  var to = prompt('โอนการดูแล ' + loc + ' ให้เครื่อง (เช่น TC21-03):');
-  if (!to) return;
-  var why = prompt('เหตุผล (เช่น เครื่องผู้ดูแลเสีย):');
-  if (why === null) return;
-  call('apiLocTransfer', [loc, to.trim().toUpperCase(), why], function (d) { renderDevices(d); toast('โอนการดูแล ' + loc + ' ให้ ' + to.toUpperCase() + ' แล้ว'); });
+  // เลือกจากรายการเครื่องที่เปิดใช้และจับคู่แล้วเท่านั้น (ไม่พิมพ์เอง กันพิมพ์ผิด/เครื่องที่ไม่ได้ลงทะเบียน) v2.2.7
+  var l = (DEV.locations || []).filter(function (x) { return x.Location === loc; })[0] || {};
+  var owner = String(l.Owner || '').split(' ')[0];
+  var ok = (DEV.devices || []).filter(function (x) { return x.active && x.paired && x.id !== owner; });
+  if (!ok.length) { toast('ไม่มีเครื่องที่เปิดใช้และจับคู่แล้วให้รับโอน', true); return; }
+  var opts = ok.map(function (x) {
+    var ago = x.hb ? Math.max(0, Math.floor((DEV.now - x.hb.at) / 60000)) : null;
+    return '<label class="opt"><input type="radio" name="trTo" value="' + esc(x.id) + '"> <b>' + esc(x.id) + '</b> <span class="muted">' +
+      (ago === null ? 'ยังไม่มีสัญญาณ' : ago < 1 ? 'ติดต่อเมื่อสักครู่' : 'ติดต่อ ' + ago + ' นาทีที่แล้ว') + (x.hb && x.hb.loc ? ' · อยู่ที่ ' + esc(x.hb.loc) : '') + '</span></label>';
+  }).join('');
+  $('trLoc').textContent = loc; $('trFrom').textContent = owner || '-';
+  $('trList').innerHTML = opts; $('trWhy').value = '';
+  $('trDlg').classList.add('on');
+}
+function doTransfer() {
+  var r = document.querySelector('input[name=trTo]:checked'), why = $('trWhy').value.trim(), loc = $('trLoc').textContent;
+  if (!r) { toast('เลือกเครื่องที่จะรับโอน', true); return; }
+  if (!why) { toast('ใส่เหตุผล', true); return; }
+  if (!confirm('ยืนยันโอนการดูแล ' + loc + '\n' + $('trFrom').textContent + ' → ' + r.value + '\nเหตุผล: ' + why)) return;
+  $('trDlg').classList.remove('on');
+  call('apiLocTransfer', [loc, r.value, why], function (d) { renderDevices(d); toast('โอนการดูแล ' + loc + ' ให้ ' + r.value + ' แล้ว'); });
 }
 function seedDevices() { call('apiSeedDevices', [$('seedN').value, 'TC21'], function (d) { renderDevices(d); toast('สร้างรหัสเครื่องแล้ว'); }); }
 function pairCode(id) {

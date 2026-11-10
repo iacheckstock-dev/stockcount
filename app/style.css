@@ -1,5 +1,5 @@
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-html, body { margin: 0; height: 100%; }
+html, body { margin: 0; height: 100%; overflow-x: hidden; }
 body { font-family: "Sarabun", "Noto Sans Thai", system-ui, sans-serif; font-size: 16px; color: #111; background: #fafaf8; overscroll-behavior: none; user-select: none; }
 .hidden { display: none !important; }
 .muted { color: #6b6b6b; font-size: 14px; }
@@ -15,8 +15,10 @@ h2 { font-size: 20px; margin: 8px 0 12px; }
 #rotate { display: none; position: fixed; inset: 0; z-index: 30; background: #111; color: #fff; align-items: center; justify-content: center; text-align: center; font-size: 22px; font-weight: 700; padding: 20px; }
 #rotate span { font-size: 15px; font-weight: 400; }
 @media (orientation: landscape) and (max-height: 520px) { #rotate { display: flex; } }
+#tbLocBox { display: flex; align-items: center; gap: 6px; min-width: 0; }   /* ป้ายบทบาทอยู่ข้างชื่อ ไม่เพิ่มความสูงแถบบน */
 #tbLoc { font-size: 38px; font-weight: 700; letter-spacing: 1px; line-height: 1.05; }
 #tbRole { font-size: 12px; font-weight: 600; color: #bbb; line-height: 1.1; }
+#tbRole.owner { color: #fff; border: 1px solid #888; display: inline-block; padding: 0 6px; border-radius: 6px; }
 #tbRole.helper { color: #111; background: #ffcc00; display: inline-block; padding: 0 6px; border-radius: 6px; }
 #tbRole:empty { display: none; }
 #tbRight { text-align: right; font-size: 14px; }
@@ -65,8 +67,9 @@ details { margin: 10px 0; } summary { color: #555; font-size: 14px; }
 /* บรรทัดที่ 3 "+1 · ใน A1 รวม 2" ใหญ่และหนา อ่านง่ายที่สุด */
 #cardQty { font-size: 22px; font-weight: 700; line-height: 1.2; margin-top: 2px; }
 .totals { display: flex; gap: 8px; margin: 5px 0 0; }
-.totals > div { flex: 1; background: #fff; border: 1px solid #e3e1dc; border-radius: 12px; padding: 4px 10px; }
-.lbl.dev { display: flex; align-items: baseline; gap: 4px; white-space: nowrap; }
+.totals > div { flex: 1 1 0; min-width: 0; background: #fff; border: 1px solid #e3e1dc; border-radius: 12px; padding: 4px 10px; }
+.lbl.dev { display: flex; align-items: baseline; gap: 4px; white-space: nowrap; min-width: 0; }
+.lbl.dev span { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .lbl.dev b { flex: 1; min-width: 0; overflow: hidden; font-size: 22px; color: #111; font-variant-numeric: tabular-nums; }
 #locSku, #locLbl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sku { border-top: 1px solid #e3e1dc; margin-top: 3px; padding-top: 2px; line-height: 1.25; }
@@ -140,3 +143,11 @@ table.perf th, table.perf td { padding: 3px 4px; text-align: right; border-botto
 table.perf td:first-child, table.perf th:first-child { text-align: left; }
 table.perf tr.sub td { text-align: left; color: #666; font-size: 13px; }
 table.perf td.bad { color: #b42318; font-weight: 700; }
+
+/* กล่อง "กำลังทำ…" กลางจอ (v2.2.7) — แอนิเมชัน CSS อย่างเดียว */
+.busy { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: center; justify-content: center; z-index: 10; }
+.busy.hidden { display: none; }
+.busybox { background: #fff; border-radius: 14px; padding: 18px 20px; width: 78%; max-width: 320px; text-align: center; font-size: 18px; font-weight: 700; }
+.busybox .muted { font-size: 14px; font-weight: 400; margin-top: 4px; white-space: pre-line; }
+.spin { width: 34px; height: 34px; margin: 0 auto 10px; border: 4px solid #e3e1dc; border-top-color: #111; border-radius: 50%; animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }

@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2.2.6';
+  var APP_VERSION = '2.2.7';
   var QTY_CONFIRM = 150;      // จำนวนที่ป้อนเองเกินนี้ต้องยืนยันอีกครั้ง
   var QTY_MAX_DIGITS = 5;     // ยาวกว่านี้ = น่าจะยิงบาร์โค้ดเข้าช่องจำนวน
   var INFO_EVERY = 15000;     // ถามสถานะผู้ช่วย/ผู้ดูแลระหว่างนับร่วมกัน
@@ -74,7 +74,15 @@
 
   // ---------- โมดัล ----------
   var modalCb = null;
+  /** กล่องกลางจอ "กำลังทำ…" พร้อมไอคอนหมุน (CSS ล้วน ไม่ติดต่อเซิร์ฟเวอร์เพิ่ม) — ค้างจนได้ผล (U9/U15/U17) */
+  function busy(title, sub) {
+    $('busyTitle').textContent = title; $('busySub').textContent = sub || '';
+    $('busy').classList.remove('hidden');
+  }
+  function busyOff() { $('busy').classList.add('hidden'); }
+
   function modal(opt) {
+    busyOff();
     return new Promise(function (resolve) {
       $('mTitle').textContent = opt.title || '';
       $('mBody').innerHTML = opt.html || '';
@@ -150,8 +158,8 @@
   // ---------- วัดเวลาตอบ (v2.2.6) — แสดงที่หน้าสถานะ และรายงานให้หน้า Admin ทุก 1 นาที ----------
   S.perf = {};
   function perfAdd(action, rtt, res, errCode) {
-    var p = S.perf[action] || (S.perf[action] = { n: 0, sum: 0, max: 0, srv: 0, wait: 0, hold: 0, to: 0, err: 0 });
-    if (errCode) { if (errCode === 'TIMEOUT') p.to++; else p.err++; return; }
+    var p = S.perf[action] || (S.perf[action] = { n: 0, sum: 0, max: 0, srv: 0, wait: 0, hold: 0, to: 0, err: 0, off: 0 });
+    if (errCode) { if (errCode === 'TIMEOUT') p.to++; else if (errCode === 'NETWORK') p.off++; else p.err++; return; }
     p.n++; p.sum += rtt; if (rtt > p.max) p.max = rtt;
     if (res && res.ms) p.srv += res.ms;
     if (res && res.lockWait !== undefined) { p.wait += res.lockWait; p.hold += res.lockHold || 0; }
@@ -161,7 +169,7 @@
     Object.keys(S.perf).forEach(function (k) {
       var p = S.perf[k];
       o[k] = { n: p.n, avg: p.n ? Math.round(p.sum / p.n) : 0, max: p.max, srv: p.n ? Math.round(p.srv / p.n) : 0,
-        wait: p.n ? Math.round(p.wait / p.n) : 0, hold: p.n ? Math.round(p.hold / p.n) : 0, to: p.to, err: p.err };
+        wait: p.n ? Math.round(p.wait / p.n) : 0, hold: p.n ? Math.round(p.hold / p.n) : 0, to: p.to, err: p.err, off: p.off };
     });
     return o;
   }
@@ -455,13 +463,21 @@
     if (pending().length || S.oldPending.length || S.events.some(function (e) { return e.nextTry <= Date.now(); })) syncNow();
   }, SYNC_EVERY);
   // รายงานตัวทุก 1 นาที: หน้า Admin เห็นว่าเครื่องยังติดต่อได้และค้างกี่รายการ · ถ้าเครื่องถูกยกเลิก จะรู้ภายใน 1 นาที
+  var lastHello = 0;
   function hello() {
     if (!S.cfg.apiUrl || !S.cfg.token || S.syncing) return;
-    api('hello', { pending: pending().length + S.oldPending.length, location: S.loc || '', perf: perfReport() }, 10000).catch(function (err) {
+    // อยู่ใน Location: ทุก 30 วิ (ให้ผู้ดูแลรู้เร็วว่ามีผู้ช่วยเข้ามา) · ไม่อยู่: ทุก 60 วิ
+    if (Date.now() - lastHello < (S.loc ? 30000 : 60000) - 1000) return;
+    lastHello = Date.now();
+    var loc = S.loc;
+    api('hello', { pending: pending().length + S.oldPending.length, location: loc || '', perf: perfReport() }, 10000).then(function (r) {
+      // เซิร์ฟเวอร์บอกว่า Location นี้มีหลายเครื่อง แต่เครื่องยังไม่รู้ → ถามรายละเอียด (U7/U8)
+      if (loc && loc === S.loc && r.members > 1 && !hasOthers(loc) && !S.infoBusy) fetchInfo(loc);
+    }, function (err) {
       if (err && (err.code === 'BAD_TOKEN' || err.code === 'DEVICE_DISABLED' || err.code === 'UNKNOWN_DEVICE')) { S.lastErr = err.code; render(); }
     });
   }
-  setInterval(hello, 60000);
+  setInterval(hello, 10000);
   window.addEventListener('online', function () { scheduleSync(200); });
   window.addEventListener('offline', function () { setOnline(false); });
 
@@ -485,8 +501,9 @@
     $('tbLoc').textContent = S.loc || '—';
     var helper = S.loc && isHelper();
     var rr = S.loc && S.roles[S.loc];
-    $('tbRole').textContent = !S.loc ? '' : helper ? 'ผู้ช่วย' : hasOthers(S.loc) && rr && rr.owner === S.cfg.deviceId ? 'ผู้ดูแล' : '';
-    $('tbRole').className = helper ? 'helper' : '';
+    // ป้ายบทบาทแสดงทุกครั้งที่อยู่ใน Location (U10) — ระหว่างตรวจยังไม่แสดง
+    $('tbRole').textContent = !S.loc || S.checking === S.loc ? '' : helper ? 'ผู้ช่วย' : 'ผู้ดูแล';
+    $('tbRole').className = helper ? 'helper' : 'owner';
     $('tbStaff').textContent = S.staff ? (S.staff.name || S.staff.code) : 'ยังไม่เข้างาน';
     var p = pending().length;
     // นับเป็น "รายการ" (บรรทัดที่บันทึก รวมลบ/แก้) ไม่ใช่ชิ้น — จำนวนที่ส่งแล้วดูได้ที่หน้าสถานะ
@@ -526,7 +543,7 @@
     // หลายเครื่อง: ยอดรวม = ทุกเครื่อง และบอกยอดของเครื่องนี้แยก
     $('locSku').textContent = sum.multi ? 'ของฉัน ' + fmt(sum.mine.qty) + ' · ' + (S.info[S.loc].members.length) + ' เครื่อง' :
       fmt(sum.sku) + ' SKU' + (S.loc && S.locChecks[S.loc] === 'OK' && !locPending(S.loc) ? ' · ✓ ส่งครบ' : '');
-    $('locLbl').textContent = sum.multi ? 'ยอดรวม Location (ทุกเครื่อง)' : 'ยอดรวม Location';
+    $('locLbl').textContent = sum.multi ? 'ยอดรวมทุกเครื่อง' : 'ยอดรวม Location';
     $('devTotal').textContent = fmt(deviceTotal());
     fitText($('devTotal'), 22, 13);
     var helper = S.loc && isHelper();
@@ -695,7 +712,8 @@
         SOUND.ok();
         setCard('idle', 'กำลังตรวจ ' + loc + '…', 'ถามเซิร์ฟเวอร์ว่ามีผู้ดูแลแล้วหรือยัง · รอสักครู่' + (note ? '<br>' + esc(note) : ''));
         show('count');
-        var done = function () { if (S.checking === loc) S.checking = ''; render(); };
+        busy('กำลังตรวจ ' + loc + '…', 'ถามเซิร์ฟเวอร์ว่ามีผู้ดูแลแล้วหรือยัง' + (note ? '\n' + note : ''));
+        var done = function () { busyOff(); if (S.checking === loc) S.checking = ''; render(); };
         return saveState().then(function () { return checkOwner(loc, r, note); }).then(done, function (e) { done(); throw e; });
       });
     });
@@ -741,6 +759,7 @@
         if (retried) { openCard(); return sendOpen(isHelper(loc) ? 'JOIN' : 'OPEN'); }
         retried = true;
         setCard('idle', 'กำลังตรวจ ' + loc + '…', 'ลองอีกครั้ง'); render();
+        busy('กำลังตรวจ ' + loc + '…', 'ลองอีกครั้ง');
         return fetchInfo(loc).then(onInfo);
       });
     });
@@ -836,9 +855,12 @@
    * ผู้ดูแลแก้ยอด/ล้าง/ปิด ได้เมื่อผู้ช่วยส่งงานครบ (ข้อมูลถึงเซิร์ฟเวอร์ครบ)
    * ออนไลน์: ถามสถานะล่าสุด · ออฟไลน์: ใช้ได้ถ้าเท่าที่รู้ไม่มีผู้ช่วยค้าง (เซิร์ฟเวอร์ตรวจซ้ำตอนส่งข้อมูล)
    */
-  function ownerGate(loc, what) {
-    toast('กำลังตรวจผู้ช่วย…');
+  function ownerGate(loc, what, strict) {
+    // แก้ยอด: ถ้าเพิ่งได้สถานะสด (≤ 20 วิ) และผู้ช่วยส่งงานครบ ไม่ต้องถามซ้ำ (เซิร์ฟเวอร์ยังมีด่าน Basis อีกชั้น) · ปิด/ล้าง: ถามสดทุกครั้ง (U12)
+    if (!strict && S.infoAt[loc] && Date.now() - S.infoAt[loc] <= 20000 && !waitingHelpers(loc).length) return Promise.resolve(true);
+    busy('กำลังตรวจผู้ช่วย…', 'ถามเซิร์ฟเวอร์ว่าผู้ช่วยส่งงานครบหรือยัง');
     return fetchInfo(loc).then(function (fresh) {
+      busyOff();
       // เซิร์ฟเวอร์ช้า: ยังไม่ให้ปิด/แก้ จนกว่าจะได้สถานะสด (ออฟไลน์จริงใช้สถานะล่าสุด แล้วเซิร์ฟเวอร์ตรวจซ้ำภายหลัง)
       if (!fresh && S.infoErr !== 'NETWORK') {
         SOUND.warn();
@@ -891,7 +913,7 @@
         .then(function (yes) { if (yes) doSubmit(loc); });
       return;
     }
-    ownerGate(loc, 'ปิด Location ').then(function (ok) {
+    ownerGate(loc, 'ปิด Location ', true).then(function (ok) {
       if (!ok || S.loc !== loc) return;
       var s = combinedSummary(loc);
       confirmBox('ปิด ' + loc, '<span class="bignum">' + fmt(s.qty) + '</span> ชิ้น · ' + s.sku + ' SKU' + (s.multi ? ' <span class="muted">(รวม ' + S.info[loc].members.length + ' เครื่อง)</span>' : '') +
@@ -1080,7 +1102,7 @@
   };
   $('btnLocClear').onclick = function () {
     var loc = S.loc;
-    ownerGate(loc, 'ล้าง Location ').then(function (ok) {
+    ownerGate(loc, 'ล้าง Location ', true).then(function (ok) {
       if (!ok) return;
       var s = combinedSummary(loc);
       if (!s.qty && !s.sku) { toast('Location นี้ไม่มียอด', true); return; }
@@ -1164,11 +1186,11 @@
     var PNAME = { sync: 'ส่งข้อมูล', locInfo: 'ถามสถานะ', hello: 'รายงานตัว', myLocs: 'รายการ Loc', bootstrap: 'ตรวจพร้อม' };
     var pr = perfReport(), prow = [];
     Object.keys(PNAME).forEach(function (k) {
-      var x = pr[k]; if (!x || !(x.n || x.to || x.err)) return;
-      prow.push('<tr><td>' + PNAME[k] + '</td><td>' + x.n + '</td><td>' + sec(x.avg) + '</td><td>' + sec(x.max) + '</td><td' + (x.to ? ' class="bad"' : '') + '>' + x.to + '</td><td>' + x.err + '</td></tr>');
-      if (k === 'sync' && x.n) prow.push('<tr class="sub"><td colspan="6">ส่งข้อมูล: ที่เซิร์ฟเวอร์ ' + sec(x.srv) + ' · รอคิว ' + sec(x.wait) + ' · บันทึก ' + sec(x.hold) + ' วิ (เฉลี่ย)</td></tr>');
+      var x = pr[k]; if (!x || !(x.n || x.to || x.err || x.off)) return;
+      prow.push('<tr><td>' + PNAME[k] + '</td><td>' + x.n + '</td><td>' + sec(x.avg) + '</td><td>' + sec(x.max) + '</td><td' + (x.to ? ' class="bad"' : '') + '>' + x.to + '</td><td>' + x.off + '</td><td' + (x.err ? ' class="bad"' : '') + '>' + x.err + '</td></tr>');
+      if (k === 'sync' && x.n) prow.push('<tr class="sub"><td colspan="7">ส่งข้อมูล: ที่เซิร์ฟเวอร์ ' + sec(x.srv) + ' · รอคิว ' + sec(x.wait) + ' · บันทึก ' + sec(x.hold) + ' วิ (เฉลี่ย)</td></tr>');
     });
-    $('perfBox').innerHTML = prow.length ? '<div class="muted">เวลาตอบของเซิร์ฟเวอร์ ตั้งแต่เปิดแอป (วินาที)</div><table class="perf"><tr><th></th><th>ครั้ง</th><th>เฉลี่ย</th><th>ช้าสุด</th><th>หมดเวลา</th><th>ผิดพลาด</th></tr>' + prow.join('') + '</table>' : '';
+    $('perfBox').innerHTML = prow.length ? '<div class="muted">เวลาตอบของเซิร์ฟเวอร์ ตั้งแต่เปิดแอป (วินาที)</div><table class="perf"><tr><th></th><th>ครั้ง</th><th>เฉลี่ย</th><th>ช้าสุด</th><th>หมดเวลา</th><th>ออฟไลน์</th><th>ผิดพลาด</th></tr>' + prow.join('') + '</table>' : '';
     $('statusKv').innerHTML = rows.map(function (r) { return '<div>' + esc(r[0]) + '</div><div>' + esc(r[1]) + '</div>'; }).join('') +
       (rej.length ? '<div>ไม่รับ</div><div>' + rej.slice(0, 5).map(function (e) { return esc(e.logId + ' ' + e.rejected); }).join('<br>') + '</div>' : '');
   }

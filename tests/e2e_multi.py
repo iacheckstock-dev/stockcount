@@ -42,7 +42,7 @@ with sync_playwright() as p:
         return pg
 
     def scan(pg, code):
-        pg.locator('#topbar').click(position={'x': 200, 'y': 10})
+        pg.locator('#topbar').click(position={'x': 200, 'y': 10}, force=True)
         pg.keyboard.type(code, delay=5); pg.keyboard.press('Enter'); pg.wait_for_timeout(300)
 
     def synced(pg):
@@ -100,7 +100,7 @@ with sync_playwright() as p:
     print('ผู้ช่วยไปช่วยที่อื่น (ลืมกดส่งงาน) แล้วกลับมา')
     scan(K, 'LOC:D85'); K.wait_for_timeout(1500)
     check('ส่งงาน D80 ให้อัตโนมัติแล้ว' in K.inner_text('#card'), 'ยิงป้าย D85 → ส่งงาน D80 อัตโนมัติ: ' + K.inner_text('#card').replace('\n', ' | '))
-    check(K.is_hidden('#modal') and K.inner_text('#tbRole') == '', 'D85 ไม่มีใครเปิด → เป็นผู้ดูแลเอง ไม่มีคำถาม')
+    check(K.is_hidden('#modal') and K.inner_text('#tbRole') == 'ผู้ดูแล', 'D85 ไม่มีใครเปิด → เป็นผู้ดูแลเอง ไม่มีคำถาม (ป้าย ผู้ดูแล)')
     scan(K, BC2); synced(K)
     C.click('#btnLoc'); C.wait_for_selector('#v-loc.on'); C.wait_for_timeout(1500)
     check('ส่งงานแล้ว ✓' in C.inner_text('#locMembers'), 'ผู้ดูแลเห็น อ้อย ส่งงานแล้ว ✓')
@@ -161,6 +161,8 @@ with sync_playwright() as p:
     K.evaluate(f"window.__SC.S.stock.set('{MAT1}', 123456)"); scan(K, BC1)
     fit = K.evaluate("[...['skuCnt','skuStk']].map(id => { const e = document.getElementById(id); return [e.textContent, e.scrollWidth <= e.clientWidth + 1]; })")
     check(fit[0][0] == '1,205' and fit[1][0] == '123,456' and all(x[1] for x in fit), 'ตัวเลขหลักพัน/แสน มีคั่นหลักและพอดีช่อง: ' + str(fit))
+    sw = K.evaluate("[document.documentElement.scrollWidth, document.querySelector('#devTotal').textContent, document.querySelector('.totals').scrollWidth <= document.querySelector('.totals').clientWidth + 1]")
+    check(sw[0] <= 360 and sw[2], 'ยอดทั้งเครื่อง ' + sw[1] + ' ชิ้น: หน้าจอไม่ล้น ไม่เลื่อนซ้าย-ขวา (กว้าง ' + str(sw[0]) + '/360) (v2.2.7)')
     K.screenshot(path=f'{SHOT}/m06-big-numbers.png')
     box = K.locator('#btnClose').bounding_box()
     check(box['y'] + box['height'] <= 568, f"ปุ่มล่างยังอยู่ในจอ ({box['y'] + box['height']:.0f}/568)")
@@ -180,7 +182,7 @@ with sync_playwright() as p:
     scan(C, BC1); synced(C)
     get('/debug/apidelay?ms=12500&action=locInfo')
     scan(K, 'LOC:E10'); K.wait_for_timeout(500)
-    check('กำลังตรวจ E10' in K.inner_text('#card'), 'ยิงป้าย → การ์ด "กำลังตรวจ E10…" ระหว่างรอเซิร์ฟเวอร์')
+    check('กำลังตรวจ E10' in K.inner_text('#card') and K.is_visible('#busy') and 'กำลังตรวจ E10' in K.inner_text('#busyTitle'), 'ยิงป้าย → กล่องกลางจอ "กำลังตรวจ E10…" มีไอคอนหมุน ค้างจนได้ผล (v2.2.7)')
     n0 = K.evaluate('window.__SC.S.entries.length')
     scan(K, BC1)
     check('รอสักครู่' in K.inner_text('#toast') and K.evaluate('window.__SC.S.entries.length') == n0, 'ยิงสินค้าระหว่างตรวจ → เตือน ไม่บันทึก')
@@ -229,6 +231,19 @@ with sync_playwright() as p:
     st = K.inner_text('#perfBox')
     check('ถามสถานะ' in st and K.evaluate("[...document.querySelectorAll('#perfBox tr')].some(r => /ถามสถานะ/.test(r.textContent) && r.cells[4].textContent === '1')"), 'หน้าสถานะแสดงเวลาตอบและจำนวนครั้งที่หมดเวลา')
     K.screenshot(path=f'{SHOT}/m09-perf.png', full_page=True)
+
+    print('ผู้ดูแลรู้ว่ามีผู้ช่วยเข้ามา โดยไม่ต้องกดอะไร (U7/U8 v2.2.7)')
+    K.click('#btnStatusBack') if K.is_visible('#btnStatusBack') else None
+    scan(C, 'LOC:E20'); C.wait_for_timeout(2500)
+    while C.is_visible('#modal'): yes(C)
+    check(C.inner_text('#tbRole') == 'ผู้ดูแล', 'ป้าย "ผู้ดูแล" แสดงแม้นับคนเดียว (U10)')
+    scan(C, BC1); synced(C)
+    scan(K, 'LOC:E20'); t = modal(K, 12000)
+    while K.is_visible('#modal'): yes(K)
+    scan(K, BC1); scan(K, BC1); synced(K)
+    C.wait_for_function("/2 เครื่อง/.test(document.querySelector('#locSku').textContent) && document.querySelector('#locTotal').textContent === '3'", timeout=50000)
+    check(True, 'ผู้ดูแลอยู่หน้านับ ไม่ได้กดอะไร: เห็นยอดรวม 3 · ' + C.inner_text('#locSku'))
+    C.screenshot(path=f'{SHOT}/m10-owner-learns.png')
 
     check(not errors, 'ไม่มี JavaScript error: ' + '; '.join(errors))
     b.close()
