@@ -21,8 +21,9 @@ env.sheets.Staff.data.push(['EMP-NU', 'นุ่น', 'ผู้ตรวจส�
 run('apiSeedDevices(5, "TC21")');
 
 let offline = false;
-let appVersion = '2.2.5';
+let appVersion = '2.2.6';
 let slowMs = 0;
+let apiDelay = { ms: 0, action: '' };   // จำลองเซิร์ฟเวอร์ช้า (GAS จริงตอบ 1–5 วินาที) v2.2.6
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'application/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.webmanifest': 'application/manifest+json' };
 
 http.createServer((req, res) => {
@@ -35,7 +36,10 @@ http.createServer((req, res) => {
       if (url.pathname === '/api') {
         if (offline) { req.socket.destroy(); return; }
         if (req.method === 'GET') return send(200, run('doGet(_e).getContent()', { _e: { parameter: Object.fromEntries(url.searchParams) } }));
-        return send(200, run('doPost(_r).getContent()', { _r: { postData: { contents: body } } }));
+        const doIt = () => send(200, run('doPost(_r).getContent()', { _r: { postData: { contents: body } } }));
+        let act = ''; try { act = JSON.parse(body).action; } catch (e) { }
+        if (apiDelay.ms && (!apiDelay.action || apiDelay.action === act)) return setTimeout(doIt, apiDelay.ms);
+        return doIt();
       }
       if (url.pathname === '/debug/paircode') return send(200, run(`apiPairCode(${JSON.stringify(url.searchParams.get('d'))})`).devices.find(d => d.id === url.searchParams.get('d')));
       if (url.pathname === '/debug/log') return send(200, env.sheets.Count_Log.data);
@@ -46,6 +50,7 @@ http.createServer((req, res) => {
       if (url.pathname === '/debug/loccheck') return send(200, env.sheets.Loc_Checks.data);
       if (url.pathname === '/debug/offline') { offline = url.searchParams.get('on') === '1'; return send(200, { offline }); }
       if (url.pathname === '/debug/import') return send(200, run('apiImportDeviceFile(_t, "e2e.csv")', { _t: body }));
+      if (url.pathname === '/debug/apidelay') { apiDelay = { ms: Number(url.searchParams.get('ms') || 0), action: url.searchParams.get('action') || '' }; return send(200, apiDelay); }
       if (url.pathname === '/debug/slow') { slowMs = Number(url.searchParams.get('ms') || 0); return send(200, { slowMs }); }
       if (url.pathname === '/debug/reupload-sap') { run('apiUpload("SAP", _sap, { fileName: "sap2.xls", fileDate: "2026-11-04", d1Confirmed: true })'); return send(200, { ok: true }); }
       if (url.pathname === '/debug/version') { appVersion = url.searchParams.get('v'); return send(200, { appVersion }); }

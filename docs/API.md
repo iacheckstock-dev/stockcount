@@ -1,4 +1,4 @@
-# API ของเครื่อง TC21 (API_VERSION 2 · v2.2.3)
+# API ของเครื่อง TC21 (API_VERSION 2 · v2.2.6)
 
 Web app ของ Apps Script (`gas/Api.gs`) Deploy แบบ **Execute as: Me · Who has access: Anyone**
 URL ลงท้าย `/exec` ตั้งไว้ใน `app/config.json` (`apiUrl`) และชีต Config (`API_URL`)
@@ -171,6 +171,13 @@ sequenceDiagram
 
 ## check
 คำขอ: `{ staff, items: [{ title, result: "OK"|"WARN"|"FAIL", detail }] }` → คำตอบ `{ ok, pass }` (ไม่มี FAIL = ผ่าน)
+
+## เวลาตอบ (v2.2.6)
+- ทุกคำตอบมี `ms` = เวลาทำงานที่เซิร์ฟเวอร์ · `sync` มี `lockWait` (รอคิวล็อก) และ `lockHold` (ถือล็อก) เป้าขั้น C: lockHold ≤ 500 ms
+- แอปแยกข้อผิดพลาด: `NETWORK` (ส่งไม่ออก = ออฟไลน์ ไฟแดง) · `TIMEOUT` (เกินเวลารอ) / `BAD_REPLY` (Google ตอบเป็น HTML) / `BUSY` / `SERVER_ERROR` = เซิร์ฟเวอร์ช้าหรือมีปัญหา ไฟส้ม ทำงานต่อ
+- `locInfo` รอได้ 10 วินาที · ถามทุก 15 วินาที (8 วินาทีตอนผู้ดูแลรอผู้ช่วย) ไม่ถามซ้อน ไม่หยุดเมื่อช้า
+- `hello` ส่ง `perf` (สรุปเวลาตอบต่อชนิดคำขอ ตั้งแต่เปิดแอป) → เก็บใน heartbeat → หน้า Admin คอลัมน์ "ติดต่อล่าสุด"
+- เหตุการณ์ Location ที่ตัดสินแล้ว (ไม่ใช่ WAIT) จำผลไว้ 6 ชม. (CacheService `ev_<เครื่อง>_<id>`) — ส่งซ้ำได้ผลเดิม ไม่บันทึก Loc_Checks ซ้ำ
 
 ## hello (v2.2.2)
 คำขอ: `{ pending, location }` → `{ ok }`

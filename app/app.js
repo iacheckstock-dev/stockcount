@@ -5,10 +5,12 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2.2.5';
+  var APP_VERSION = '2.2.6';
   var QTY_CONFIRM = 150;      // จำนวนที่ป้อนเองเกินนี้ต้องยืนยันอีกครั้ง
   var QTY_MAX_DIGITS = 5;     // ยาวกว่านี้ = น่าจะยิงบาร์โค้ดเข้าช่องจำนวน
   var INFO_EVERY = 15000;     // ถามสถานะผู้ช่วย/ผู้ดูแลระหว่างนับร่วมกัน
+  var INFO_EVERY_WAIT = 8000; // ถี่ขึ้นตอนผู้ดูแลรอผู้ช่วยส่งงาน
+  var INFO_MS = 10000;        // เวลารอคำตอบ "ใครอยู่ใน Location" (GAS จริงตอบ 1–5 วินาที บางครั้งนานกว่า)
   var BATCH = 20;
   var SYNC_EVERY = 2500;
   var STALE_MIN = 30;
@@ -100,10 +102,13 @@
 
   // ---------- เครือข่าย ----------
   function fetchTimeout(url, opt, ms) {
-    var ctl = window.AbortController ? new AbortController() : null;
-    var timer = setTimeout(function () { if (ctl) ctl.abort(); }, ms || 20000);
+    var ctl = window.AbortController ? new AbortController() : null, timedOut = false;
+    var timer = setTimeout(function () { timedOut = true; if (ctl) ctl.abort(); }, ms || 20000);
     if (ctl) opt.signal = ctl.signal;
-    return fetch(url, opt).finally(function () { clearTimeout(timer); });
+    return fetch(url, opt).then(function (r) { clearTimeout(timer); return r; }, function (e) {
+      clearTimeout(timer);
+      throw { timeout: timedOut, error: e };
+    });
   }
 
   function api(action, body, ms) {
@@ -113,18 +118,55 @@
     var payload = Object.assign({ action: action, deviceId: S.cfg.deviceId, token: S.cfg.token, appVersion: APP_VERSION }, body || {});
     var t0 = Date.now();
     return fetchTimeout(S.cfg.apiUrl, { method: 'POST', body: JSON.stringify(payload), redirect: 'follow' }, ms)
-      .then(function (r) { return r.json(); }, function (e) { throw { code: 'NETWORK', message: 'ติดต่อเซิร์ฟเวอร์ไม่ได้' }; })
+      .then(function (r) {
+        // Google ตอบเป็นหน้า HTML (สคริปต์ error / เกินโควต้า / สิทธิ์ผิด) ≠ ออฟไลน์
+        return r.text().then(function (t) {
+          try { return JSON.parse(t); } catch (x) { throw { code: 'BAD_REPLY', message: 'เซิร์ฟเวอร์ตอบผิดรูปแบบ (HTTP ' + r.status + ')' }; }
+        });
+      }, function (e) {
+        // หมดเวลารอ = เซิร์ฟเวอร์ช้า (เครือข่ายยังใช้ได้) · ส่งไม่ออกเลย = ออฟไลน์
+        if (e && e.timeout && navigator.onLine !== false) throw { code: 'TIMEOUT', message: 'เซิร์ฟเวอร์ตอบช้า (เกิน ' + Math.round((ms || 20000) / 1000) + ' วินาที)' };
+        throw { code: 'NETWORK', message: 'ติดต่อเซิร์ฟเวอร์ไม่ได้' };
+      })
       .then(function (res) {
+        perfAdd(action, Date.now() - t0, res);
         if (res.serverTime) S.serverOffset = res.serverTime - (t0 + Date.now()) / 2;
         if (res.serverVersion) S.serverVersion = res.serverVersion;
         setOnline(true);
         if (!res.ok) {
           if (action !== 'pair' && REVOKE_CODES.indexOf(res.error) >= 0) setRevoked(res.error);
+          if (res.error === 'BUSY' || res.error === 'SERVER_ERROR') setSlow(res.error);
           throw { code: res.error, message: res.message || res.error };
         }
         return res;
-      }, function (e) { if (e && e.code === 'NETWORK') setOnline(false); throw e; });
+      }, function (e) {
+        perfAdd(action, Date.now() - t0, null, e && e.code);
+        if (e && e.code === 'NETWORK') setOnline(false);
+        else if (e && (e.code === 'TIMEOUT' || e.code === 'BAD_REPLY')) setSlow(e.code);
+        throw e;
+      });
   }
+
+  // ---------- วัดเวลาตอบ (v2.2.6) — แสดงที่หน้าสถานะ และรายงานให้หน้า Admin ทุก 1 นาที ----------
+  S.perf = {};
+  function perfAdd(action, rtt, res, errCode) {
+    var p = S.perf[action] || (S.perf[action] = { n: 0, sum: 0, max: 0, srv: 0, wait: 0, hold: 0, to: 0, err: 0 });
+    if (errCode) { if (errCode === 'TIMEOUT') p.to++; else p.err++; return; }
+    p.n++; p.sum += rtt; if (rtt > p.max) p.max = rtt;
+    if (res && res.ms) p.srv += res.ms;
+    if (res && res.lockWait !== undefined) { p.wait += res.lockWait; p.hold += res.lockHold || 0; }
+  }
+  function perfReport() {
+    var o = {};
+    Object.keys(S.perf).forEach(function (k) {
+      var p = S.perf[k];
+      o[k] = { n: p.n, avg: p.n ? Math.round(p.sum / p.n) : 0, max: p.max, srv: p.n ? Math.round(p.srv / p.n) : 0,
+        wait: p.n ? Math.round(p.wait / p.n) : 0, hold: p.n ? Math.round(p.hold / p.n) : 0, to: p.to, err: p.err };
+    });
+    return o;
+  }
+  /** เซิร์ฟเวอร์ช้า/มีปัญหา (เครือข่ายยังใช้ได้) → ไฟเหลือง ระบบทำงานต่อ ข้อมูลไม่หาย */
+  function setSlow(code) { S.slow = code; S.slowAt = Date.now(); renderTop(); }
 
   /** เครื่องถูกยกเลิก (หน้า Admin) หรือ token ใช้ไม่ได้: หยุดรับการยิงทันที จนกว่าจะจับคู่ใหม่ — ข้อมูลในเครื่องไม่หาย */
   var REVOKE_CODES = ['BAD_TOKEN', 'DEVICE_DISABLED', 'UNKNOWN_DEVICE'];
@@ -137,7 +179,7 @@
 
   function setOnline(on) {
     S.online = on;
-    if (on) S.lastErr = '';
+    if (on) { S.lastErr = ''; S.slow = ''; }
     renderTop();
   }
 
@@ -228,18 +270,25 @@
   }
   /** ถามเซิร์ฟเวอร์ว่าใครอยู่ใน Location นี้ (ล้มเหลว/ออฟไลน์ = null) */
   function fetchInfo(loc, ms) {
-    if (S.online === false || !S.cfg.token) return Promise.resolve(null);
-    return api('locInfo', { location: loc }, ms || 4000).then(function (r) {
-      S.info[loc] = r;
+    S.infoErr = '';
+    if (navigator.onLine === false || !S.cfg.token) { S.infoErr = 'NETWORK'; return Promise.resolve(null); }
+    S.infoBusy = (S.infoBusy || 0) + 1;
+    return api('locInfo', { location: loc }, ms || INFO_MS).then(function (r) {
+      S.infoBusy--;
+      S.info[loc] = r; S.infoAt[loc] = Date.now();
       if (r.me) setRole(loc, { role: r.me.role, state: S.loc === loc && r.me.state !== 'CLOSED' ? 'COUNTING' : r.me.state, owner: r.owner ? r.owner.device : '', ownerLabel: r.owner ? memberLabel(r.owner) : '' });
       if (S.view === 'count' || S.view === 'loc') render();
       return r;
-    }, function () { return null; });
+    }, function (e) { S.infoBusy--; S.infoErr = (e && e.code) || 'ERROR'; if (S.view === 'loc') renderLoc(); return null; });
   }
+  S.infoAt = {};
+  // ถามสถานะเป็นรอบ: ไม่หยุดเมื่อเซิร์ฟเวอร์ช้า · ถามถี่ขึ้นตอนผู้ดูแลรอผู้ช่วย · ไม่ถามซ้อนขณะคำขอก่อนยังไม่กลับ
   setInterval(function () {
-    if (!S.loc || S.online === false || S.syncing || !$('modal').classList.contains('hidden')) return;
-    if (S.view === 'loc' || (S.view === 'count' && (hasOthers(S.loc) || isHelper()))) fetchInfo(S.loc);
-  }, INFO_EVERY);
+    if (!S.loc || S.checking || S.infoBusy || navigator.onLine === false || !$('modal').classList.contains('hidden')) return;
+    if (!(S.view === 'loc' || (S.view === 'count' && (hasOthers(S.loc) || isHelper())))) return;
+    var every = !isHelper() && waitingHelpers(S.loc).length ? INFO_EVERY_WAIT : INFO_EVERY;
+    if (Date.now() - (S.infoAt[S.loc] || 0) >= every) fetchInfo(S.loc);
+  }, 2000);
 
   function deviceTotal() { return Math.round(S.entries.reduce(function (a, e) { return a + e.qty; }, 0) * 1000) / 1000; }
   function pending() { return S.entries.filter(function (e) { return !e.synced && !e.rejected; }); }
@@ -377,7 +426,13 @@
         if (!later) upd.state = r.location === S.loc && r.state !== 'CLOSED' && r.state !== 'SUBMITTED' ? 'COUNTING' : r.state;
         setRole(r.location, upd);
         if (before !== r.role && r.location === S.loc) {
-          toast(r.role === 'HELPER' ? r.location + ' มีผู้ดูแลแล้ว (' + r.owner + ') — เครื่องนี้เป็นผู้ช่วย' : 'เครื่องนี้เป็นผู้ดูแล ' + r.location, r.role === 'HELPER');
+          var msg = r.role === 'HELPER' ? r.location + ' มีผู้ดูแลแล้ว (' + r.owner + ') — เครื่องนี้เป็นผู้ช่วย' : 'เครื่องนี้เป็นผู้ดูแล ' + r.location;
+          // แจ้งกลางจอให้กดรับทราบ (เดิมเป็นข้อความสั้นด้านล่าง อ่านไม่ทัน) — ถ้ามีกล่องอื่นเปิดอยู่ใช้ข้อความสั้นแทน
+          if (r.role === 'HELPER' && $('modal').classList.contains('hidden')) {
+            SOUND.warn();
+            modal({ title: 'เครื่องนี้เป็นผู้ช่วยที่ ' + r.location, html: esc(r.location) + ' มีผู้ดูแลอยู่แล้ว (' + esc(r.owner) + ')<br>ยอดที่ยิงไว้ยังอยู่ นับต่อได้ เสร็จแล้วกด "ส่งงาน"<br><span class="muted">ถ้ายิงป้ายผิด ให้ยิงป้าย Location ที่ถูก ระบบจะส่งงานให้ แล้วแจ้งผู้ดูแลแก้ยอด</span>',
+              yes: 'รับทราบ', noCancel: true });
+          } else toast(msg, r.role === 'HELPER');
           fetchInfo(r.location);
         }
       });
@@ -402,7 +457,7 @@
   // รายงานตัวทุก 1 นาที: หน้า Admin เห็นว่าเครื่องยังติดต่อได้และค้างกี่รายการ · ถ้าเครื่องถูกยกเลิก จะรู้ภายใน 1 นาที
   function hello() {
     if (!S.cfg.apiUrl || !S.cfg.token || S.syncing) return;
-    api('hello', { pending: pending().length + S.oldPending.length, location: S.loc || '' }, 8000).catch(function (err) {
+    api('hello', { pending: pending().length + S.oldPending.length, location: S.loc || '', perf: perfReport() }, 10000).catch(function (err) {
       if (err && (err.code === 'BAD_TOKEN' || err.code === 'DEVICE_DISABLED' || err.code === 'UNKNOWN_DEVICE')) { S.lastErr = err.code; render(); }
     });
   }
@@ -436,7 +491,7 @@
     var p = pending().length;
     // นับเป็น "รายการ" (บรรทัดที่บันทึก รวมลบ/แก้) ไม่ใช่ชิ้น — จำนวนที่ส่งแล้วดูได้ที่หน้าสถานะ
     $('syncText').textContent = 'รายการ ' + fmt(S.entries.length) + ' · ค้าง ' + fmt(p);
-    $('netDot').className = 'dot ' + (S.syncing ? 'busy' : S.online === true ? 'on' : S.online === false ? 'off' : '');
+    $('netDot').className = 'dot ' + (S.syncing ? 'busy' : S.online === false ? 'off' : S.slow ? 'slow' : S.online === true ? 'on' : '');
     renderBanner();
   }
 
@@ -451,6 +506,8 @@
     else if (rejected) { msg = 'มี ' + rejected + ' รายการที่เซิร์ฟเวอร์ไม่รับ ดูที่หน้าสถานะ'; bad = true; }
     else if (S.masterChanged) msg = 'หัวหน้าทีมอนุมัติรายการบาร์โค้ดชุดใหม่ ไปที่สถานะ → ตรวจความพร้อมใหม่ เพื่อโหลด';
     else if (S.recountBanner && S.view === 'count') msg = S.recountBanner;
+    else if (S.slow && S.online !== false) msg = S.slow === 'BAD_REPLY' || S.slow === 'SERVER_ERROR' ? 'เซิร์ฟเวอร์มีปัญหา (ไม่ใช่ Wi-Fi) — นับต่อได้ ข้อมูลไม่หาย ถ้าเป็นนานให้แจ้งหัวหน้าทีม' :
+      'เซิร์ฟเวอร์ตอบช้า — นับต่อได้ ข้อมูลไม่หาย ระบบจะส่งเอง';
     b.textContent = msg; b.className = msg ? (bad ? 'bad' : '') : 'hidden';
   }
 
@@ -565,6 +622,7 @@
       return;
     }
     if (S.view === 'status') return;
+    if (S.checking) { SOUND.warn(); toast('รอสักครู่ — กำลังตรวจ ' + S.checking + ' (ยังไม่บันทึก)', true); return; }
     if (/^LOC:/.test(up)) { var loc = normLoc(up); if (!loc) { SOUND.bad(); toast('ป้าย Location ไม่ถูกต้อง', true); return; } return openLocation(loc); }
     if (S.view !== 'count') show('count');
     scanProduct(code);
@@ -620,6 +678,7 @@
       var s0 = combinedSummary(loc);
       ask = confirmBox(loc + ' ปิดไปแล้ว', 'ยอดตอนปิด ' + fmt(s0.qty) + ' ชิ้น ' + s0.sku + ' SKU<br>ต้องการเปิดเพื่อนับเพิ่มหรือแก้ไข?', 'เปิดนับเพิ่ม');
     } else if (r && r.role === 'HELPER' && r.state === 'SUBMITTED') {
+      S.rejoinAsked = loc;
       ask = confirmBox('กลับไปช่วย ' + loc + ' อีกครั้ง?', 'ส่งงานไปแล้ว <b>' + fmt(locSummary(loc).qty) + '</b> ชิ้น ยอดเดิมยังอยู่ ยิงเพิ่มต่อจากเดิม' +
         (r.owner ? '<br><span class="muted">ผู้ดูแล ' + esc(r.ownerLabel || r.owner) + '</span>' : ''), 'กลับไปช่วย');
     }
@@ -630,11 +689,14 @@
         S.loc = loc; S.recountBanner = ''; S.lastSku = null; clearResume();
         var known = S.roles[loc];
         setRole(loc, { role: known ? known.role : 'OWNER', state: 'COUNTING' });
+        var note = prev ? (isHelperBefore(prev) ? 'ส่งงาน ' + prev + ' ให้อัตโนมัติแล้ว' : prev + ' พักไว้ (ยังไม่ปิด)') : '';
+        // ถามเซิร์ฟเวอร์ก่อนว่าใครเป็นผู้ดูแล — ระหว่างนี้ยังไม่รับการยิง (v2.2.6)
+        S.checking = loc;
         SOUND.ok();
-        setCard('idle', (r && r.state === 'PAUSED' ? 'กลับมานับต่อ ' + loc + ' (พักไว้)' : 'เปิด ' + loc + ' แล้ว') + ' — ยิงสินค้าได้เลย',
-          prev ? (isHelperBefore(prev) ? 'ส่งงาน ' + prev + ' ให้อัตโนมัติแล้ว' : prev + ' พักไว้ (ยังไม่ปิด)') : '');
+        setCard('idle', 'กำลังตรวจ ' + loc + '…', 'ถามเซิร์ฟเวอร์ว่ามีผู้ดูแลแล้วหรือยัง · รอสักครู่' + (note ? '<br>' + esc(note) : ''));
         show('count');
-        return saveState().then(function () { return checkOwner(loc, r); });
+        var done = function () { if (S.checking === loc) S.checking = ''; render(); };
+        return saveState().then(function () { return checkOwner(loc, r, note); }).then(done, function (e) { done(); throw e; });
       });
     });
   }
@@ -650,40 +712,91 @@
     return addEvent(helper ? 'SUBMIT' : 'PAUSE', loc, helper ? { auto: !(opt && opt.self) } : null).then(saveState);
   }
 
-  /** เช็กเบื้องหลังหลังเปิด: ใครเป็นผู้ดูแล (ออฟไลน์ = ไม่ถาม ให้เซิร์ฟเวอร์ตัดสินตอนส่งข้อมูล) */
-  function checkOwner(loc, before) {
+  /**
+   * หลังยิงป้าย: ถามเซิร์ฟเวอร์ว่าใครเป็นผู้ดูแล แล้วตัดสิน (v2.2.6)
+   * - ออฟไลน์จริง → เปิดนับได้ เซิร์ฟเวอร์ตัดสินบทบาทตอนส่งข้อมูล และแจ้งด้วยกล่องกลางจอ
+   * - เซิร์ฟเวอร์ช้า → ถาม "ลองอีกครั้ง / ไม่ใช่ (ยิงป้ายผิด)" ไม่เข้าร่วมเองโดยไม่ถาม
+   */
+  function checkOwner(loc, before, note) {
     var sendOpen = function (type) { return addEvent(type || 'OPEN', loc); };
-    return fetchInfo(loc, 3000).then(function (info) {
+    var openCard = function (title, sub) {
+      S.checking = '';
+      setCard('idle', title || ('เปิด ' + loc + ' แล้ว — ยิงสินค้าได้เลย'), [sub, note].filter(Boolean).map(esc).join('<br>')); render();
+    };
+    var retried = false;
+    return fetchInfo(loc).then(function onInfo(info) {
       if (S.loc !== loc) return;
-      if (!info) return sendOpen(isHelper(loc) ? 'JOIN' : 'OPEN');
+      if (info) return decide(info);
+      if (S.infoErr === 'NETWORK') {
+        openCard('เปิด ' + loc + ' แล้ว (ออฟไลน์) — ยิงสินค้าได้เลย', 'ถ้ามีผู้ดูแลอยู่แล้ว ระบบจะแจ้งเมื่อส่งข้อมูลได้');
+        return sendOpen(isHelper(loc) ? 'JOIN' : 'OPEN');
+      }
+      SOUND.warn();
+      var m = !retried ?
+        { title: 'ตรวจ ' + loc + ' ไม่ได้', html: 'เซิร์ฟเวอร์ตอบช้า ยังไม่รู้ว่ามีผู้ดูแลแล้วหรือยัง<br><span class="muted">ยังไม่บันทึกการยิง</span>', yes: 'ลองอีกครั้ง', no: 'ไม่ใช่ (ยิงป้ายผิด)' } :
+        { title: 'ยังตรวจ ' + loc + ' ไม่ได้', html: 'นับต่อได้ ระบบจะจัดบทบาทให้เมื่อเซิร์ฟเวอร์ตอบ<br>ถ้ามีผู้ดูแลอยู่แล้ว เครื่องนี้จะเป็น <b>ผู้ช่วย</b> และจะแจ้งให้ทราบ', yes: 'นับต่อ', no: 'ไม่ใช่ (ยิงป้ายผิด)' };
+      return modal(m).then(function (yes) {
+        if (S.loc !== loc) return;
+        if (!yes) return cancelOpen(loc, before);
+        if (retried) { openCard(); return sendOpen(isHelper(loc) ? 'JOIN' : 'OPEN'); }
+        retried = true;
+        setCard('idle', 'กำลังตรวจ ' + loc + '…', 'ลองอีกครั้ง'); render();
+        return fetchInfo(loc).then(onInfo);
+      });
+    });
+
+    function decide(info) {
       var o = info.owner, me = info.me;
       var otherOwner = o && o.device !== S.cfg.deviceId;
-      if (!otherOwner) { setRole(loc, { role: 'OWNER', state: 'COUNTING', owner: S.cfg.deviceId }); render(); return sendOpen('OPEN'); }
+      if (!otherOwner) {
+        setRole(loc, { role: 'OWNER', state: 'COUNTING', owner: S.cfg.deviceId });
+        openCard((before && before.state === 'PAUSED' ? 'กลับมานับต่อ ' + loc + ' (พักไว้)' : 'เปิด ' + loc + ' แล้ว') + ' — ยิงสินค้าได้เลย');
+        return sendOpen('OPEN');
+      }
       var who = memberLabel(o);
       if (o.state === 'CLOSED') {
         // Control 10: ผู้ดูแลปิดแล้ว ผู้ช่วยยิงเพิ่มไม่ได้จนกว่าผู้ดูแลจะเปิดแก้ไข
-        S.loc = null; setRole(loc, { role: 'HELPER', state: 'SUBMITTED', owner: o.device, ownerLabel: who });
+        S.checking = ''; S.loc = null; setRole(loc, { role: 'HELPER', state: 'SUBMITTED', owner: o.device, ownerLabel: who });
         SOUND.bad(); setCard('bad', loc + ' ปิดแล้วโดย ' + (o.name || o.device), 'ให้ผู้ดูแลเปิดแก้ไขก่อน — ไม่รับการยิง');
         return saveState().then(function () { render(); return modal({ title: loc + ' ปิดแล้ว', html: 'ปิดโดย ' + esc(who) + '<br>ถ้าต้องนับเพิ่ม ให้ผู้ดูแลยิงป้าย ' + esc(loc) + ' เพื่อเปิดแก้ไขก่อน', yes: 'รับทราบ', noCancel: true }); });
       }
-      if (me && me.role === 'HELPER' && before && before.role === 'HELPER') {
-        setRole(loc, { role: 'HELPER', state: 'COUNTING', owner: o.device, ownerLabel: who }); render();
+      if (me && me.role === 'HELPER') {
+        var asked = S.rejoinAsked === loc; S.rejoinAsked = '';
+        if (me.state === 'SUBMITTED' && !asked) {
+          // ส่งงานไปแล้ว (เซิร์ฟเวอร์ยืนยัน) แต่เครื่องไม่ได้ถาม → ถามก่อนกลับไปช่วย
+          SOUND.warn();
+          return modal({ title: 'กลับไปช่วย ' + loc + ' อีกครั้ง?', html: 'ส่งงานไปแล้ว <b>' + fmt(me.qty !== undefined ? me.qty : locSummary(loc).qty) + '</b> ชิ้น ยอดเดิมยังอยู่ ยิงเพิ่มต่อจากเดิม<br><span class="muted">ผู้ดูแล ' + esc(who) + '</span>',
+            yes: 'กลับไปช่วย', no: 'ไม่ใช่ (ยิงป้ายผิด)' }).then(function (yes) {
+            if (S.loc !== loc) return;
+            if (!yes) { setRole(loc, { role: 'HELPER', state: 'SUBMITTED', owner: o.device, ownerLabel: who }); return cancelOpen(loc, null, true); }
+            setRole(loc, { role: 'HELPER', state: 'COUNTING', owner: o.device, ownerLabel: who });
+            openCard('กลับมาช่วย ' + loc + ' แล้ว — ยิงสินค้าได้เลย', 'ผู้ดูแล ' + who);
+            return saveState().then(function () { return sendOpen('JOIN'); });
+          });
+        }
+        setRole(loc, { role: 'HELPER', state: 'COUNTING', owner: o.device, ownerLabel: who });
+        openCard('ช่วยนับ ' + loc + ' — ยิงสินค้าได้เลย', 'ผู้ดูแล ' + who);
         return sendOpen('JOIN');
       }
       SOUND.warn();
       return modal({ title: loc + ' ดูแลโดย ' + (o.name || o.device), html: 'ผู้ดูแล ' + esc(who) + '<br>เข้าร่วมนับเป็น <b>ผู้ช่วย</b>?<br><span class="muted">ผู้ช่วยยิงได้ แก้ยอด/ปิดไม่ได้ เสร็จแล้วกด "ส่งงาน"</span>',
         yes: 'เข้าร่วม', no: 'ไม่ใช่ (ยิงป้ายผิด)' }).then(function (yes) {
         if (S.loc !== loc) return;
+        if (!yes) return cancelOpen(loc, before);
         setRole(loc, { role: 'HELPER', state: 'COUNTING', owner: o.device, ownerLabel: who });
-        if (yes) { setCard('idle', 'เข้าร่วม ' + loc + ' เป็นผู้ช่วยแล้ว', 'ผู้ดูแล ' + esc(who), 'เสร็จแล้วกด "ส่งงาน"'); render(); return saveState().then(function () { return sendOpen('JOIN'); }); }
-        // ยิงป้ายผิด: ออกจาก Location; ถ้าเผลอยิงสินค้าไปแล้ว ยอดนั้นยังอยู่และถูกส่งงานไว้
-        var mine = locSummary(loc).lines;
-        S.loc = null;
-        setCard('idle', 'ไม่ได้เข้าร่วม ' + loc, mine ? 'ยิงไปแล้ว ' + mine + ' รายการ — ส่งงานให้แล้ว ถ้ายิงผิดให้ผู้ดูแลแก้ยอด' : 'ยิงป้าย Location ถัดไป');
-        var p = mine ? addEvent('JOIN', loc).then(function () { setRole(loc, { state: 'SUBMITTED' }); return addEvent('SUBMIT', loc); }) : Promise.resolve(delete S.roles[loc]);
-        return p.then(saveState).then(render);
+        S.checking = '';
+        setCard('idle', 'เข้าร่วม ' + loc + ' เป็นผู้ช่วยแล้ว', 'ผู้ดูแล ' + esc(who), 'เสร็จแล้วกด "ส่งงาน"'); render();
+        return saveState().then(function () { return sendOpen('JOIN'); });
       });
-    });
+    }
+  }
+
+  /** ยิงป้ายผิด / ไม่เข้าร่วม: ออกจาก Location โดยไม่ส่งเหตุการณ์ (ยังไม่รับการยิงระหว่างตรวจ จึงไม่มีรายการค้าง) */
+  function cancelOpen(loc, before, keepRole) {
+    S.checking = ''; S.loc = null;
+    if (!keepRole) { if (before) S.roles[loc] = before; else delete S.roles[loc]; }
+    setCard('idle', 'ไม่ได้เปิด ' + loc, 'ยิงป้าย Location ถัดไป');
+    return saveState().then(render);
   }
 
   function pausedLocs() {
@@ -724,7 +837,14 @@
    * ออนไลน์: ถามสถานะล่าสุด · ออฟไลน์: ใช้ได้ถ้าเท่าที่รู้ไม่มีผู้ช่วยค้าง (เซิร์ฟเวอร์ตรวจซ้ำตอนส่งข้อมูล)
    */
   function ownerGate(loc, what) {
-    return fetchInfo(loc, 5000).then(function (fresh) {
+    toast('กำลังตรวจผู้ช่วย…');
+    return fetchInfo(loc).then(function (fresh) {
+      // เซิร์ฟเวอร์ช้า: ยังไม่ให้ปิด/แก้ จนกว่าจะได้สถานะสด (ออฟไลน์จริงใช้สถานะล่าสุด แล้วเซิร์ฟเวอร์ตรวจซ้ำภายหลัง)
+      if (!fresh && S.infoErr !== 'NETWORK') {
+        SOUND.warn();
+        return modal({ title: 'ตรวจผู้ช่วยไม่ได้', html: 'เซิร์ฟเวอร์ตอบช้า ยังไม่รู้ว่าผู้ช่วยส่งงานครบหรือยัง<br><span class="muted">' + esc(what) + 'ได้หลังตรวจผ่าน</span>',
+          yes: 'ลองอีกครั้ง', no: 'ยกเลิก' }).then(function (y) { return y ? ownerGate(loc, what) : false; });
+      }
       var wait = waitingHelpers(loc);
       if (!wait.length) return true;
       SOUND.warn();
@@ -857,6 +977,7 @@
       return saveState();
     }, function () {}).then(function () { if (S.view === 'locs') renderLocs(); });
   }
+  $('btnLocRefresh').onclick = function () { if (S.loc && !S.infoBusy) { fetchInfo(S.loc); renderLoc(); } };
   $('locsList').addEventListener('click', function (e) {
     var li = e.target.closest('li[data-l]'); if (!li) return;
     openLocation(li.dataset.l);
@@ -884,6 +1005,11 @@
       }).join('');
     }
     $('locMembers').innerHTML = mem;
+    // ความสดของสถานะผู้ร่วมนับ (v2.2.6): ผู้ดูแลรู้ว่ากำลังดูข้อมูลเมื่อไหร่ และกดรีเฟรชเองได้
+    var at = S.infoAt[loc];
+    $('locFreshText').textContent = S.infoBusy ? 'กำลังอัปเดตสถานะ…' :
+      (at ? 'อัปเดตสถานะล่าสุด ' + stamp(new Date(at)).slice(11) : 'ยังไม่ได้สถานะจากเซิร์ฟเวอร์') +
+      (S.infoErr === 'TIMEOUT' ? ' · ครั้งล่าสุดเซิร์ฟเวอร์ตอบช้า' : S.infoErr === 'NETWORK' ? ' · ออฟไลน์' : S.infoErr ? ' · ครั้งล่าสุดไม่สำเร็จ' : '');
     var wait = helper ? [] : waitingHelpers(loc);
     var edits = S.entries.filter(function (e) { return e.location === loc && (e.type === 'RECOUNT_SET' || (e.type === 'VOID' && /แก้/.test(e.reason))); }).length;
     $('locEdited').textContent = helper ? 'ผู้ช่วยดูยอดได้อย่างเดียว — แก้ยอดให้แจ้งผู้ดูแล' + (info && info.owner ? ' (' + memberLabel(info.owner) + ')' : '') :
@@ -1030,9 +1156,19 @@
       ['รายการที่บันทึก', fmt(S.entries.length)], ['รายการที่ส่งแล้ว', fmt(S.entries.length - p - rej.length)], ['รายการค้างส่ง', fmt(p)],
       ['ยอดรวมทั้งเครื่อง (ชิ้น)', fmt(deviceTotal())],
       ['เซิร์ฟเวอร์ไม่รับ', fmt(rej.length)], ['ข้อมูลรอบอื่นค้างส่ง', fmt(S.oldPending.length)], ['รอตรวจ Location', fmt(S.events.length)],
-      ['ส่งสำเร็จล่าสุด', S.lastSyncOk ? stamp(new Date(S.lastSyncOk)).slice(11) : '-'], ['เชื่อมต่อ', S.online ? 'ออนไลน์' : S.online === false ? 'ออฟไลน์' : '-'],
+      ['ส่งสำเร็จล่าสุด', S.lastSyncOk ? stamp(new Date(S.lastSyncOk)).slice(11) : '-'], ['เชื่อมต่อ', S.online === false ? 'ออฟไลน์' : S.slow ? 'เซิร์ฟเวอร์ช้า/มีปัญหา (' + S.slow + ')' : S.online ? 'ออนไลน์' : '-'],
       ['รายการบาร์โค้ด', fmt(S.master.size) + ' · ' + (S.masterHash || '-')], ['เวอร์ชัน', 'แอป ' + APP_VERSION + ' · เซิร์ฟเวอร์ ' + (S.serverVersion || '-') + (S.latestVersion && S.latestVersion !== APP_VERSION ? ' (มีแอป ' + S.latestVersion + ')' : '')]
     ];
+    // เวลาตอบของเซิร์ฟเวอร์ตั้งแต่เปิดแอป (v2.2.6) — ใช้ตัดสินใจปรับระบบ (ขั้น C)
+    var sec = function (ms) { return (ms / 1000).toFixed(1); };
+    var PNAME = { sync: 'ส่งข้อมูล', locInfo: 'ถามสถานะ', hello: 'รายงานตัว', myLocs: 'รายการ Loc', bootstrap: 'ตรวจพร้อม' };
+    var pr = perfReport(), prow = [];
+    Object.keys(PNAME).forEach(function (k) {
+      var x = pr[k]; if (!x || !(x.n || x.to || x.err)) return;
+      prow.push('<tr><td>' + PNAME[k] + '</td><td>' + x.n + '</td><td>' + sec(x.avg) + '</td><td>' + sec(x.max) + '</td><td' + (x.to ? ' class="bad"' : '') + '>' + x.to + '</td><td>' + x.err + '</td></tr>');
+      if (k === 'sync' && x.n) prow.push('<tr class="sub"><td colspan="6">ส่งข้อมูล: ที่เซิร์ฟเวอร์ ' + sec(x.srv) + ' · รอคิว ' + sec(x.wait) + ' · บันทึก ' + sec(x.hold) + ' วิ (เฉลี่ย)</td></tr>');
+    });
+    $('perfBox').innerHTML = prow.length ? '<div class="muted">เวลาตอบของเซิร์ฟเวอร์ ตั้งแต่เปิดแอป (วินาที)</div><table class="perf"><tr><th></th><th>ครั้ง</th><th>เฉลี่ย</th><th>ช้าสุด</th><th>หมดเวลา</th><th>ผิดพลาด</th></tr>' + prow.join('') + '</table>' : '';
     $('statusKv').innerHTML = rows.map(function (r) { return '<div>' + esc(r[0]) + '</div><div>' + esc(r[1]) + '</div>'; }).join('') +
       (rej.length ? '<div>ไม่รับ</div><div>' + rej.slice(0, 5).map(function (e) { return esc(e.logId + ' ' + e.rejected); }).join('<br>') + '</div>' : '');
   }

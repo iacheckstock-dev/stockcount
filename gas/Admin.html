@@ -464,9 +464,18 @@ function contactCell(x, d) {
   var ago = min < 1 ? 'เมื่อสักครู่' : min + ' นาทีที่แล้ว';
   var pend = Number(x.hb.pending) || 0;
   var silent = min >= SILENT_MIN;
-  if (silent && pend) return '<span class="pill bad">ไม่ติดต่อเกิน ' + SILENT_MIN + ' นาที · ค้าง ' + pend + '</span><div class="muted">' + ago + (x.hb.loc ? ' · ' + esc(x.hb.loc) : '') + '</div>';
+  if (silent && pend) return '<span class="pill bad">ไม่ติดต่อเกิน ' + SILENT_MIN + ' นาที · ค้าง ' + pend + '</span><div class="muted">' + ago + (x.hb.loc ? ' · ' + esc(x.hb.loc) : '') + '</div>' + perfLine(x.hb.perf);
   if (silent) return '<span class="pill warn">ไม่ติดต่อ ' + ago + '</span>' + (d.roundStatus === 'COUNTING' ? '<div class="muted">ปิดแอปหรือออกนอก Wi-Fi?</div>' : '');
-  return ago + (pend ? ' <span class="pill warn">ค้าง ' + pend + '</span>' : '') + (x.hb.loc ? '<div class="muted">' + esc(x.hb.loc) + '</div>' : '');
+  return ago + (pend ? ' <span class="pill warn">ค้าง ' + pend + '</span>' : '') + (x.hb.loc ? '<div class="muted">' + esc(x.hb.loc) + '</div>' : '') + perfLine(x.hb.perf);
+}
+/** เวลาตอบที่เครื่องวัดได้ (v2.2.6): ส่งข้อมูล / ถามสถานะ — เฉลี่ย/ช้าสุด วินาที, หมดเวลา */
+function perfLine(p) {
+  if (!p) return '';
+  var sec = function (ms) { return (Number(ms) / 1000).toFixed(1); }, out = [];
+  if (p.sync && (p.sync.n || p.sync.to)) out.push('ส่ง ' + sec(p.sync.avg) + '/' + sec(p.sync.max) + ' วิ (รอคิว ' + sec(p.sync.wait) + ' บันทึก ' + sec(p.sync.hold) + ')' + (p.sync.to ? ' หมดเวลา ' + p.sync.to : ''));
+  if (p.locInfo && (p.locInfo.n || p.locInfo.to)) out.push('ถาม ' + sec(p.locInfo.avg) + '/' + sec(p.locInfo.max) + ' วิ' + (p.locInfo.to ? ' หมดเวลา ' + p.locInfo.to : ''));
+  var bad = (p.sync && p.sync.to) || (p.locInfo && p.locInfo.to);
+  return out.length ? '<div class="muted"' + (bad ? ' style="color:#b54708"' : '') + '>' + esc(out.join(' · ')) + '</div>' : '';
 }
 var DEV = null;
 function loadDevices() { call('apiDevicesState', [], renderDevices); }

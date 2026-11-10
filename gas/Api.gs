@@ -19,6 +19,7 @@ function doGet(e) {
 }
 
 function doPost(e) {
+  var t0 = Date.now();   // วัดเวลาทำงานฝั่งเซิร์ฟเวอร์ (v2.2.6) — เครื่องเทียบกับเวลาไป-กลับทั้งหมด
   var req;
   try {
     req = JSON.parse(e.postData.contents);
@@ -45,10 +46,11 @@ function doPost(e) {
     }
     out.serverTime = Date.now();
     out.serverVersion = SYSTEM_VERSION;
+    out.ms = out.serverTime - t0;
     return json_(out);
   } catch (err) {
     var code = err && err.code ? err.code : 'SERVER_ERROR';
-    return json_({ ok: false, error: code, message: String(err && err.message || err), serverTime: Date.now(), serverVersion: SYSTEM_VERSION });
+    return json_({ ok: false, error: code, message: String(err && err.message || err), serverTime: Date.now(), serverVersion: SYSTEM_VERSION, ms: Date.now() - t0 });
   }
 }
 
@@ -168,9 +170,12 @@ function apiPair_(req) {
 // เก็บใน CacheService ไม่เขียนชีต: เวลาติดต่อล่าสุด + จำนวนรายการค้างส่งที่เครื่องรายงาน
 var HB_TTL = 21600;   // 6 ชม. (สูงสุดของ CacheService)
 
-function heartbeat_(deviceId, pending, loc) {
+function heartbeat_(deviceId, pending, loc, perf) {
   try {
-    CacheService.getScriptCache().put('hb_' + deviceId, JSON.stringify({ at: Date.now(), pending: Math.max(0, Number(pending) || 0), loc: loc || '' }), HB_TTL);
+    var hb = { at: Date.now(), pending: Math.max(0, Number(pending) || 0), loc: loc || '' };
+    if (perf) hb.perf = perf;
+    else { var old = CacheService.getScriptCache().get('hb_' + deviceId); if (old) { old = JSON.parse(old); if (old.perf) hb.perf = old.perf; } }
+    CacheService.getScriptCache().put('hb_' + deviceId, JSON.stringify(hb), HB_TTL);
   } catch (e) { /* heartbeat ไม่สำคัญพอจะทำให้คำขอล้ม */ }
 }
 
@@ -183,9 +188,22 @@ function heartbeats_(ids) {
   } catch (e) { return {}; }
 }
 
+/** สรุปเวลาตอบที่เครื่องรายงาน (กันขนาดเกิน/ข้อมูลแปลก) */
+function perfSummary_(p) {
+  if (!p || typeof p !== 'object') return null;
+  var out = {};
+  ['sync', 'locInfo', 'hello', 'myLocs', 'bootstrap'].forEach(function (k) {
+    var x = p[k];
+    if (!x || !x.n) return;
+    out[k] = { n: Number(x.n) || 0, avg: Number(x.avg) || 0, max: Number(x.max) || 0, srv: Number(x.srv) || 0, wait: Number(x.wait) || 0, hold: Number(x.hold) || 0,
+      to: Number(x.to) || 0, err: Number(x.err) || 0 };
+  });
+  return out;
+}
+
 /** เครื่องรายงานตัวทุก 1 นาที (ไม่เขียนชีต) — ถ้าเครื่องถูกยกเลิก auth_ จะตอบ error ให้เครื่องรู้ทันที */
 function apiHello_(a, req) {
-  heartbeat_(a.deviceId, req.pending, req.location);
+  heartbeat_(a.deviceId, req.pending, req.location, perfSummary_(req.perf));
   return { ok: true };
 }
 
@@ -309,7 +327,9 @@ function deviceSeqInfo_(deviceId, projectId) {
  */
 function apiSync_(a, req) {
   var lock = LockService.getScriptLock();
+  var w0 = Date.now();
   if (!lock.tryLock(25000)) throw apiError_('BUSY', 'เซิร์ฟเวอร์กำลังรับข้อมูลจากเครื่องอื่น จะลองส่งใหม่อัตโนมัติ');
+  var h0 = Date.now();
   try {
     var res = ingest_(a.deviceId, req.entries || [], req.events || [], 'SYNC', a.device, a.appVersion);
     putRow_(a.table, a.row, { Last_Seq: res.seq.max, Last_Sync: now_(), App_Version: a.appVersion, Gaps: res.seq.gaps.length });
@@ -318,6 +338,8 @@ function apiSync_(a, req) {
     var cfg = readConfig_();
     res.masterHash = cfg.MASTER_APPROVED_PROJECT === cfg.PROJECT_ID ? cfg.MASTER_APPROVED_HASH : '';
     res.stockVersion = stockVersion_(cfg);
+    res.lockWait = h0 - w0;          // รอคิวล็อก (เครื่องอื่นกำลังบันทึก)
+    res.lockHold = Date.now() - h0;  // ถือล็อก (งานบันทึกจริง) — เป้าขั้น C: ≤ 500 ms
     return res;
   } finally {
     releaseLock_(lock);
@@ -566,11 +588,16 @@ function applyLocEvents_(deviceId, events, project, source) {
   var out = [];
   var touched = {};
   var have = {};
+  var evCache = CacheService.getScriptCache();
   all.forEach(function (r) { if (r[1] === project && r[2] === deviceId) have[Number(r[3])] = true; });
   events.forEach(function (ev) {
     if (ev.projectId !== project) { out.push({ id: ev.id, location: ev.location, match: 'SKIP' }); return; }
     var loc = normLoc_(ev.location);
     if (!loc) { out.push({ id: ev.id, match: 'SKIP' }); return; }
+    // เครื่องหมดเวลารอแต่เซิร์ฟเวอร์ทำเสร็จแล้ว → ส่งซ้ำมา: ตอบผลเดิม ไม่บันทึกซ้ำ (v2.2.6)
+    var ck = 'ev_' + deviceId + '_' + ev.id, prev = null;
+    try { prev = evCache.get(ck); } catch (e) { }
+    if (prev) { out.push(JSON.parse(prev)); return; }
     var srvLines = 0, srvQty = 0, upTo = Number(ev.upToSeq) || 0, missing = 0;
     all.forEach(function (r) {
       if (r[1] === project && r[2] === deviceId && r[5] === loc) { srvLines++; srvQty += Number(r[8]) || 0; }
@@ -587,8 +614,10 @@ function applyLocEvents_(deviceId, events, project, source) {
       checks.push([now_(), project, deviceId, loc, ev.type, normStaff_(ev.staff), '', '', '', '', '', '', ROLE_TH[res.role] || '']);
     }
     touched[loc] = true;
-    out.push({ id: ev.id, location: loc, match: ev.type === 'OPEN' || ev.type === 'JOIN' ? 'OPEN' : match, srvLines: srvLines, srvQty: srvQty,
-      role: res.role, owner: res.owner, state: res.state });
+    var r = { id: ev.id, location: loc, match: ev.type === 'OPEN' || ev.type === 'JOIN' ? 'OPEN' : match, srvLines: srvLines, srvQty: srvQty,
+      role: res.role, owner: res.owner, state: res.state };
+    out.push(r);
+    if (r.match !== 'WAIT') { try { evCache.put(ck, JSON.stringify(r), 21600); } catch (e) { } }
   });
   if (checks.length) appendRows_(SpreadsheetApp.getActive().getSheetByName('Loc_Checks'), checks);
   refreshLocations_(project, Object.keys(touched), locs, mt);

@@ -376,5 +376,35 @@ test('เหตุผล TEMP: รายการในช่วงยกเล�
   assert.ok(env.sheets.Admin_Log.data.some(r => r[2] === 'REVOKED_DEVICE_DATA' && r[3] === 'TC21-02' && !/ต้องตรวจซ้ำ/.test(r[4])));
 });
 
+console.log('\nเวลาตอบ / ส่งซ้ำ (v2.2.6)');
+test('ทุกคำตอบมีเวลาทำงานที่เซิร์ฟเวอร์ (ms) · sync มีเวลารอคิวและถือล็อก', () => {
+  const d = device('TC21-05', 'EMP-K'); d.seq = 900;
+  const h = d.call('hello', { pending: 0 });
+  assert.ok(typeof h.ms === 'number' && h.ms >= 0);
+  d.scan('P1', BC1, MAT1, 1);
+  const r = d.call('sync', { entries: d.entries.slice(-1), events: [] });
+  assert.ok(typeof r.lockWait === 'number' && typeof r.lockHold === 'number' && typeof r.ms === 'number');
+});
+test('hello ส่งสรุปเวลาตอบ → หน้า Admin เห็น (และ sync ไม่ลบทิ้ง)', () => {
+  const d = device('TC21-04', 'EMP-K'); d.seq = 900;
+  d.call('hello', { pending: 2, perf: { sync: { n: 10, avg: 1800, max: 6200, srv: 900, wait: 300, hold: 500, to: 1, err: 0 }, locInfo: { n: 5, avg: 2100, max: 9000, to: 2 }, junk: { n: 1 } } });
+  d.scan('P2', BC1, MAT1, 1);
+  d.call('sync', { entries: d.entries.slice(-1), events: [], pendingAfter: 0 });
+  const x = run('apiDevicesState()').devices.find(v => v.id === 'TC21-04');
+  assert.strictEqual(x.hb.perf.sync.max, 6200); assert.strictEqual(x.hb.perf.locInfo.to, 2); assert.ok(!x.hb.perf.junk);
+  assert.strictEqual(x.hb.pending, 0);
+});
+test('เครื่องหมดเวลารอแล้วส่งเหตุการณ์เดิมซ้ำ → ตอบผลเดิม ไม่บันทึก Loc_Checks ซ้ำ', () => {
+  const d = device('TC21-02', 'EMP-KH'); d.seq = 900;
+  d.scan('P3', BC1, MAT1, 2);
+  const ev = { id: 'ev-dup-1', type: 'CLOSE', projectId: '2026Q4', location: 'P3', staff: 'EMP-KH', lines: 1, qty: 2, fromSeq: d.seq, upToSeq: d.seq, total: 2, at: Date.now() };
+  const r1 = d.call('sync', { entries: d.entries.slice(-1), events: [ev] });
+  const n1 = env.sheets.Loc_Checks.data.length;
+  const r2 = d.call('sync', { entries: d.entries.slice(-1), events: [ev] });
+  assert.strictEqual(env.sheets.Loc_Checks.data.length, n1, 'ไม่มีแถวเพิ่ม');
+  assert.deepStrictEqual(r2.events[0], r1.events[0]);
+  assert.strictEqual(r1.events[0].match, 'OK');
+});
+
 console.log('\nผล: ผ่าน ' + pass + ' / ไม่ผ่าน ' + fail);
 process.exit(fail ? 1 : 0);
