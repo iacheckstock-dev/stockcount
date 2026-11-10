@@ -43,12 +43,20 @@
   details summary { cursor:pointer; color:var(--acc); font-size:12px; }
   #toast { position:fixed; bottom:16px; left:50%; transform:translateX(-50%); padding:10px 16px; border-radius:8px; background:#111; color:#fff; display:none; max-width:80%; z-index:10; }
   #toast.err { background:var(--bad); }
-  #trDlg, #revDlg { position:fixed; inset:0; background:rgba(0,0,0,.35); display:none; align-items:center; justify-content:center; z-index:8; }
-  #trDlg.on, #revDlg.on { display:flex; }
-  #trDlg .box, #revDlg .box { background:#fff; border-radius:10px; padding:18px 20px; width:560px; max-width:94vw; max-height:90vh; overflow:auto; }
+  #trDlg, #revDlg, #flagDlg { position:fixed; inset:0; background:rgba(0,0,0,.35); display:none; align-items:center; justify-content:center; z-index:8; }
+  #trDlg.on, #revDlg.on, #flagDlg.on { display:flex; }
+  #flagDlg textarea { width:100%; box-sizing:border-box; min-height:70px; font:inherit; padding:8px; border:1px solid var(--line); border-radius:8px; }
+  #flagDlg textarea.need { border-color:var(--bad); }
+  #flagNeed { color:var(--bad); font-size:13px; margin-top:4px; }
+  #flagDlg .btn:disabled { opacity:.4; cursor:not-allowed; }
+  #trDlg .box, #revDlg .box, #flagDlg .box { background:#fff; border-radius:10px; padding:18px 20px; width:560px; max-width:94vw; max-height:90vh; overflow:auto; }
   #trDlg label.opt, #revDlg label.opt { display:block; border:1px solid var(--line); border-radius:8px; padding:8px 10px; margin:6px 0; cursor:pointer; }
   #trDlg label.opt:has(input:checked), #revDlg label.opt:has(input:checked) { border-color:#111; background:var(--soft); }
   #busy { position:fixed; inset:0; background:rgba(255,255,255,.6); display:none; align-items:center; justify-content:center; z-index:9; font-size:15px; }
+  #busy .bx { background:#fff; border:1px solid var(--line); border-radius:12px; padding:18px 24px; box-shadow:0 4px 18px rgba(0,0,0,.12); text-align:center; min-width:220px; }
+  #busy .spin { width:30px; height:30px; margin:0 auto 10px; border:3px solid #ddd; border-top-color:#111; border-radius:50%; animation:spin .8s linear infinite; }
+  #busy .sub { color:#666; font-size:13px; margin-top:4px; }
+  @keyframes spin { to { transform:rotate(360deg); } }
   .chips button { font:inherit; font-size:12px; padding:3px 10px; border-radius:12px; border:1px solid var(--line); background:#fff; cursor:pointer; }
   .chips button.on { background:#111; color:#fff; border-color:#111; }
   .conf { border:1px solid var(--line); border-radius:8px; padding:10px 12px; margin-bottom:10px; }
@@ -217,7 +225,19 @@
     <button class="btn" style="background:var(--bad);border-color:var(--bad)" onclick="doRevoke()">ยกเลิกเครื่อง</button>
   </div>
 </div></div>
-<div id="busy">กำลังทำงาน…</div>
+<div id="flagDlg"><div class="box">
+  <h3 style="margin-top:0">ปิดธง "ต้องตรวจซ้ำ" <span id="flagLoc"></span></h3>
+  <div class="pill warn" id="flagText" style="display:block;white-space:normal;line-height:1.5"></div>
+  <div class="muted" style="margin-top:8px">ใช้เมื่อตรวจแล้วว่ายอดถูก · ถ้ายังไม่แน่ใจ ให้ผู้ดูแลกด "ล้าง Location" แล้วนับใหม่แทน (ธงหายเอง)</div>
+  <div style="margin-top:10px"><b>เหตุผล / สิ่งที่ตรวจ</b> <span class="muted">(บังคับ)</span></div>
+  <textarea id="flagWhy" placeholder="เช่น นับ SKU 1234 ซ้ำแล้วได้ 12 ตรงกับยอดในระบบ" oninput="flagCheck()"></textarea>
+  <div id="flagNeed">ต้องใส่เหตุผลก่อนจึงจะปิดธงได้</div>
+  <div class="row" style="margin-top:12px;justify-content:flex-end">
+    <button class="btn sec" onclick="$('flagDlg').classList.remove('on')">ยกเลิก</button>
+    <button class="btn" id="flagOk" onclick="doResolveFlag()" disabled>ปิดธง</button>
+  </div>
+</div></div>
+<div id="busy"><div class="bx"><div class="spin"></div><div id="busyMsg">กำลังทำงาน…</div><div class="sub" id="busySub">รอเซิร์ฟเวอร์ตอบ อย่าปิดหน้านี้</div></div></div>
 <div id="toast"></div>
 
 <script>
@@ -231,10 +251,14 @@ function $(id) { return document.getElementById(id); }
 function esc(s) { return String(s === null || s === undefined ? '' : s).replace(/[&<>"]/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
 function fmt(n) { return n === '' || n === null || n === undefined ? '' : Number(n).toLocaleString('th-TH', { maximumFractionDigits: 2 }); }
 function toast(msg, err) { var t = $('toast'); t.textContent = msg; t.className = err ? 'err' : ''; t.style.display = 'block'; clearTimeout(t._h); t._h = setTimeout(function () { t.style.display = 'none'; }, err ? 8000 : 3500); }
-function busy(on, msg) { $('busy').style.display = on ? 'flex' : 'none'; if (msg) $('busy').textContent = msg; }
+/** กล่องรอกลางจอพร้อมไอคอนหมุน — บอกว่ากำลังรออะไร กันกดซ้ำ (v2.2.9) */
+function busy(on, msg, sub) {
+  $('busy').style.display = on ? 'flex' : 'none';
+  if (on) { $('busyMsg').textContent = msg || 'กำลังทำงาน…'; $('busySub').textContent = sub || 'รอเซิร์ฟเวอร์ตอบ อย่าปิดหน้านี้'; }
+}
 
-function call(fn, args, ok) {
-  busy(true);
+function call(fn, args, ok, msg) {
+  busy(true, msg);
   google.script.run
     .withSuccessHandler(function (r) { busy(false); ok && ok(r); })
     .withFailureHandler(function (e) { busy(false); toast(e && e.message ? e.message : String(e), true); })[fn].apply(null, args || []);
@@ -592,15 +616,26 @@ function testApi() {
 function submitFor(loc, dev) {
   var why = prompt('ส่งงานแทน ' + dev + ' ที่ ' + loc + '\nใช้ยอดที่เซิร์ฟเวอร์ได้รับแล้ว ถ้าเครื่องส่งข้อมูลเพิ่มทีหลัง ระบบจะขึ้น "ต้องตรวจซ้ำ"\n\nเหตุผล (เช่น แบตหมด ติดต่อไม่ได้):');
   if (why === null) return;
-  call('apiLocSubmitFor', [loc, dev, why], function (d) { renderDevices(d); toast('ส่งงานแทน ' + dev + ' แล้ว'); });
+  call('apiLocSubmitFor', [loc, dev, why], function (d) { renderDevices(d); toast('ส่งงานแทน ' + dev + ' แล้ว'); }, 'กำลังส่งงานแทน ' + dev + ' ที่ ' + loc + '…');
 }
 /** ปิดธงต้องตรวจซ้ำ หลังหัวหน้าทีมตรวจแล้ว (อีกทาง: ผู้ดูแลล้าง Location แล้วนับใหม่ ธงหายเอง) */
+// กล่องแทน prompt(): ปุ่มปิดธงกดไม่ได้จนกว่าจะใส่เหตุผล และบอกเป็นตัวแดงว่าขาดอะไร (F3, v2.2.9)
 function resolveFlag(loc) {
   var l = (DEV.locations || []).filter(function (x) { return x.Location === loc; })[0] || {};
-  var why = prompt('ปิดธง "ต้องตรวจซ้ำ" ของ ' + loc + '\n' + (l.Flag_Check || '') + '\n\nใช้เมื่อตรวจแล้วว่ายอดถูก (ถ้ายังไม่แน่ใจ ให้ผู้ดูแลล้าง Location แล้วนับใหม่แทน)\nเหตุผล / สิ่งที่ตรวจ (บังคับ):');
-  if (why === null) return;
-  if (!why.trim()) { toast('ต้องใส่เหตุผล', true); return; }
-  call('apiLocResolveFlag', [loc, why.trim()], function (d) { renderDevices(d); toast('ปิดธง ' + loc + ' แล้ว'); });
+  $('flagLoc').textContent = loc; $('flagText').textContent = l.Flag_Check || '';
+  $('flagWhy').value = ''; flagCheck();
+  $('flagDlg').classList.add('on'); $('flagWhy').focus();
+}
+function flagCheck() {
+  var ok = !!$('flagWhy').value.trim();
+  $('flagOk').disabled = !ok; $('flagNeed').style.display = ok ? 'none' : 'block';
+  $('flagWhy').classList.toggle('need', !ok);
+}
+function doResolveFlag() {
+  var loc = $('flagLoc').textContent, why = $('flagWhy').value.trim();
+  if (!why) { flagCheck(); return; }
+  $('flagDlg').classList.remove('on');
+  call('apiLocResolveFlag', [loc, why], function (d) { renderDevices(d); toast('ปิดธง ' + loc + ' แล้ว'); }, 'กำลังปิดธง ' + loc + '…');
 }
 /** เครื่องผู้ดูแลเสีย: โอนให้เครื่องอื่น ผู้ดูแลเดิมกลายเป็นผู้ช่วยที่ส่งงานแล้ว */
 function transferLoc(loc) {
@@ -624,7 +659,7 @@ function doTransfer() {
   if (!why) { toast('ใส่เหตุผล', true); return; }
   if (!confirm('ยืนยันโอนการดูแล ' + loc + '\n' + $('trFrom').textContent + ' → ' + r.value + '\nเหตุผล: ' + why)) return;
   $('trDlg').classList.remove('on');
-  call('apiLocTransfer', [loc, r.value, why], function (d) { renderDevices(d); toast('โอนการดูแล ' + loc + ' ให้ ' + r.value + ' แล้ว'); });
+  call('apiLocTransfer', [loc, r.value, why], function (d) { renderDevices(d); toast('โอนการดูแล ' + loc + ' ให้ ' + r.value + ' แล้ว'); }, 'กำลังโอนการดูแล ' + loc + '…');
 }
 function seedDevices() { call('apiSeedDevices', [$('seedN').value, 'TC21'], function (d) { renderDevices(d); toast('สร้างรหัสเครื่องแล้ว'); }); }
 function pairCode(id) {
@@ -654,7 +689,7 @@ function doRevoke() {
   if (!r) { toast('เลือกเหตุผลก่อน', true); return; }
   var id = $('revId').textContent;
   $('revDlg').classList.remove('on');
-  call('apiSetDeviceActive', [id, false, r.value, $('revNote').value.trim()], function (d) { renderDevices(d); toast('ยกเลิกเครื่อง ' + id + ' แล้ว'); });
+  call('apiSetDeviceActive', [id, false, r.value, $('revNote').value.trim()], function (d) { renderDevices(d); toast('ยกเลิกเครื่อง ' + id + ' แล้ว'); }, 'กำลังยกเลิกเครื่อง ' + id + '…');
 }
 function importDevFile() {
   var file = $('devFile').files[0];

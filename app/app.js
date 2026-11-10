@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2.2.8';
+  var APP_VERSION = '2.2.9';
   var QTY_CONFIRM = 150;      // จำนวนที่ป้อนเองเกินนี้ต้องยืนยันอีกครั้ง
   var QTY_MAX_DIGITS = 5;     // ยาวกว่านี้ = น่าจะยิงบาร์โค้ดเข้าช่องจำนวน
   var INFO_EVERY = 15000;     // ถามสถานะผู้ช่วย/ผู้ดูแลระหว่างนับร่วมกัน
@@ -284,6 +284,7 @@
     return api('locInfo', { location: loc }, ms || INFO_MS).then(function (r) {
       S.infoBusy--;
       S.info[loc] = r; S.infoAt[loc] = Date.now();
+      if (r && !r.flag) delete S.flags[loc];   // เซิร์ฟเวอร์ว่าไม่มีธง (ล้างนับใหม่/หัวหน้าทีมปิดธง) → ไม่เตือนค้าง (v2.2.9)
       if (r.me) setRole(loc, { role: r.me.role, state: S.loc === loc && r.me.state !== 'CLOSED' ? 'COUNTING' : r.me.state, owner: r.owner ? r.owner.device : '', ownerLabel: r.owner ? memberLabel(r.owner) : '' });
       if (S.view === 'count' || S.view === 'loc') render();
       return r;
@@ -292,7 +293,7 @@
   S.infoAt = {}; S.flags = {};
   // ถามสถานะเป็นรอบ: ไม่หยุดเมื่อเซิร์ฟเวอร์ช้า · ถามถี่ขึ้นตอนผู้ดูแลรอผู้ช่วย · ไม่ถามซ้อนขณะคำขอก่อนยังไม่กลับ
   setInterval(function () {
-    if (!S.loc || S.checking || S.infoBusy || navigator.onLine === false || !$('modal').classList.contains('hidden')) return;
+    if (!S.loc || S.checking || S.sending || S.infoBusy || navigator.onLine === false || !$('modal').classList.contains('hidden')) return;
     if (!(S.view === 'loc' || (S.view === 'count' && (hasOthers(S.loc) || isHelper())))) return;
     var every = !isHelper() && waitingHelpers(S.loc).length ? INFO_EVERY_WAIT : INFO_EVERY;
     if (Date.now() - (S.infoAt[S.loc] || 0) >= every) fetchInfo(S.loc);
@@ -374,6 +375,46 @@
   var syncTimer = null;
   function scheduleSync(ms) { clearTimeout(syncTimer); syncTimer = setTimeout(syncNow, ms || 0); }
 
+  /**
+   * รอเซิร์ฟเวอร์ยืนยันเหตุการณ์ (ส่งงาน/ปิด/ล้าง) พร้อมกล่องหมุนกลางจอ (v2.2.9)
+   * กล่องขึ้นหลัง 0.3 วิ (ตอบเร็วไม่กระพริบ) · ขึ้นแล้วค้างอย่างน้อย 0.6 วิ ให้อ่านทัน · ไม่เกิน CONFIRM_MS
+   * ออฟไลน์ไม่หมุน — ข้อมูลอยู่ในเครื่องแล้ว จะส่งให้อัตโนมัติ
+   * ผล: 'ok' ยืนยันแล้ว · 'wait' เซิร์ฟเวอร์ให้รอ (เช่น ข้อมูลยังมาไม่ครบ) · 'late' ช้า/ส่งไม่ได้ · 'offline'
+   */
+  var CONFIRM_MS = 12000;
+  function confirmSent(loc, title, sub) {
+    var ids = S.events.filter(function (ev) { return ev.location === loc; }).map(function (ev) { return ev.id; });
+    if (!ids.length) return Promise.resolve('ok');
+    if (navigator.onLine === false || S.online === false || !S.cfg.token) return Promise.resolve('offline');
+    var t0 = Date.now(), shownAt = 0;
+    S.sending = loc;
+    var timer = setTimeout(function () { shownAt = Date.now(); busy(title, sub); }, 300);
+    var left = function () { return S.events.filter(function (ev) { return ids.indexOf(ev.id) >= 0; }); };
+    var pause = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+    function step(tries) {
+      var l = left();
+      if (!l.length) return 'ok';
+      if (l.some(function (ev) { return ev.nextTry > Date.now(); })) return 'wait';
+      if (Date.now() - t0 > CONFIRM_MS || tries > 6 || S.revoked) return 'late';
+      if (S.syncing) return pause(400).then(function () { return step(tries); });
+      clearTimeout(syncTimer);
+      return syncNow(true).then(function () {
+        if (S.lastErr && left().length) return S.lastErr === 'NETWORK' ? 'offline' : 'late';
+        return step(tries + 1);
+      });
+    }
+    return Promise.resolve(step(0)).then(function (res) {
+      clearTimeout(timer);
+      var hold = shownAt ? Math.max(0, 600 - (Date.now() - shownAt)) : 0;
+      return pause(hold).then(function () { S.sending = ''; if (shownAt) busyOff(); return res; });
+    });
+  }
+  /** ข้อความบรรทัดล่างของการ์ดตามผลการรอยืนยัน */
+  function sentNote(res) {
+    return res === 'ok' ? 'เซิร์ฟเวอร์รับแล้ว ✓' : res === 'wait' ? 'เซิร์ฟเวอร์รอข้อมูลจากเครื่องอื่น จะส่งซ้ำให้อัตโนมัติ'
+      : res === 'offline' ? 'ออฟไลน์ — ข้อมูลอยู่ในเครื่องแล้ว จะส่งให้อัตโนมัติ' : 'เซิร์ฟเวอร์ตอบช้า — ข้อมูลอยู่ในเครื่องแล้ว จะส่งซ้ำให้อัตโนมัติ';
+  }
+
   function syncNow(force) {
     if (S.syncing || !S.cfg.token || !S.cfg.apiUrl) return Promise.resolve();
     var now = Date.now();
@@ -453,7 +494,6 @@
             '<br><span class="muted">มีเครื่องอื่นยิง/แก้สินค้านี้ระหว่างที่คุณแก้ยอด ยอดที่ได้อาจไม่ใช่ที่ตั้งใจ — นับ SKU นี้ใหม่ หรือ ล้าง Location แล้วนับใหม่</span>',
           yes: 'รับทราบ', noCancel: true });
       }
-      (res.events || []).forEach(function (r) { if (r.note && r.match !== 'WAIT' && /ล้างนับใหม่/.test(r.note)) delete S.flags[r.location]; });
       if (res.masterHash !== undefined && S.masterHash && res.masterHash && res.masterHash !== S.masterHash) S.masterChanged = true;
       if (res.stockVersion && res.stockVersion !== S.stockVersion) downloadStock().catch(function () {});
       S.lastSyncOk = Date.now();
@@ -650,6 +690,7 @@
     }
     if (S.view === 'status') return;
     if (S.checking) { SOUND.warn(); toast('รอสักครู่ — กำลังตรวจ ' + S.checking + ' (ยังไม่บันทึก)', true); return; }
+    if (S.sending) { SOUND.warn(); toast('รอสักครู่ — กำลังส่ง ' + S.sending + ' (ยังไม่บันทึก)', true); return; }
     if (/^LOC:/.test(up)) { var loc = normLoc(up); if (!loc) { SOUND.bad(); toast('ป้าย Location ไม่ถูกต้อง', true); return; } return openLocation(loc); }
     if (S.view !== 'count') show('count');
     scanProduct(code);
@@ -848,9 +889,11 @@
 
   function doClose(loc, total) {
     setRole(loc, { role: 'OWNER', state: 'CLOSED' });
+    if (S.loc === loc) S.loc = null;
     return addEvent('CLOSE', loc, { total: total }).then(function () {
-      if (S.loc === loc) S.loc = null;
-      setCard('idle', 'ปิด ' + loc + ' แล้ว', 'ยิงป้าย Location ถัดไป');
+      return confirmSent(loc, 'กำลังปิด ' + loc + '…', 'รอเซิร์ฟเวอร์ตรวจยอดและยืนยัน');
+    }).then(function (res) {
+      setCard(res === 'ok' ? 'ok' : 'idle', 'ปิด ' + loc + ' แล้ว', sentNote(res) + '<br>ยิงป้าย Location ถัดไป');
       toast('ปิด ' + loc + ' แล้ว');
       if (S.online === false && pending().length) exportFile(true);
       return saveState().then(render).then(offerPaused);
@@ -859,8 +902,10 @@
 
   function doSubmit(loc) {
     return leaveLocation(loc, { self: true }).then(function () {
+      return confirmSent(loc, 'กำลังส่งงาน ' + loc + '…', 'รอเซิร์ฟเวอร์ยืนยันว่าได้รับยอดครบ');
+    }).then(function (res) {
       SOUND.ok();
-      setCard('idle', 'ส่งงาน ' + loc + ' แล้ว', 'ของฉัน ' + fmt(locSummary(loc).qty) + ' ชิ้น · ยิงป้าย Location ถัดไป');
+      setCard(res === 'ok' ? 'ok' : 'idle', 'ส่งงาน ' + loc + ' แล้ว', 'ของฉัน ' + fmt(locSummary(loc).qty) + ' ชิ้น · ' + sentNote(res) + '<br>ยิงป้าย Location ถัดไป');
       if (S.online === false && pending().length) exportFile(true);
       render();
       return offerPaused();
@@ -1131,9 +1176,14 @@
         items.forEach(function (it) {
           p = p.then(function () { return addEntry({ barcode: it.barcode, material: it.material, qty: -it.qty, type: 'RECOUNT_SET', basis: it.qty, reason: 'ล้าง Location นับใหม่ (เดิม ' + fmt(it.qty) + ')' }); });
         });
+        // ล้างเพื่อนับใหม่ = ธงเดิมหมดความหมาย ลบที่จำไว้ทันที (เซิร์ฟเวอร์ปิดธงเมื่อได้รับ) (v2.2.9)
+        delete S.flags[loc];
+        if (S.info[loc]) S.info[loc].flag = '';
         p.then(function () { return addEvent('EDIT', loc, { clear: true }); }).then(function () {
+          return confirmSent(loc, 'กำลังล้าง ' + loc + '…', 'แจ้งเซิร์ฟเวอร์ว่าเริ่มนับใหม่');
+        }).then(function (res) {
           S.recountBanner = 'นับใหม่ ' + loc + ' (ยอดเดิม ' + fmt(s.qty) + ')';
-          SOUND.warn(); setCard('idle', 'ล้าง ' + loc + ' แล้ว — เริ่มนับใหม่ได้'); show('count');
+          SOUND.warn(); setCard('idle', 'ล้าง ' + loc + ' แล้ว — เริ่มนับใหม่ได้', sentNote(res)); show('count');
         });
       });
     });

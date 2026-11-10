@@ -12,7 +12,7 @@ var SCHEMA_VERSION = 5;
  * เวอร์ชันของระบบ (ใช้เลขเดียวทั้งแอป TC21 และเซิร์ฟเวอร์ ตาม Semantic Versioning MAJOR.MINOR.PATCH)
  * ต้องตรงกับ APP_VERSION ใน app/app.js และ appVersion ใน app/config.json — ดู CHANGELOG.md
  */
-var SYSTEM_VERSION = '2.2.8';
+var SYSTEM_VERSION = '2.2.9';
 
 var SHEETS = {
   Config: ['Key', 'Value', 'Note'],
