@@ -12,7 +12,7 @@ var SCHEMA_VERSION = 5;
  * เวอร์ชันของระบบ (ใช้เลขเดียวทั้งแอป TC21 และเซิร์ฟเวอร์ ตาม Semantic Versioning MAJOR.MINOR.PATCH)
  * ต้องตรงกับ APP_VERSION ใน app/app.js และ appVersion ใน app/config.json — ดู CHANGELOG.md
  */
-var SYSTEM_VERSION = '2.2.7';
+var SYSTEM_VERSION = '2.2.8';
 
 var SHEETS = {
   Config: ['Key', 'Value', 'Note'],
@@ -564,6 +564,10 @@ function membersForAdmin_(project) {
 }
 
 /** หัวหน้าทีม: ส่งงานแทนผู้ช่วยที่ติดต่อไม่ได้ (บันทึกผู้กดและเหตุผล) */
+function apiLocResolveFlag(loc, reason) {
+  return withLock_(function () { adminResolveFlag_(loc, reason); return apiDevicesState(); });
+}
+
 function apiLocSubmitFor(loc, deviceId, reason) {
   return withLock_(function () { adminSubmitFor_(loc, deviceId, reason); return apiDevicesState(); });
 }

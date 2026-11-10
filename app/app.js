@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2.2.7';
+  var APP_VERSION = '2.2.8';
   var QTY_CONFIRM = 150;      // จำนวนที่ป้อนเองเกินนี้ต้องยืนยันอีกครั้ง
   var QTY_MAX_DIGITS = 5;     // ยาวกว่านี้ = น่าจะยิงบาร์โค้ดเข้าช่องจำนวน
   var INFO_EVERY = 15000;     // ถามสถานะผู้ช่วย/ผู้ดูแลระหว่างนับร่วมกัน
@@ -289,7 +289,7 @@
       return r;
     }, function (e) { S.infoBusy--; S.infoErr = (e && e.code) || 'ERROR'; if (S.view === 'loc') renderLoc(); return null; });
   }
-  S.infoAt = {};
+  S.infoAt = {}; S.flags = {};
   // ถามสถานะเป็นรอบ: ไม่หยุดเมื่อเซิร์ฟเวอร์ช้า · ถามถี่ขึ้นตอนผู้ดูแลรอผู้ช่วย · ไม่ถามซ้อนขณะคำขอก่อนยังไม่กลับ
   setInterval(function () {
     if (!S.loc || S.checking || S.infoBusy || navigator.onLine === false || !$('modal').classList.contains('hidden')) return;
@@ -398,7 +398,7 @@
       }),
       events: evs.map(function (ev) {
         return { id: ev.id, type: ev.type, projectId: ev.projectId, location: ev.location, staff: ev.staff, time: ev.time, lines: ev.lines, qty: ev.qty,
-          fromSeq: ev.fromSeq, upToSeq: ev.upToSeq, total: ev.total, auto: ev.auto, at: ev.at };
+          fromSeq: ev.fromSeq, upToSeq: ev.upToSeq, total: ev.total, auto: ev.auto, clear: ev.clear, at: ev.at };
       }),
       pendingAfter: rest.length, location: S.loc || ''
     };
@@ -444,6 +444,16 @@
           fetchInfo(r.location);
         }
       });
+      // การแก้ยอดของเครื่องนี้ชนกับเครื่องอื่น → แจ้งกลางจอทันที (v2.2.8)
+      if (res.flags && res.flags.length) {
+        res.flags.forEach(function (f) { S.flags[f.location] = 'ต้องตรวจซ้ำ: ' + f.note; });
+        SOUND.bad();
+        modal({ title: 'ต้องตรวจซ้ำ ' + res.flags.map(function (f) { return f.location; }).filter(function (v, i, a) { return a.indexOf(v) === i; }).join(', '),
+          html: res.flags.map(function (f) { return '<b>' + esc(f.location) + '</b> ' + esc(f.note); }).join('<br>') +
+            '<br><span class="muted">มีเครื่องอื่นยิง/แก้สินค้านี้ระหว่างที่คุณแก้ยอด ยอดที่ได้อาจไม่ใช่ที่ตั้งใจ — นับ SKU นี้ใหม่ หรือ ล้าง Location แล้วนับใหม่</span>',
+          yes: 'รับทราบ', noCancel: true });
+      }
+      (res.events || []).forEach(function (r) { if (r.note && r.match !== 'WAIT' && /ล้างนับใหม่/.test(r.note)) delete S.flags[r.location]; });
       if (res.masterHash !== undefined && S.masterHash && res.masterHash && res.masterHash !== S.masterHash) S.masterChanged = true;
       if (res.stockVersion && res.stockVersion !== S.stockVersion) downloadStock().catch(function () {});
       S.lastSyncOk = Date.now();
@@ -830,6 +840,12 @@
       .then(function (y) { if (y) return openLocation(l); });
   }
 
+  /** ธง "ต้องตรวจซ้ำ" ที่รู้ล่าสุดของ Location (จากเซิร์ฟเวอร์ หรือที่เพิ่งได้รับแจ้งตอนส่งข้อมูล) */
+  function flagOf(loc) {
+    var i = S.info[loc];
+    return (i && i.flag) || S.flags[loc] || '';
+  }
+
   function doClose(loc, total) {
     setRole(loc, { role: 'OWNER', state: 'CLOSED' });
     return addEvent('CLOSE', loc, { total: total }).then(function () {
@@ -915,8 +931,9 @@
     }
     ownerGate(loc, 'ปิด Location ', true).then(function (ok) {
       if (!ok || S.loc !== loc) return;
-      var s = combinedSummary(loc);
-      confirmBox('ปิด ' + loc, '<span class="bignum">' + fmt(s.qty) + '</span> ชิ้น · ' + s.sku + ' SKU' + (s.multi ? ' <span class="muted">(รวม ' + S.info[loc].members.length + ' เครื่อง)</span>' : '') +
+      var s = combinedSummary(loc), flag = flagOf(loc);
+      confirmBox('ปิด ' + loc, (flag ? '<div class="warnline">⚠ ' + esc(flag) + '<br>ควรนับใหม่ก่อนปิด (ดู/แก้ → ล้าง Location) · ปิดได้ แต่ธงยังอยู่จนหัวหน้าทีมตรวจ</div>' : '') +
+        '<span class="bignum">' + fmt(s.qty) + '</span> ชิ้น · ' + s.sku + ' SKU' + (s.multi ? ' <span class="muted">(รวม ' + S.info[loc].members.length + ' เครื่อง)</span>' : '') +
         '<br>ตรงกับยอดนับมือบนกระดาษของร้านแล้วใช่ไหม?<br><span class="muted">ถ้าไม่ตรง กดยกเลิก แล้วใช้ "ดู/แก้ Location"</span>', 'ปิด Location')
         .then(function (yes) { if (yes) doClose(loc, s.qty); });
     });
@@ -1114,7 +1131,7 @@
         items.forEach(function (it) {
           p = p.then(function () { return addEntry({ barcode: it.barcode, material: it.material, qty: -it.qty, type: 'RECOUNT_SET', basis: it.qty, reason: 'ล้าง Location นับใหม่ (เดิม ' + fmt(it.qty) + ')' }); });
         });
-        p.then(function () { return addEvent('EDIT', loc); }).then(function () {
+        p.then(function () { return addEvent('EDIT', loc, { clear: true }); }).then(function () {
           S.recountBanner = 'นับใหม่ ' + loc + ' (ยอดเดิม ' + fmt(s.qty) + ')';
           SOUND.warn(); setCard('idle', 'ล้าง ' + loc + ' แล้ว — เริ่มนับใหม่ได้'); show('count');
         });

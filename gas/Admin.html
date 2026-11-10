@@ -529,7 +529,8 @@ function renderDevices(d) {
           (x.role === 'HELPER' && x.state !== 'SUBMITTED' ? ' <button class="btn sec" onclick="submitFor(\'' + esc(l.Location) + '\',\'' + esc(x.device) + '\')">ส่งงานแทน</button>' : '') + '</div>';
       }).join('');
       return '<tr><td><b>' + esc(l.Location) + '</b></td><td>' + esc(l.Status) + (l.Status_Detail ? '<div class="muted">' + esc(l.Status_Detail) + '</div>' : '') + '</td><td>' + esc(l.Owner || l.Open_By) +
-        '</td><td>' + (memHtml || esc(l.Devices)) + '</td><td>' + (l.Flag ? '<span class="pill bad">' + esc(l.Flag) + '</span>' : '') + '</td><td>' + esc(l.Closed_Time) + '</td><td>' + m +
+        '</td><td>' + (memHtml || esc(l.Devices)) + '</td><td>' + (l.Flag ? '<span class="pill bad">' + esc(l.Flag) + '</span>' : '') +
+        (l.Flag_Check ? '<div><button class="btn sec" onclick="resolveFlag(\'' + esc(l.Location) + '\')">ปิดธง</button></div>' : '') + '</td><td>' + esc(l.Closed_Time) + '</td><td>' + m +
         '</td><td class="n">' + esc(l.Edits) + '</td><td><button class="btn sec" onclick="transferLoc(\'' + esc(l.Location) + '\')">โอนการดูแล</button></td></tr>';
     }).join('') : '<tr><td colspan="9" class="muted">ยังไม่มี Location</td></tr>');
   renderLabelLinks();
@@ -592,6 +593,14 @@ function submitFor(loc, dev) {
   var why = prompt('ส่งงานแทน ' + dev + ' ที่ ' + loc + '\nใช้ยอดที่เซิร์ฟเวอร์ได้รับแล้ว ถ้าเครื่องส่งข้อมูลเพิ่มทีหลัง ระบบจะขึ้น "ต้องตรวจซ้ำ"\n\nเหตุผล (เช่น แบตหมด ติดต่อไม่ได้):');
   if (why === null) return;
   call('apiLocSubmitFor', [loc, dev, why], function (d) { renderDevices(d); toast('ส่งงานแทน ' + dev + ' แล้ว'); });
+}
+/** ปิดธงต้องตรวจซ้ำ หลังหัวหน้าทีมตรวจแล้ว (อีกทาง: ผู้ดูแลล้าง Location แล้วนับใหม่ ธงหายเอง) */
+function resolveFlag(loc) {
+  var l = (DEV.locations || []).filter(function (x) { return x.Location === loc; })[0] || {};
+  var why = prompt('ปิดธง "ต้องตรวจซ้ำ" ของ ' + loc + '\n' + (l.Flag_Check || '') + '\n\nใช้เมื่อตรวจแล้วว่ายอดถูก (ถ้ายังไม่แน่ใจ ให้ผู้ดูแลล้าง Location แล้วนับใหม่แทน)\nเหตุผล / สิ่งที่ตรวจ (บังคับ):');
+  if (why === null) return;
+  if (!why.trim()) { toast('ต้องใส่เหตุผล', true); return; }
+  call('apiLocResolveFlag', [loc, why.trim()], function (d) { renderDevices(d); toast('ปิดธง ' + loc + ' แล้ว'); });
 }
 /** เครื่องผู้ดูแลเสีย: โอนให้เครื่องอื่น ผู้ดูแลเดิมกลายเป็นผู้ช่วยที่ส่งงานแล้ว */
 function transferLoc(loc) {

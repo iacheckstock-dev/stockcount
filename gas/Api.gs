@@ -407,8 +407,12 @@ function ingest_(deviceId, entries, events, source, device, appVersion) {
     logAdmin_('ROUND_COUNTING', project, 'เริ่มนับ (ได้รับรายการแรกจาก ' + deviceId + ')');
   }
 
-  if (basis && basis.problems.length) flagCheck_(project, deviceId, basis.problems);
+  // เหตุการณ์ก่อน (ล้าง Location = ปิดธงเดิม) แล้วค่อยติดธงจากการแก้ที่ชนกันในชุดนี้ — ธงใหม่จึงไม่ถูกล้างทิ้ง (v2.2.8)
   if (events.length) out.events = applyLocEvents_(deviceId, events, project, source);
+  if (basis && basis.problems.length) {
+    flagCheck_(project, deviceId, basis.problems);
+    out.flags = basis.problems.map(function (p) { return { location: p.loc, note: p.note }; });   // แจ้งเครื่องผู้แก้ทันที
+  }
   // รายการที่อาจเปลี่ยนสถานะ Location (ส่งงานแล้วแต่ยิงต่อ / เข้ามาหลังปิด / ยังไม่มีสมาชิก)
   var need = needRefresh_(project, deviceId, Object.keys(touched));
   if (basis) basis.problems.forEach(function (p) { if (need.indexOf(p.loc) < 0) need.push(p.loc); });
@@ -620,6 +624,7 @@ function applyLocEvents_(deviceId, events, project, source) {
     touched[loc] = true;
     var r = { id: ev.id, location: loc, match: ev.type === 'OPEN' || ev.type === 'JOIN' ? 'OPEN' : match, srvLines: srvLines, srvQty: srvQty,
       role: res.role, owner: res.owner, state: res.state };
+    if (ev.type === 'CLOSE' && res.note) r.note = res.note;   // ปิดทั้งที่มีธง → เครื่องเตือนผู้ดูแล
     out.push(r);
     if (r.match !== 'WAIT') { try { evCache.put(ck, JSON.stringify(r), 21600); } catch (e) { } }
   });
@@ -704,13 +709,22 @@ function applyRole_(mt, locs, project, loc, deviceId, ev, match, upTo) {
           var srvTotal = r3_((locData_(project, [loc])[loc] || { qty: 0 }).qty);
           if (srvTotal !== r3_(ev.total)) reasons.push('ยอดตอนปิด ' + ev.total + ' ≠ เซิร์ฟเวอร์ ' + srvTotal);
         }
-        upd.Flag_Check = reasons.join(' · ');
-        if (reasons.length) res.note = reasons.join(' · ');
+        // ปิดไม่ลบธงเดิม (v2.2.8) — ธงหายได้ 2 ทาง: ล้าง Location นับใหม่ หรือหัวหน้าทีมปิดธงในหน้า Admin พร้อมเหตุผล
+        var keep = String(L.Flag_Check || '');
+        if (reasons.length) { upd.Flag_Check = (keep ? keep + ' · ' : '') + 'ต้องตรวจซ้ำ: ' + reasons.join(' · '); res.note = reasons.join(' · '); }
+        if (keep) res.note = (res.note ? res.note + ' · ' : '') + keep;
       }
       locSet(upd);
       break;
     case 'EDIT':
-      locSet({ Last_Check: match, Edits: (parseInt(L.Edits, 10) || 0) + 1 });
+      var eu = { Last_Check: match, Edits: (parseInt(L.Edits, 10) || 0) + 1 };
+      if (ev.clear && L.Flag_Check) {
+        // ล้าง Location แล้วนับใหม่ = ตรวจซ้ำแล้ว → ปิดธงเดิม (เก็บข้อความเดิมไว้ใน Loc_Checks / Admin_Log)
+        eu.Flag_Check = '';
+        logAdmin_('LOC_FLAG_CLEARED', loc, 'ล้าง Location นับใหม่โดย ' + deviceId + ' (' + (ev.staff || '') + ') — ธงเดิม: ' + L.Flag_Check);
+        res.note = 'ล้างนับใหม่ — ปิดธงเดิม: ' + L.Flag_Check;
+      }
+      locSet(eu);
       res.role = me ? me.Role : ''; res.state = me ? me.State : '';
       break;
   }
@@ -954,6 +968,23 @@ function apiLocStatus_(a, req) {
 // ---------- หัวหน้าทีม (หน้า Admin) ----------
 
 /** ส่งงานแทนผู้ช่วยที่ติดต่อไม่ได้: ใช้ยอดที่เซิร์ฟเวอร์ได้รับแล้ว รายการที่มาทีหลังจะทำให้กลับเป็น "กำลังนับ" หรือติดธงหลังปิด */
+/** หัวหน้าทีมปิดธง "ต้องตรวจซ้ำ" หลังตรวจแล้วว่ายอดถูก — ต้องมีเหตุผล บันทึกผู้กดใน Admin_Log และ Loc_Checks (v2.2.8) */
+function adminResolveFlag_(loc, reason) {
+  var project = readConfig_().PROJECT_ID;
+  loc = normLoc_(loc);
+  reason = String(reason || '').trim();
+  if (!reason) throw new Error('ต้องระบุเหตุผลการปิดธง');
+  var locs = table_('Locations'), li = locIdx_(locs, loc);
+  if (li < 0) throw new Error('ไม่พบ Location ' + loc);
+  var old = String(rowObj_(locs, locs.rows[li]).Flag_Check || '');
+  if (!old) throw new Error(loc + ' ไม่มีธงต้องตรวจซ้ำ');
+  putRow_(locs, li, { Flag_Check: '', Updated_At: now_() });
+  appendRows_(SpreadsheetApp.getActive().getSheetByName('Loc_Checks'),
+    [[now_(), project, 'ADMIN', loc, 'FLAG_RESOLVE', who_(), '', '', '', '', '', '', 'ปิดธง: ' + reason + ' — ธงเดิม: ' + old]]);
+  logAdmin_('LOC_FLAG_RESOLVE', loc, 'ปิดธงต้องตรวจซ้ำ เหตุผล: ' + reason + ' — ธงเดิม: ' + old);
+  refreshLocations_(project, [loc]);
+}
+
 function adminSubmitFor_(loc, deviceId, reason) {
   var project = readConfig_().PROJECT_ID;
   migrateMembers_(project);

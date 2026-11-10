@@ -166,13 +166,14 @@ test('ผู้ดูแลปิดขณะผู้ช่วยยังไ�
   assert.strictEqual(loc('D80').Status, 'ปิดแล้ว');
   assert.ok(/ปิดขณะผู้ช่วยยังไม่ส่งงาน \(TC21-03\)/.test(loc('D80').Flag), loc('D80').Flag);
 });
-test('ผู้ดูแลเปิดแก้ไข → ทุกคนส่งงานครบ → ปิดด้วยยอดตรง → ธงหาย', () => {
+test('ผู้ดูแลเปิดแก้ไข → ทุกคนส่งงานครบ → ปิดด้วยยอดตรง → ธงเดิมยังอยู่ (v2.2.8: หายได้เฉพาะล้างนับใหม่/หัวหน้าทีมปิดธง)', () => {
   C.sync([], [C.ev('OPEN', 'D80')]);
   assert.strictEqual(loc('D80').Status, 'กำลังนับ');
   KH.sync([], [KH.ev('SUBMIT', 'D80')]);
+  const before = loc('D80').Flag;
   const total = C.info('D80').total;
   C.sync([], [C.ev('CLOSE', 'D80', { total })]);
-  assert.strictEqual(loc('D80').Flag, '');
+  assert.strictEqual(loc('D80').Flag, before, 'ปิดถูกต้องไม่เพิ่มธงใหม่ และไม่ลบธงเดิม');
   assert.strictEqual(loc('D80').Status_Detail, '3 เครื่อง · ผู้ช่วยส่งงานแล้ว 2/2');
 });
 test('ปิดด้วยยอดรวมที่ไม่ตรงเซิร์ฟเวอร์ → ต้องตรวจซ้ำ', () => {
@@ -181,6 +182,8 @@ test('ปิดด้วยยอดรวมที่ไม่ตรงเซ�
   assert.ok(/ยอดตอนปิด 999/.test(loc('D80').Flag));
   const total = C.info('D80').total;
   C.sync([], [C.ev('OPEN', 'D80')]); C.sync([], [C.ev('CLOSE', 'D80', { total })]);
+  assert.ok(/ยอดตอนปิด 999/.test(loc('D80').Flag), 'ปิดใหม่ด้วยยอดตรง ธงเดิมยังอยู่จนกว่าจะตรวจ');
+  run('apiLocResolveFlag("D80", "ตรวจแล้ว ปิดใหม่ด้วยยอดตรง")');
   assert.strictEqual(loc('D80').Flag, '');
 });
 test('ผู้ช่วยออฟไลน์ส่งรายการเข้ามาหลังปิด → มีรายการหลังปิด — ตรวจซ้ำ', () => {
@@ -428,6 +431,46 @@ test('โอนการดูแล: ต้องเป็นเครื่อ
   run('apiLocTransfer("Q1", "TC21-04", "เครื่องผู้ดูแลเสีย")');
   assert.strictEqual(mem('Q1', 'TC21-04').role, 'OWNER');
 });
+
+console.log('\nธงต้องตรวจซ้ำ: ปิดไม่ลบ · ล้างนับใหม่ / หัวหน้าทีมปิดธง (v2.2.8)');
+{
+  const A = device('TC21-05', 'EMP-K'); A.seq = 1200;
+  const B = device('TC21-04', 'EMP-KH'); B.seq = 1200;
+  test('แก้ชนกัน → ธง + เครื่องผู้แก้ได้ flags ในคำตอบ', () => {
+    A.sync([A.scan('V1', BC1, MAT1, 1), A.scan('V1', BC1, MAT1, 1)], [A.ev('OPEN', 'V1')]);
+    B.sync([B.scan('V1', BC1, MAT1, 1)], [B.ev('JOIN', 'V1')]);
+    B.sync([], [B.ev('SUBMIT', 'V1')]);
+    const r = A.sync([A.scan('V1', BC1, MAT1, -1, { type: 'RECOUNT_SET', basis: 2, reason: 'แก้ยอด' })], [A.ev('EDIT', 'V1')]);
+    assert.ok(r.flags && r.flags[0].location === 'V1' && /เห็น 2 เซิร์ฟเวอร์ 3/.test(r.flags[0].note), JSON.stringify(r.flags));
+    assert.ok(/ต้องตรวจซ้ำ/.test(loc('V1').Flag));
+  });
+  test('ปิด Location ไม่ลบธงเดิม · คำตอบ CLOSE มี note เตือน', () => {
+    const r = A.sync([], [A.ev('CLOSE', 'V1', { total: 2 })]);
+    assert.ok(/ยอดเปลี่ยนระหว่างแก้/.test(loc('V1').Flag), 'ธงยังอยู่: ' + loc('V1').Flag);
+    assert.ok(/ยอดเปลี่ยนระหว่างแก้/.test(r.events[0].note || ''), JSON.stringify(r.events[0]));
+    assert.strictEqual(loc('V1').Status, 'ปิดแล้ว');
+  });
+  test('หัวหน้าทีมปิดธง: ต้องมีเหตุผล · ธงหาย · บันทึก Loc_Checks + Admin_Log', () => {
+    assert.throws(() => run('apiLocResolveFlag("V1", "  ")'), /เหตุผล/);
+    run('apiLocResolveFlag("V1", "นับมือซ้ำแล้ว ได้ 2 ตรงกับระบบ")');
+    assert.ok(!/ยอดเปลี่ยนระหว่างแก้/.test(loc('V1').Flag || ''), loc('V1').Flag);
+    assert.ok(env.sheets.Loc_Checks.data.some(r => r[3] === 'V1' && r[4] === 'FLAG_RESOLVE' && /นับมือซ้ำแล้ว/.test(r[12])));
+    assert.ok(env.sheets.Admin_Log.data.some(r => r[2] === 'LOC_FLAG_RESOLVE' && r[3] === 'V1'));
+    assert.throws(() => run('apiLocResolveFlag("V1", "x")'), /ไม่มีธง/);
+  });
+  test('ล้าง Location นับใหม่ (EDIT clear) → ธงเดิมหาย · ธงใหม่ในชุดเดียวกันยังอยู่', () => {
+    A.sync([A.scan('V2', BC1, MAT1, 3)], [A.ev('OPEN', 'V2')]);
+    A.sync([A.scan('V2', BC1, MAT1, -1, { type: 'RECOUNT_SET', basis: 9, reason: 'แก้ยอด' })], [A.ev('EDIT', 'V2')]);
+    assert.ok(/ต้องตรวจซ้ำ/.test(loc('V2').Flag));
+    A.sync([A.scan('V2', BC1, MAT1, -2, { type: 'RECOUNT_SET', basis: 2, reason: 'ล้าง Location นับใหม่ (เดิม 2)' })], [A.ev('EDIT', 'V2', { clear: true })]);
+    assert.strictEqual(loc('V2').Flag || '', '', 'ธงหลังล้างนับใหม่: ' + loc('V2').Flag);
+    assert.ok(env.sheets.Admin_Log.data.some(r => r[2] === 'LOC_FLAG_CLEARED' && r[3] === 'V2'));
+    // ล้างอีกครั้งโดยเห็นยอดผิด → ธงใหม่ต้องอยู่ (ไม่ถูกล้างในชุดเดียวกัน)
+    A.sync([A.scan('V2', BC1, MAT1, 4)], []);
+    A.sync([A.scan('V2', BC1, MAT1, -3, { type: 'RECOUNT_SET', basis: 3, reason: 'ล้าง Location นับใหม่ (เดิม 3)' })], [A.ev('EDIT', 'V2', { clear: true })]);
+    assert.ok(/เห็น 3 เซิร์ฟเวอร์ 4/.test(loc('V2').Flag), loc('V2').Flag);
+  });
+}
 
 console.log('\nผล: ผ่าน ' + pass + ' / ไม่ผ่าน ' + fail);
 process.exit(fail ? 1 : 0);
