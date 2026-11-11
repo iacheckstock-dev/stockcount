@@ -3,7 +3,7 @@ E2E สองเครื่องนับ Location เดียวกัน (v
 python3 tests/e2e_multi.py
 นาย ค (TC21-02) = ผู้ดูแล D80 · นาย ก (TC21-03) = ผู้ช่วย
 """
-import json, os, urllib.request
+import json, urllib.parse, os, urllib.request
 from playwright.sync_api import sync_playwright
 
 PORT = int(os.environ.get('PORT', 8787))
@@ -350,6 +350,42 @@ with sync_playwright() as p:
     C.wait_for_selector('#result:not(.hidden)', timeout=5000)
     check('แก้ยอดแล้ว' in C.inner_text('#result') and '1 → 0' in C.inner_text('#result'), 'แก้ยอด → กล่อง ✓ กลางจอบอกผล: ' + C.inner_text('#result').replace('\n', ' '))
     settle(C)
+
+    print('นับช่วยกัน + ออฟไลน์ ปิดไม่ได้ · โอนการดูแลเมื่อเครื่องผู้ดูแลมีปัญหา (v2.3.4)')
+    scan(C, 'LOC:E40'); C.wait_for_timeout(1500)
+    while C.is_visible('#modal'): yes(C)
+    scan(C, BC1); scan(C, BC1); synced(C)
+    scan(K, 'LOC:E40'); t = modal(K, 12000); yes(K)
+    scan(K, BC1); synced(K)
+    C.wait_for_function("/2 เครื่อง/.test(document.querySelector('#locSku').textContent)", timeout=30000)
+    C.context.set_offline(True)
+    scan(C, BC1)
+    C.click('#btnClose'); C.wait_for_selector('#result:not(.hidden)', timeout=10000)
+    t = C.inner_text('#result')
+    check('✕' in C.inner_text('#resIcon') and 'ได้เมื่อออนไลน์' in t and 'โอนการดูแล' in t, 'ผู้ดูแลออฟไลน์ + นับช่วยกัน → ปิดไม่ได้ กล่อง ✕ บอกทางไปต่อ: ' + t.replace('\n', ' ')[:110])
+    C.screenshot(path=f'{SHOT}/m15-offline-close-blocked.png')
+    C.click('#resOk')
+    get('/debug/transfer?loc=E40&to=TC21-03&why=' + urllib.parse.quote('เครื่องผู้ดูแลเสีย'))
+    K.wait_for_function("document.querySelector('#tbRole').textContent === 'ผู้ดูแล'", timeout=40000)
+    check(True, 'หัวหน้าทีมโอนการดูแลให้ TC21-03 → เครื่องผู้ช่วยขึ้นป้าย "ผู้ดูแล" เอง (ไม่ต้องยิงป้ายใหม่)')
+    K.screenshot(path=f'{SHOT}/m16-transfer-new-owner.png')
+    K.click('#btnClose'); t = modal(K, 20000)
+    check('3' in t and 'ปิด E40' in t, 'ผู้ดูแลใหม่ปิดได้ (เครื่องเดิมถือว่าส่งงานแล้วโดยหัวหน้าทีม): ' + t.replace('\n', ' ')[:80])
+    yes(K); settle(K)
+    while K.is_visible('#modal'): no(K)
+    l = loc('E40')
+    check(l['Status'] == 'ปิดแล้ว' and l['Last_Check'] == 'OK', 'E40 ปิดแล้ว ผลตรวจตรง')
+    C.context.set_offline(False)
+    C.wait_for_function("/ค้าง 0/.test(document.querySelector('#syncText').textContent)", timeout=40000)
+    C.wait_for_timeout(1500)
+    l = loc('E40')
+    check('หลังปิด' in l.get('Flag', ''), 'ของค้างในเครื่องเดิมส่งเข้าหลังปิด → ธง "มีรายการหลังปิด" ให้หัวหน้าทีมตรวจ: ' + l.get('Flag', ''))
+    C.wait_for_selector('#result:not(.hidden)', timeout=40000)
+    t = C.inner_text('#result')
+    check('โอนการดูแล E40' in t and 'ปิดแล้ว' in t and '✕' in C.inner_text('#resIcon'), 'เครื่องเดิมกลับมาออนไลน์ → กล่องแจ้งว่าถูกโอนและ E40 ปิดแล้ว: ' + t.replace('\n', ' ')[:100])
+    C.screenshot(path=f'{SHOT}/m17-transfer-old-owner.png')
+    C.click('#resOk'); C.wait_for_timeout(300)
+    check(C.inner_text('#tbLoc') != 'E40' and 'ปิดแล้วโดย' in C.inner_text('#card'), 'ออกจาก E40 แล้ว (ไม่ยิงต่อเข้า Location ที่ปิด): ' + C.inner_text('#card').replace('\n', ' ')[:60])
 
     check(not errors, 'ไม่มี JavaScript error: ' + '; '.join(errors))
     b.close()

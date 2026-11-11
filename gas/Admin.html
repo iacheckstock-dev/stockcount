@@ -43,6 +43,7 @@
   details summary { cursor:pointer; color:var(--acc); font-size:12px; }
   #toast { position:fixed; bottom:16px; left:50%; transform:translateX(-50%); padding:10px 16px; border-radius:8px; background:#111; color:#fff; display:none; max-width:80%; z-index:10; }
   #toast.err { background:var(--bad); }
+  .okline { color:#1a7f37; font-size:13px; margin:4px 0; }
   #trDlg, #revDlg, #flagDlg { position:fixed; inset:0; background:rgba(0,0,0,.35); display:none; align-items:center; justify-content:center; z-index:8; }
   #trDlg.on, #revDlg.on, #flagDlg.on { display:flex; }
   #flagDlg textarea { width:100%; box-sizing:border-box; min-height:70px; font:inherit; padding:8px; border:1px solid var(--line); border-radius:8px; }
@@ -553,6 +554,9 @@ function renderDevices(d) {
       var ct = l.Close_Total === '' || l.Close_Total === undefined || l.Close_Total === null ? '' : Number(l.Close_Total);
       var ctHtml = ct === '' ? '' : n0(ct) + (l.Status === 'ปิดแล้ว' && ct !== T.qty ? ' <span class="pill warn">≠ เซิร์ฟเวอร์</span>' : '');
       var mem = (byLoc[l.Location] || []);
+      // ธงที่ "แก้แล้ว" (v2.3.4): ปิดแล้ว · ทุกเครื่องปิด/ส่งงานแล้ว (ไม่มีกำลังนับ/พัก) · ยอดตอนปิด = เซิร์ฟเวอร์ · ผลตรวจล่าสุดตรง → บอกหัวหน้าทีมว่าพร้อมปิดธง
+      var ready = l.Status === 'ปิดแล้ว' && ct !== '' && ct === T.qty && l.Last_Check === 'OK' &&
+        mem.every(function (x) { return x.state === 'CLOSED' || x.state === 'SUBMITTED'; });
       var memHtml = mem.map(function (x) {
         var dq = T.dev[x.device];
         var st = STATE[x.state] || x.state;
@@ -563,6 +567,7 @@ function renderDevices(d) {
       }).join('');
       return '<tr><td><b>' + esc(l.Location) + '</b></td><td>' + esc(l.Status) + (l.Status_Detail ? '<div class="muted">' + esc(l.Status_Detail) + '</div>' : '') + '</td><td>' + esc(l.Owner || l.Open_By) +
         '</td><td>' + (memHtml || esc(l.Devices)) + '</td><td class="n"><b>' + n0(T.qty) + '</b><div class="muted">' + n0(T.lines) + ' ร. · ' + T.sku + ' SKU</div></td><td class="n">' + ctHtml + '</td><td>' + (l.Flag ? '<span class="pill bad">' + esc(l.Flag) + '</span>' : '') +
+        (l.Flag_Check && ready ? '<div class="okline">✓ ปิดใหม่แล้ว: ทุกเครื่องส่งงาน · ยอดตอนปิด ' + n0(ct) + ' = เซิร์ฟเวอร์ ' + n0(T.qty) + ' — ตรวจแล้วกดปิดธงได้</div>' : '') +
         (l.Flag_Check ? '<div><button class="btn sec" onclick="resolveFlag(\'' + esc(l.Location) + '\')">ปิดธง</button></div>' : '') + '</td><td>' + esc(l.Closed_Time) + '</td><td>' + m +
         '</td><td class="n">' + esc(l.Edits) + '</td><td><button class="btn sec" onclick="transferLoc(\'' + esc(l.Location) + '\')">โอนการดูแล</button></td></tr>';
     }).join('') : '<tr><td colspan="11" class="muted">ยังไม่มี Location</td></tr>');

@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2.3.3';
+  var APP_VERSION = '2.3.4';
   var QTY_CONFIRM = 150;      // จำนวนที่ป้อนเองเกินนี้ต้องยืนยันอีกครั้ง
   var QTY_MAX_DIGITS = 5;     // ยาวกว่านี้ = น่าจะยิงบาร์โค้ดเข้าช่องจำนวน
   var INFO_EVERY = 15000;     // ถามสถานะผู้ช่วย/ผู้ดูแลระหว่างนับร่วมกัน
@@ -333,7 +333,24 @@
       S.infoBusy--;
       S.info[loc] = r; S.infoAt[loc] = Date.now();
       if (r && !r.flag) delete S.flags[loc];   // เซิร์ฟเวอร์ว่าไม่มีธง (ล้างนับใหม่/หัวหน้าทีมปิดธง) → ไม่เตือนค้าง (v2.2.9)
+      // เทียบกับบทบาทที่เซิร์ฟเวอร์ยืนยันครั้งก่อน (ไม่ใช่ที่เครื่องเดาไว้ตอนเพิ่งเปิด Location)
+      S.srvRole = S.srvRole || {};
+      var was = S.srvRole[loc];
+      if (r.me) S.srvRole[loc] = r.me.role;
       if (r.me) setRole(loc, { role: r.me.role, state: S.loc === loc && r.me.state !== 'CLOSED' ? 'COUNTING' : r.me.state, owner: r.owner ? r.owner.device : '', ownerLabel: r.owner ? memberLabel(r.owner) : '' });
+      // หัวหน้าทีมโอนการดูแลไปเครื่องอื่น (v2.3.4): บอกให้รู้ · ถ้า Location ปิดไปแล้ว ออกจาก Location ไม่ให้ยิงต่อเข้าไปเงียบ ๆ
+      if (r.me && was === 'OWNER' && r.me.role === 'HELPER') {
+        var by = r.owner ? memberLabel(r.owner) : 'เครื่องอื่น';
+        if (S.loc === loc && r.status === 'ปิดแล้ว') {
+          S.loc = null; setRole(loc, { state: 'SUBMITTED' }); clearResume();
+          setCard('bad', loc + ' ปิดแล้วโดย ' + by, 'หัวหน้าทีมโอนการดูแลไปแล้ว · ยิงป้าย Location ถัดไป');
+          SOUND.bad();
+          result(false, 'หัวหน้าทีมโอนการดูแล ' + loc + ' แล้ว', 'ผู้ดูแลใหม่: ' + by + ' · ' + loc + ' ปิดแล้ว\nรายการที่ยิงหลังปิดส่งไปแล้ว และติดธงให้ตรวจ\nยิงป้าย Location ถัดไป');
+        } else {
+          SOUND.warn();
+          result(false, 'หัวหน้าทีมโอนการดูแล ' + loc + ' แล้ว', 'ผู้ดูแลใหม่: ' + by + '\nเครื่องนี้เป็นผู้ช่วย (ส่งงานแล้ว) · นับเพิ่มได้ แล้วกด "ส่งงาน"');
+        }
+      }
       if (S.view === 'count' || S.view === 'loc') render();
       return r;
     }, function (e) { S.infoBusy--; S.infoErr = (e && e.code) || 'ERROR'; if (S.view === 'loc') renderLoc(); return null; });
@@ -986,6 +1003,12 @@
         return modal({ title: 'ตรวจผู้ช่วยไม่ได้', html: 'เซิร์ฟเวอร์ตอบช้า ยังไม่รู้ว่าผู้ช่วยส่งงานครบหรือยัง<br><span class="muted">' + esc(what) + 'ได้หลังตรวจผ่าน</span>',
           yes: 'ลองอีกครั้ง', no: 'ยกเลิก' }).then(function (y) { return y ? ownerGate(loc, what) : false; });
       }
+      // นับช่วยกัน + ออฟไลน์ (v2.3.4): ห้ามปิด / ล้างทั้ง Location / แก้ยอดรวม — ต้องยืนยันกับเซิร์ฟเวอร์ว่าทุกคนส่งงานแล้ว
+      // (สถานะผู้ช่วยที่จำไว้อาจเก่า: UAT T7 ปิดตอนออฟไลน์ ทั้งที่ผู้ช่วยยังนับอยู่) · นับคนเดียวยังทำออฟไลน์ได้
+      if (!fresh && hasOthers(loc)) {
+        SOUND.bad();
+        return result(false, what + 'ได้เมื่อออนไลน์', 'นับช่วยกัน ต้องตรวจกับเซิร์ฟเวอร์ว่าทุกคนส่งงานแล้ว\nพัก ' + loc + ' ไว้ (ยิงป้าย Location อื่น) นับต่อได้ แล้วกลับมาทำเมื่อมีสัญญาณ\nเครื่องใช้ไม่ได้: แจ้งหัวหน้าทีม "โอนการดูแล"').then(function () { return false; });
+      }
       var wait = waitingHelpers(loc);
       if (!wait.length) return true;
       SOUND.warn();
@@ -1035,7 +1058,9 @@
     ownerGate(loc, 'ปิด Location ', true).then(function (ok) {
       if (!ok || S.loc !== loc) return;
       var s = combinedSummary(loc), flag = flagOf(loc);
-      confirmBox('ปิด ' + loc, (flag ? '<div class="warnline">⚠ ' + esc(flag) + '<br>ควรนับใหม่ก่อนปิด (ดู/แก้ → ล้าง Location) · ปิดได้ แต่ธงยังอยู่จนหัวหน้าทีมตรวจ</div>' : '') +
+      // ข้อความตามสถานการณ์ (v2.3.4): นับช่วยกัน ล้างของตัวเอง / ล้างทั้ง Location ใช้ปุ่มรอง · ปิดไม่ลบธง
+      var redo = s.multi ? 'ถ้ายอดยังไม่ถูก: แต่ละคนแก้/ล้างยอดของตัวเอง หรือใช้ "แก้ยอดรวม / ล้างทั้ง Location"' : 'ถ้ายอดยังไม่ถูก: ดู/แก้ → ล้าง Location แล้วนับใหม่';
+      confirmBox('ปิด ' + loc, (flag ? '<div class="warnline">⚠ ' + esc(flag) + '<br>' + redo + '<br>ปิดได้ แต่ธงยังอยู่จนหัวหน้าทีมตรวจและกด "ปิดธง"</div>' : '') +
         '<span class="bignum">' + fmt(s.qty) + '</span> ชิ้น · ' + s.sku + ' SKU' + (s.multi ? ' <span class="muted">(รวม ' + S.info[loc].members.length + ' เครื่อง)</span>' : '') +
         '<br>ตรงกับยอดนับมือบนกระดาษของร้านแล้วใช่ไหม?<br><span class="muted">ถ้าไม่ตรง กดยกเลิก แล้วใช้ "ดู/แก้ Location"</span>', 'ปิด Location')
         .then(function (yes) { if (yes) doClose(loc, s.qty); });
