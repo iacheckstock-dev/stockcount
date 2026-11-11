@@ -344,7 +344,7 @@ function lxId_(id) {
 /** เก็บใน cache แบบย่อ (cache รับได้ ~100KB ต่อรายการ → ~1,000+ SKU ต่อ Location) · Material ได้จากคีย์ */
 function lxPack_(L) {
   var it = {};
-  Object.keys(L.items).forEach(function (k) { var x = L.items[k]; it[k] = [x.barcode, x.qty, x.byDevice, x.since, x.oe ? 1 : 0, x.le || 0]; });
+  Object.keys(L.items).forEach(function (k) { var x = L.items[k]; it[k] = [x.barcode, x.qty, x.byDevice, x.since, x.oe && x.oe.length ? x.oe : 0, x.le || 0]; });
   var dv = {};
   Object.keys(L.devices).forEach(function (d) { var x = L.devices[d]; dv[d] = [x.lines, x.qty, x.maxSeq, x.lastTime]; });
   return JSON.stringify({ d: dv, i: it, q: L.qty, n: L.lines, u: L.upto, c: L.clr });
@@ -354,9 +354,18 @@ function lxUnpack_(s) {
   Object.keys(o.d).forEach(function (d) { var x = o.d[d]; L.devices[d] = { lines: x[0], qty: x[1], maxSeq: x[2], lastTime: x[3] }; });
   Object.keys(o.i).forEach(function (k) {
     var x = o.i[k];
-    L.items[k] = { key: k, material: k.indexOf('BC:') === 0 ? '' : k, barcode: x[0], qty: x[1], byDevice: x[2], since: x[3] || {}, oe: !!x[4], le: x[5] || null };
+    L.items[k] = { key: k, material: k.indexOf('BC:') === 0 ? '' : k, barcode: x[0], qty: x[1], byDevice: x[2], since: x[3] || {}, oe: x[4] || [], le: x[5] || null };
   });
   return L;
+}
+
+/** เครื่องที่การแก้ยอดรวมครอบคลุม: มีเครื่องอื่นร่วมยอด SKU นี้ (นับจากล้างครั้งล่าสุด) → เครื่องเหล่านั้น + ผู้แก้ · นับคนเดียว → ไม่ครอบคลุมใคร */
+function lxCover_(oe, since, editor) {
+  var others = Object.keys(since || {}).filter(function (d) { return d !== editor; });
+  if (!others.length) return oe || [];
+  var out = (oe || []).slice();
+  others.concat([editor]).forEach(function (d) { if (out.indexOf(d) < 0) out.push(d); });
+  return out;
 }
 
 function lxNewLoc_() { return { devices: {}, items: {}, qty: 0, lines: 0, upto: 0, clr: {} }; }
@@ -365,7 +374,9 @@ function lxIsClear_(type, reason) { return type === 'RECOUNT_SET' && String(reas
 /**
  * รวมแถว Count_Log (ค่าแสดงผล คอลัมน์ A–N) เข้ายอดของ Location
  * นอกจากยอด ยังจำต่อ SKU (v2.3.1 — ผู้ช่วยแก้ยอดของตัวเอง):
- *   since[dev] = ยอดของเครื่องนั้นนับจากการล้าง Location ครั้งล่าสุด · oe = ผู้ดูแลแก้ยอดรวมแล้ว (หลังล้างครั้งล่าสุด)
+ *   since[dev] = ยอดของเครื่องนั้นนับจากการล้าง Location ครั้งล่าสุด
+ *   oe = เครื่องที่ "แก้ยอดรวม" ของผู้ดูแลครอบคลุมไปแล้ว (หลังล้างครั้งล่าสุด) — เครื่องเหล่านี้แก้ยอดของตัวเองใน SKU นั้นไม่ได้ (v2.3.2)
+ *        ผู้ดูแลแก้ยอดรวมตอนนับคนเดียว = แก้ของตัวเอง ไม่ครอบคลุมใคร
  *   le = [เครื่อง, เวลา] การแก้ล่าสุด · clr[dev] = Seq สูงสุดของเครื่องนั้นตอนล้าง Location ครั้งล่าสุด
  */
 function lxAddRow_(L, r) {
@@ -378,12 +389,12 @@ function lxAddRow_(L, r) {
   }
   d.lines++; d.qty = r3_(d.qty + qty); if (seq > d.maxSeq) d.maxSeq = seq; if (String(r[13]) > d.lastTime) d.lastTime = String(r[13]);
   var k = itemKey_(r[7], r[6]);
-  var it = L.items[k] || (L.items[k] = { key: k, material: r[7], barcode: r[6], qty: 0, byDevice: {}, since: {}, oe: false, le: null });
+  var it = L.items[k] || (L.items[k] = { key: k, material: r[7], barcode: r[6], qty: 0, byDevice: {}, since: {}, oe: [], le: null });
   it.qty = r3_(it.qty + qty); it.byDevice[dev] = r3_((it.byDevice[dev] || 0) + qty);
-  if (clear) { it.since = {}; it.oe = false; }
+  if (clear) { it.since = {}; it.oe = []; }
   else {
+    if (type === 'RECOUNT_SET') it.oe = lxCover_(it.oe, it.since, dev);
     it.since[dev] = r3_((it.since[dev] || 0) + qty);
-    if (type === 'RECOUNT_SET') it.oe = true;
     if (type === 'RECOUNT_SET' || type === 'SELF_SET') it.le = [dev, String(r[13])];
   }
   if (!it.barcode && r[6]) it.barcode = r[6];
@@ -444,8 +455,8 @@ function lxDiff_(a, b, names) {
     var ks = {};
     Object.keys(A.items).concat(Object.keys(B.items)).forEach(function (k) { ks[k] = 1; });
     Object.keys(ks).forEach(function (k) {
-      var x = A.items[k] || { qty: 0, since: {} }, y = B.items[k] || { qty: 0, since: {} };
-      if (x.qty !== y.qty || lxSameMap_(x.since, y.since) === false || !!x.oe !== !!y.oe) out.push(l + ' ' + k + ' ดัชนี ' + x.qty + ' ชีต ' + y.qty);
+      var x = A.items[k] || { qty: 0, since: {}, oe: [] }, y = B.items[k] || { qty: 0, since: {}, oe: [] };
+      if (x.qty !== y.qty || lxSameMap_(x.since, y.since) === false || (x.oe || []).slice().sort().join() !== (y.oe || []).slice().sort().join()) out.push(l + ' ' + k + ' ดัชนี ' + x.qty + ' ชีต ' + y.qty);
     });
   });
   return out;
@@ -1063,11 +1074,12 @@ function applyRole_(mt, locs, project, loc, deviceId, ev, match, upTo) {
       locSet(upd);
       break;
     case 'EDIT':
-      if (me && me.Role === 'HELPER' && !isOwner) {
-        // ผู้ช่วยแก้/ล้างยอดของตัวเอง (v2.3.1): นับครั้งที่แก้ ไม่เปลี่ยนผลตรวจของ Location และไม่ปิดธง
+      if (ev.mine || (me && me.Role === 'HELPER' && !isOwner)) {
+        // แก้/ล้างยอดของตัวเอง (ผู้ช่วย v2.3.1 · ผู้ดูแลตอนนับช่วยกัน v2.3.2): นับครั้งที่แก้ ไม่เปลี่ยนผลตรวจของ Location และไม่ปิดธง
         locSet({ Edits: (parseInt(L.Edits, 10) || 0) + 1 });
-        res.note = ev.mine ? (ev.clearMine ? 'ผู้ช่วยล้างยอดของตัวเอง' : 'ผู้ช่วยแก้ยอดของตัวเอง') : 'ผู้ช่วยแก้ยอด';
-        res.role = 'HELPER'; res.state = me.State;
+        var who = isOwner ? 'ผู้ดูแล' : 'ผู้ช่วย';
+        res.note = ev.clearMine ? who + 'ล้างยอดของตัวเอง' : who + 'แก้ยอดของตัวเอง';
+        res.role = me ? me.Role : (isOwner ? 'OWNER' : ''); res.state = me ? me.State : '';
         break;
       }
       var eu = { Last_Check: match, Edits: (parseInt(L.Edits, 10) || 0) + 1 };
@@ -1175,7 +1187,7 @@ function basisChecker_(project, X) {
       var it = D.items[k], kk = loc + '|' + k;
       map[kk] = r3_((map[kk] || 0) + it.qty);
       Object.keys(it.since || {}).forEach(function (d) { since[kk + '|' + d] = it.since[d]; });
-      if (it.oe) oe[kk] = true;
+      if (it.oe && it.oe.length) oe[kk] = it.oe.slice();
     });
     Object.keys(D.devices).forEach(function (d) { (devs[loc] || (devs[loc] = {}))[d] = true; });
   }
@@ -1187,8 +1199,12 @@ function basisChecker_(project, X) {
       Object.keys(since).forEach(function (x) { if (x.indexOf(kk + '|') === 0) delete since[x]; });
       delete oe[kk];
     } else {
+      if (e.type === 'RECOUNT_SET') {
+        var sm = {};
+        Object.keys(since).forEach(function (x) { if (x.indexOf(kk + '|') === 0) sm[x.slice(kk.length + 1)] = since[x]; });
+        oe[kk] = lxCover_(oe[kk], sm, dev);
+      }
       since[kk + '|' + dev] = r3_((since[kk + '|' + dev] || 0) + qty);
-      if (e.type === 'RECOUNT_SET') oe[kk] = true;
     }
   }
   var problems = [];
@@ -1199,10 +1215,10 @@ function basisChecker_(project, X) {
         load(loc);
         var kk = loc + '|' + itemKey_(e.material, e.barcode), sku = e.material || e.barcode;
         var mine = since[kk + '|' + deviceId] || 0;
-        if (oe[kk]) problems.push({ loc: loc, note: 'ผู้ช่วย ' + deviceId + ' แก้ยอดของตัวเองหลังผู้ดูแลแก้ยอดรวม ' + sku + ' (อาจแก้ซ้ำ)' });
+        if (oe[kk] && oe[kk].indexOf(deviceId) >= 0) problems.push({ loc: loc, note: deviceId + ' แก้ยอดของตัวเองหลังผู้ดูแลแก้ยอดรวม ' + sku + ' (อาจแก้ซ้ำ)' });
         if (e.basis === undefined || e.basis === null || e.basis === '' || r3_(e.basis) !== mine) {
-          problems.push({ loc: loc, note: 'ผู้ช่วย ' + deviceId + ' แก้ ' + sku + ' จากยอดของตัวเองที่ไม่ตรง: เห็น ' + e.basis + ' เซิร์ฟเวอร์ ' + mine });
-        } else if (r3_(mine + (Number(e.qty) || 0)) < 0) problems.push({ loc: loc, note: 'ผู้ช่วย ' + deviceId + ' แก้ ' + sku + ' จนยอดของตัวเองติดลบ' });
+          problems.push({ loc: loc, note: deviceId + ' แก้ ' + sku + ' จากยอดของตัวเองที่ไม่ตรง: เห็น ' + e.basis + ' เซิร์ฟเวอร์ ' + mine });
+        } else if (r3_(mine + (Number(e.qty) || 0)) < 0) problems.push({ loc: loc, note: deviceId + ' แก้ ' + sku + ' จนยอดของตัวเองติดลบ' });
         return;
       }
       if (e.type !== 'RECOUNT_SET') return;
@@ -1301,11 +1317,12 @@ function apiLocInfo_(a, req) {
   });
   var t = table_('Locations'), li = locIdx_(t, loc);
   var L = li >= 0 ? rowObj_(t, t.rows[li]) : {};
-  // การแก้ต่อ SKU (v2.3.1): ผู้ดูแลแก้ยอดรวมแล้ว (ผู้ช่วยแก้ของตัวเองไม่ได้) · ใครแก้ล่าสุด (เตือนก่อนแก้)
+  // การแก้ต่อ SKU (v2.3.1): oe = การแก้ยอดรวมครอบคลุมเครื่องนี้แล้ว (แก้ยอดของตัวเองไม่ได้) · ใครแก้ล่าสุด (เตือนก่อนแก้)
   var edits = {};
   Object.keys(D.items).forEach(function (k) {
     var it = D.items[k];
-    if (it.oe || it.le) edits[k] = { oe: it.oe ? 1 : 0, by: it.le ? it.le[0] : '', at: it.le ? it.le[1] : '' };
+    var cov = it.oe && it.oe.indexOf(a.deviceId) >= 0;
+    if (cov || it.le) edits[k] = { oe: cov ? 1 : 0, by: it.le ? it.le[0] : '', at: it.le ? it.le[1] : '' };
   });
   return {
     ok: true, location: loc, status: L.Status || '', flag: L.Flag || '', owner: owner, me: me, members: list,

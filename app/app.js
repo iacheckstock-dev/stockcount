@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2.3.1';
+  var APP_VERSION = '2.3.2';
   var QTY_CONFIRM = 150;      // จำนวนที่ป้อนเองเกินนี้ต้องยืนยันอีกครั้ง
   var QTY_MAX_DIGITS = 5;     // ยาวกว่านี้ = น่าจะยิงบาร์โค้ดเข้าช่องจำนวน
   var INFO_EVERY = 15000;     // ถามสถานะผู้ช่วย/ผู้ดูแลระหว่างนับร่วมกัน
@@ -774,7 +774,7 @@
       if (!ok) { show('count'); return; }
       var prev = S.loc;
       return (prev ? leaveLocation(prev) : Promise.resolve()).then(function () {
-        S.loc = loc; S.recountBanner = ''; S.lastSku = null; clearResume();
+        S.loc = loc; S.recountBanner = ''; S.lastSku = null; S.totalMode = null; clearResume();
         var known = S.roles[loc];
         setRole(loc, { role: known ? known.role : 'OWNER', state: 'COUNTING' });
         var note = prev ? (isHelperBefore(prev) ? 'ส่งงาน ' + prev + ' ให้อัตโนมัติแล้ว' : prev + ' พักไว้ (ยังไม่ปิด)') : '';
@@ -1115,13 +1115,21 @@
       (at ? 'อัปเดตสถานะล่าสุด ' + stamp(new Date(at)).slice(11) : 'ยังไม่ได้สถานะจากเซิร์ฟเวอร์') +
       (S.infoErr === 'TIMEOUT' ? ' · ครั้งล่าสุดเซิร์ฟเวอร์ตอบช้า' : S.infoErr === 'NETWORK' ? ' · ออฟไลน์' : S.infoErr ? ' · ครั้งล่าสุดไม่สำเร็จ' : '');
     var wait = helper ? [] : waitingHelpers(loc);
+    // นับช่วยกัน (v2.3.2): ทุกคน (รวมผู้ดูแล) แก้/ล้าง/ย้อน ได้เฉพาะยอดของตัวเอง · ผู้ดูแลมีโหมดแก้ยอดรวมแยก (ทุกคนส่งงานแล้ว)
+    var shared = !helper && s.multi, total = shared && S.totalMode === loc;
+    if (!shared && S.totalMode === loc) S.totalMode = null;
     var edits = S.entries.filter(function (e) { return e.location === loc && (e.type === 'RECOUNT_SET' || e.type === 'SELF_SET' || (e.type === 'VOID' && /แก้/.test(e.reason))); }).length;
     $('locEdited').textContent = helper ? 'ผู้ช่วย: แตะ SKU เพื่อแก้ "ยอดของฉัน" (เฉพาะชิ้นที่เครื่องนี้ยิง) · ยอดรวม Location ผู้ดูแลเป็นคนแก้' + (edits ? ' · แก้แล้ว ' + edits + ' ครั้ง' : '') :
+      total ? 'โหมดแก้ยอดรวม: แตะ SKU เพื่อใส่ยอดจริงรวมทุกเครื่อง (ต้องใส่เหตุผล)' :
+      shared ? 'นับช่วยกัน: แตะ SKU เพื่อแก้ "ยอดของฉัน" (เฉพาะชิ้นที่เครื่องนี้ยิง)' + (wait.length ? ' · ปิดได้เมื่อ ' + wait.map(function (m) { return m.name || m.device; }).join(', ') + ' ส่งงาน' : '') :
       wait.length ? 'แก้ยอด / ล้าง / ปิด ได้เมื่อ ' + wait.map(function (m) { return m.name || m.device; }).join(', ') + ' ส่งงาน' :
       edits ? 'แก้ไขแล้ว ' + edits + ' ครั้ง (แตะ SKU เพื่อดูประวัติ)' : 'แตะ SKU เพื่อใส่ยอดจริงที่นับได้';
-    $('locEdited').className = wait.length ? 'warnline' : 'muted';
-    $('btnLocUndo').textContent = helper ? 'ย้อนการแก้ของฉันล่าสุด' : 'ย้อนการแก้ล่าสุด';
-    $('btnLocClear').textContent = helper ? 'ล้างยอดของฉัน นับใหม่' : 'ล้าง Location นับใหม่';
+    $('locEdited').className = total ? 'warnline' : wait.length && !shared ? 'warnline' : 'muted';
+    var own = helper || (shared && !total);
+    $('btnLocUndo').textContent = own ? 'ย้อนการแก้ของฉันล่าสุด' : 'ย้อนการแก้ล่าสุด';
+    $('btnLocClear').textContent = own ? 'ล้างยอดของฉัน นับใหม่' : total ? 'ล้างทั้ง Location นับใหม่' : 'ล้าง Location นับใหม่';
+    $('btnLocTotal').classList.toggle('hidden', !shared);
+    $('btnLocTotal').textContent = total ? '← กลับไปแก้ยอดของฉัน' : 'แก้ยอดรวม / ล้างทั้ง Location (ทุกคนส่งงานแล้ว)';
     var items = Array.from(s.items.values()).sort(function (a, b) { return (b.qty !== 0) - (a.qty !== 0) || String(info_(a).c).localeCompare(String(info_(b).c)); });
     $('locItems').innerHTML = items.length ? items.map(function (it) {
       var m = info_(it);
@@ -1135,11 +1143,33 @@
   $('locItems').addEventListener('click', function (e) {
     var li = e.target.closest('li[data-k]'); if (!li) return;
     var key = li.dataset.k;
-    if (isHelper()) { editMine(key); return; }
-    ownerGate(S.loc, 'แก้ยอด').then(function (ok) { if (ok) editItem(key); });
+    if (ownScope(S.loc)) { editMine(key); return; }
+    var total = S.totalMode === S.loc;
+    ownerGate(S.loc, 'แก้ยอด').then(function (ok) { if (ok) editItem(key, total); });
   });
 
-  function editItem(key) {
+  /** แก้/ล้าง/ย้อน เฉพาะยอดของตัวเอง: ผู้ช่วยเสมอ · ผู้ดูแลตอนนับช่วยกัน (ยกเว้นอยู่ในโหมดแก้ยอดรวม) (v2.3.2) */
+  function ownScope(loc) { return isHelper(loc) || (hasOthers(loc) && S.totalMode !== loc); }
+  /** ถามเหตุผล (บังคับ) — คืนข้อความ หรือ null ถ้ายกเลิก */
+  function askReason(title, what) {
+    return modal({ title: title, html: what + '<br>ใส่<b>เหตุผล</b> (บังคับ) เช่น ตรวจนับซ้ำทั้งชั้นแล้วได้ยอดนี้', input: true, inputmode: 'text', value: '', yes: 'บันทึก' }).then(function (v) {
+      if (v === null) return null;
+      v = String(v).trim();
+      if (!v) { toast('ต้องใส่เหตุผล', true); return askReason(title, what); }
+      return v;
+    });
+  }
+  $('btnLocTotal').onclick = function () {
+    var loc = S.loc;
+    if (S.totalMode === loc) { S.totalMode = null; renderLoc(); return; }
+    ownerGate(loc, 'แก้ยอดรวม ', true).then(function (ok) {
+      if (!ok) return;
+      S.totalMode = loc; renderLoc();
+      toast('โหมดแก้ยอดรวม — แตะ SKU เพื่อแก้ยอดรวมทุกเครื่อง');
+    });
+  };
+
+  function editItem(key, needReason) {
     var loc = S.loc, s = combinedSummary(loc), it = s.items.get(key); if (!it) return;
     var m = info(it), cur = it.qty;
     var hist = S.entries.filter(function (e) { return e.location === loc && itemKey(e) === key && e.type !== 'SCAN'; }).slice(-6).reverse()
@@ -1162,8 +1192,12 @@
       if (d === 0) { toast('ยอดเท่าเดิม ไม่มีการแก้'); return; }
       return qtyCheck(nv, m.n).then(function (yes) {
         if (!yes) return;
+        return needReason ? askReason('เหตุผลที่แก้ยอดรวม', esc(m.n) + ': ' + fmt(cur) + ' → ' + fmt(nv) + ' (รวมทุกเครื่อง)') : '';
+      }).then(function (why) {
+        if (why === undefined || why === null) return;
         // basis = ยอดรวมที่เห็นตอนแก้ เซิร์ฟเวอร์ใช้ตรวจว่ามีเครื่องอื่นยิง/แก้ SKU นี้ระหว่างนั้นหรือไม่ (Control 8)
-        return addEntry({ barcode: it.barcode, material: it.material, qty: d, type: 'RECOUNT_SET', basis: cur, reason: 'แก้ยอด Location ' + fmt(cur) + ' → ' + fmt(nv) }).then(function () {
+        return addEntry({ barcode: it.barcode, material: it.material, qty: d, type: 'RECOUNT_SET', basis: cur,
+          reason: (needReason ? 'แก้ยอดรวม Location ' : 'แก้ยอด Location ') + fmt(cur) + ' → ' + fmt(nv) + (why ? ' · เหตุผล: ' + why : '') }).then(function () {
           return addEvent('EDIT', loc);
         }).then(function () { SOUND.ok(); toast('แก้แล้ว: ' + fmt(cur) + ' → ' + fmt(nv)); renderLoc(); renderTop(); });
       });
@@ -1178,8 +1212,8 @@
     var loc = S.loc, s = combinedSummary(loc), it = s.items.get(key); if (!it) return;
     var m = info(it), cur = mineSince(loc, key), x = editInfo(loc, key);
     if (x && x.oe) {
-      return modal({ title: 'แก้ยอดของฉันไม่ได้', html: '<b>' + esc(m.n) + '</b><br>ผู้ดูแลแก้ยอดรวมของ SKU นี้ไปแล้ว — ถ้าแก้ของตัวเองอีกจะเป็นการแก้ซ้ำ<br>แจ้งผู้ดูแล' +
-        ((S.info[loc] || {}).owner ? ' (' + esc(memberLabel(S.info[loc].owner)) + ')' : '') + ' ให้แก้ยอดรวมแทน', yes: 'ตกลง', noCancel: true });
+      return modal({ title: 'แก้ยอดของฉันไม่ได้', html: '<b>' + esc(m.n) + '</b><br>ผู้ดูแลแก้ยอดรวมของ SKU นี้ไปแล้ว — ถ้าแก้ของตัวเองอีกจะเป็นการแก้ซ้ำ<br>' +
+        (isHelper(loc) ? 'แจ้งผู้ดูแล' + ((S.info[loc] || {}).owner ? ' (' + esc(memberLabel(S.info[loc].owner)) + ')' : '') + ' ให้แก้ยอดรวมแทน' : 'ใช้ "แก้ยอดรวม" (เมื่อทุกคนส่งงานแล้ว) แทน'), yes: 'ตกลง', noCancel: true });
     }
     if (!S.entries.some(function (e) { return e.location === loc && e.seq > clearSeq(loc) && itemKey(e) === key; })) {
       toast('SKU นี้ไม่มียอดของฉัน — ถ้าเจอของ ยิงเพิ่มได้ตามปกติ', true); return;
@@ -1202,17 +1236,17 @@
       if (d === 0) { toast('ยอดเท่าเดิม ไม่มีการแก้'); return; }
       return qtyCheck(nv, m.n).then(function (yes) {
         if (!yes) return;
-        return addEntry({ barcode: it.barcode, material: it.material, qty: d, type: 'SELF_SET', basis: cur, reason: 'ผู้ช่วยแก้ยอดของตัวเอง ' + fmt(cur) + ' → ' + fmt(nv) }).then(function () {
+        return addEntry({ barcode: it.barcode, material: it.material, qty: d, type: 'SELF_SET', basis: cur, reason: (isHelper(loc) ? 'ผู้ช่วย' : 'ผู้ดูแล') + 'แก้ยอดของตัวเอง ' + fmt(cur) + ' → ' + fmt(nv) }).then(function () {
           return addEvent('EDIT', loc, { mine: true });
         }).then(function () { SOUND.ok(); toast('แก้ยอดของฉันแล้ว: ' + fmt(cur) + ' → ' + fmt(nv)); renderLoc(); renderTop(); });
       });
     });
   }
 
-  $('btnLocBack').onclick = function () { show('count'); };
+  $('btnLocBack').onclick = function () { S.totalMode = null; show('count'); };
   $('btnLocUndo').onclick = function () {
     var loc = S.loc, v = voidedSet();
-    if (isHelper(loc)) {
+    if (ownScope(loc)) {
       var mineLast = S.entries.slice().reverse().find(function (e) { return e.location === loc && e.type === 'SELF_SET' && !v[e.logId]; });
       if (!mineLast) { toast('ไม่มีการแก้ของฉันให้ย้อน', true); return; }
       var mi = info(mineLast);
@@ -1233,18 +1267,22 @@
   };
   $('btnLocClear').onclick = function () {
     var loc = S.loc;
-    if (isHelper(loc)) { clearMine(loc); return; }
+    if (ownScope(loc)) { clearMine(loc); return; }
+    var needReason = S.totalMode === loc;
     ownerGate(loc, 'ล้าง Location ', true).then(function (ok) {
       if (!ok) return;
       var s = combinedSummary(loc);
       if (!s.qty && !s.sku) { toast('Location นี้ไม่มียอด', true); return; }
       confirmBox('ล้าง ' + loc + ' นับใหม่?', 'ล้าง <span class="bignum">' + fmt(s.qty) + '</span> ชิ้น ' + s.sku + ' SKU ของ ' + loc + (s.multi ? ' <b>(รวมทุกเครื่อง)</b>' : '') +
         '<br><span class="muted">ระบบไม่ลบข้อมูลเดิม แต่บันทึกรายการหักยอดกำกับไว้ ย้อนได้ทีละ SKU</span>', 'ล้างและนับใหม่').then(function (yes) {
-        if (!yes) return;
+        if (!yes) return null;
+        return needReason ? askReason('เหตุผลที่ล้างทั้ง Location', 'ล้าง ' + fmt(s.qty) + ' ชิ้นของทุกเครื่องใน ' + esc(loc)) : '';
+      }).then(function (why) {
+        if (why === undefined || why === null) return;
         var items = Array.from(s.items.values()).filter(function (it) { return it.qty !== 0; });
         var p = Promise.resolve();
         items.forEach(function (it) {
-          p = p.then(function () { return addEntry({ barcode: it.barcode, material: it.material, qty: -it.qty, type: 'RECOUNT_SET', basis: it.qty, reason: 'ล้าง Location นับใหม่ (เดิม ' + fmt(it.qty) + ')' }); });
+          p = p.then(function () { return addEntry({ barcode: it.barcode, material: it.material, qty: -it.qty, type: 'RECOUNT_SET', basis: it.qty, reason: 'ล้าง Location นับใหม่ (เดิม ' + fmt(it.qty) + ')' + (why ? ' · เหตุผล: ' + why : '') }); });
         });
         // ล้างเพื่อนับใหม่ = ธงเดิมหมดความหมาย ลบที่จำไว้ทันที (เซิร์ฟเวอร์ปิดธงเมื่อได้รับ) (v2.2.9)
         delete S.flags[loc];
@@ -1252,7 +1290,7 @@
         p.then(function () { return addEvent('EDIT', loc, { clear: true }); }).then(function () {
           return confirmSent(loc, 'กำลังล้าง ' + loc + '…', 'แจ้งเซิร์ฟเวอร์ว่าเริ่มนับใหม่');
         }).then(function (res) {
-          S.recountBanner = 'นับใหม่ ' + loc + ' (ยอดเดิม ' + fmt(s.qty) + ')';
+          S.recountBanner = 'นับใหม่ ' + loc + ' (ยอดเดิม ' + fmt(s.qty) + ')'; S.totalMode = null;
           SOUND.warn(); setCard('idle', 'ล้าง ' + loc + ' แล้ว — เริ่มนับใหม่ได้', sentNote(res)); show('count');
         });
       });
@@ -1275,7 +1313,7 @@
       if (!yes) return;
       var p = Promise.resolve();
       ok.forEach(function (k) {
-        p = p.then(function () { return addEntry({ barcode: k.it.barcode, material: k.it.material, qty: -k.q, type: 'SELF_SET', basis: k.q, reason: 'ผู้ช่วยล้างยอดของตัวเอง (เดิม ' + fmt(k.q) + ')' }); });
+        p = p.then(function () { return addEntry({ barcode: k.it.barcode, material: k.it.material, qty: -k.q, type: 'SELF_SET', basis: k.q, reason: (isHelper(loc) ? 'ผู้ช่วย' : 'ผู้ดูแล') + 'ล้างยอดของตัวเอง (เดิม ' + fmt(k.q) + ')' }); });
       });
       p.then(function () { return addEvent('EDIT', loc, { mine: true, clearMine: true }); }).then(function () {
         return confirmSent(loc, 'กำลังล้างยอดของฉัน…', 'แจ้งเซิร์ฟเวอร์');

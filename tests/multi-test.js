@@ -533,6 +533,43 @@ console.log('\nผู้ช่วยแก้ยอดของตัวเอ�
   });
 }
 
+console.log('\nนับช่วยกัน: ทุกคนจัดการเฉพาะยอดของตัวเอง (v2.3.2)');
+{
+  const O = device('TC21-01', 'EMP-K', '2.3.2'), H = device('TC21-02', 'EMP-KH', '2.3.2');
+  [O, H].forEach(d => { d.seq = 4000 + d.seq; d.at = 7000; });
+  test('ผู้ดูแลแก้ยอดของตัวเองระหว่างผู้ช่วยยังนับ → ไม่ติดธง · ไม่เปลี่ยนผลตรวจ Location · Loc_Checks "ผู้ดูแลแก้ยอดของตัวเอง"', () => {
+    O.sync([O.scan('W5', BC1, MAT1, 1), O.scan('W5', BC1, MAT1, 1), O.scan('W5', BC1, MAT1, 1)], [O.ev('OPEN', 'W5')]);
+    H.sync([H.scan('W5', BC1, MAT1, 1), H.scan('W5', BC1, MAT1, 1)], [H.ev('JOIN', 'W5')]);
+    const before = loc('W5');
+    const r = O.sync([O.scan('W5', BC1, MAT1, -1, { type: 'SELF_SET', basis: 3, reason: 'ผู้ดูแลแก้ยอดของตัวเอง 3 → 2' })], [O.ev('EDIT', 'W5', { mine: true })]);
+    assert.ok(!r.flags, JSON.stringify(r.flags));
+    assert.strictEqual(loc('W5').Last_Check, before.Last_Check);
+    assert.ok(env.sheets.Loc_Checks.data.slice(-1)[0].join(' ').includes('ผู้ดูแลแก้ยอดของตัวเอง'));
+    assert.strictEqual(run('apiDevicesState()').locTotals.W5.qty, 4);
+  });
+  test('ผู้ดูแลแก้ยอดรวมตอนนับคนเดียว → ไม่ครอบคลุมใคร: ผู้ช่วยที่มาทีหลังแก้ยอดของตัวเองใน SKU นั้นได้', () => {
+    O.sync([O.scan('W6', BC2, MAT2, 1), O.scan('W6', BC2, MAT2, 1)], [O.ev('OPEN', 'W6')]);
+    O.sync([O.scan('W6', BC2, MAT2, 3, { type: 'RECOUNT_SET', basis: 2, reason: 'แก้ยอด Location 2 → 5' })], [O.ev('EDIT', 'W6')]);
+    H.sync([H.scan('W6', BC2, MAT2, 1), H.scan('W6', BC2, MAT2, 1)], [H.ev('JOIN', 'W6')]);
+    assert.strictEqual((H.info('W6').edits[MAT2] || {}).oe || 0, 0);
+    const r = H.sync([H.scan('W6', BC2, MAT2, -1, { type: 'SELF_SET', basis: 2, reason: 'แก้' })]);
+    assert.ok(!r.flags, JSON.stringify(r.flags));
+    // ผู้ดูแลเองก็แก้ยอดของตัวเองต่อได้ (ยอดรวมตอนนั้น = ของตัวเอง)
+    const r2 = O.sync([O.scan('W6', BC2, MAT2, -1, { type: 'SELF_SET', basis: 5, reason: 'แก้' })], [O.ev('EDIT', 'W6', { mine: true })]);
+    assert.ok(!r2.flags, JSON.stringify(r2.flags));
+  });
+  test('ผู้ดูแลแก้ยอดรวมขณะมีผู้ช่วยร่วมยอด → ครอบคลุมทั้งคู่: ทั้งผู้ช่วยและผู้ดูแลแก้ยอดของตัวเองใน SKU นั้นแล้วติดธง', () => {
+    H.sync([], [H.ev('SUBMIT', 'W6')]);
+    const tot = run('apiDevicesState()').locTotals.W6.qty;
+    O.sync([O.scan('W6', BC2, MAT2, -1, { type: 'RECOUNT_SET', basis: tot, reason: 'แก้ยอดรวม Location · เหตุผล: นับซ้ำ' })], [O.ev('EDIT', 'W6')]);
+    assert.strictEqual(H.info('W6').edits[MAT2].oe, 1);
+    assert.strictEqual(O.info('W6').edits[MAT2].oe, 1);
+    const r = O.sync([O.scan('W6', BC2, MAT2, -1, { type: 'SELF_SET', basis: 3, reason: 'แก้' })], [O.ev('EDIT', 'W6', { mine: true })]);
+    assert.ok(r.flags && /TC21-01 แก้ยอดของตัวเองหลังผู้ดูแลแก้ยอดรวม/.test(r.flags[0].note), JSON.stringify(r.flags));
+    run('apiLocResolveFlag("W6", "ทดสอบ")');
+  });
+}
+
 test('หน้า Admin: ยอดเซิร์ฟเวอร์ต่อ Location/เครื่อง ตรงกับชีต + ผลตรวจล่าสุดมีตัวเลขเครื่อง vs เซิร์ฟเวอร์ (v2.3.1)', () => {
   const st = run('apiDevicesState()');
   const rows = env.sheets.Count_Log.data.slice(1).filter(r => r[1] === st.projectId);
