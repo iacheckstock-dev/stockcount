@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2.3.2';
+  var APP_VERSION = '2.3.3';
   var QTY_CONFIRM = 150;      // จำนวนที่ป้อนเองเกินนี้ต้องยืนยันอีกครั้ง
   var QTY_MAX_DIGITS = 5;     // ยาวกว่านี้ = น่าจะยิงบาร์โค้ดเข้าช่องจำนวน
   var INFO_EVERY = 15000;     // ถามสถานะผู้ช่วย/ผู้ดูแลระหว่างนับร่วมกัน
@@ -80,6 +80,36 @@
     $('busy').classList.remove('hidden');
   }
   function busyOff() { $('busy').classList.add('hidden'); }
+
+  /**
+   * กล่องผลลัพธ์กลางจอ (v2.3.3) — ผลที่ผู้ใช้ต้องรู้ อยู่ตรงที่สายตาอยู่ ไม่ใช่แถบล่าง
+   * ok = true : ✓ เขียว หายเองใน 1.5 วิ · แตะปิดได้ · ยิงต่อได้ทันที (กล่องปิดแล้วรับการยิงนั้น)
+   * ok = false: ✕ แดง ต้องกด "ตกลง" · opt.scanCloses = ยิงใหม่แทนการกดได้ (เช่น ยิงบัตรผิด)
+   * คืน Promise ที่จบเมื่อกล่องปิด — ค่า 'scan' ถ้าปิดเพราะผู้ใช้ยิงต่อ (ไปงานถัดไปแล้ว ไม่ต้องถามอะไรเพิ่ม)
+   */
+  var resTimer = null, resDone = null;
+  function result(ok, title, sub, opt) {
+    opt = opt || {};
+    return new Promise(function (resolve) {
+      busyOff();
+      if (resDone) resDone();
+      $('resIcon').textContent = ok ? '✓' : '✕';
+      $('resIcon').className = 'resicon ' + (ok ? 'ok' : 'bad');
+      $('resTitle').textContent = title;
+      $('resSub').textContent = sub || '';
+      $('resOk').classList.toggle('hidden', !!ok);
+      $('result').classList.remove('hidden');
+      S.result = ok ? 'ok' : opt.scanCloses ? 'retry' : 'bad';
+      resDone = function (how) {
+        clearTimeout(resTimer); resDone = null; S.result = '';
+        $('result').classList.add('hidden'); resolve(how || '');
+      };
+      if (ok) resTimer = setTimeout(resDone, 1500);
+      else setTimeout(function () { $('resOk').focus(); }, 50);
+    });
+  }
+  function resultClose(how) { if (resDone) resDone(how); }
+  $('result').addEventListener('click', function (e) { if (S.result === 'ok' || e.target.id === 'resOk') resultClose(); });
 
   function modal(opt) {
     busyOff();
@@ -688,7 +718,16 @@
     var typing = tag === 'TEXTAREA' || (tag === 'INPUT' && !/^(checkbox|radio|button|submit)$/i.test(t.type || ''));
     if (typing || !$('modal').classList.contains('hidden')) return;
     if (tag === 'INPUT' || tag === 'BUTTON') { if (e.key === ' ' || e.key === 'Enter') e.preventDefault(); }
-    if (e.key === 'Enter') { var code = buf; buf = ''; if (code) handleScan(code); e.preventDefault(); return; }
+    if (e.key === 'Enter') {
+      var code = buf; buf = ''; e.preventDefault();
+      // กล่องผลลัพธ์: ✓ / ยิงใหม่ได้ → ปิดแล้วรับการยิงนี้ · ✕ ต้องกดตกลงก่อน
+      if (S.result) {
+        if (S.result === 'bad') { if (code) { SOUND.warn(); } else resultClose(); return; }
+        resultClose(code ? 'scan' : '');
+      }
+      if (code) handleScan(code);
+      return;
+    }
     if (e.key && e.key.length === 1) {
       if (Date.now() - bufAt > 800) buf = '';
       buf += e.key; bufAt = Date.now();
@@ -719,11 +758,11 @@
   function setStaff(code) {
     var list = (S.boot && S.boot.staff) || [];
     var s = list.find(function (x) { return x.code === code; });
-    if (!s) { SOUND.bad(); toast('ไม่พบรหัสผู้ตรวจสอบ ' + code, true); return; }
+    if (!s) { SOUND.bad(); result(false, 'ไม่พบรหัสผู้ตรวจสอบ', code + '\nยิงบัตรใหม่ หรือแจ้งหัวหน้าทีม', { scanCloses: true }); return; }
     S.staff = { code: s.code, name: s.name };
     S.dwOk = true;
     SOUND.ok();
-    toast('เข้างาน: ' + (s.name || s.code));
+    result(true, 'ยืนยันตัวตนแล้ว', (s.name || s.code) + (s.name ? ' (' + s.code + ')' : ''));
     saveState();
     if (S.view === 'ready') runChecks(true);
     render();
@@ -914,9 +953,8 @@
       return confirmSent(loc, 'กำลังปิด ' + loc + '…', 'รอเซิร์ฟเวอร์ตรวจยอดและยืนยัน');
     }).then(function (res) {
       setCard(res === 'ok' ? 'ok' : 'idle', 'ปิด ' + loc + ' แล้ว', sentNote(res) + '<br>ยิงป้าย Location ถัดไป');
-      toast('ปิด ' + loc + ' แล้ว');
       if (S.online === false && pending().length) exportFile(true);
-      return saveState().then(render).then(offerPaused);
+      return saveState().then(render).then(function () { return result(true, 'ปิด ' + loc + ' แล้ว', sentNote(res)); }).then(function (how) { if (how !== 'scan') return offerPaused(); });
     });
   }
 
@@ -928,7 +966,7 @@
       setCard(res === 'ok' ? 'ok' : 'idle', 'ส่งงาน ' + loc + ' แล้ว', 'ของฉัน ' + fmt(locSummary(loc).qty) + ' ชิ้น · ' + sentNote(res) + '<br>ยิงป้าย Location ถัดไป');
       if (S.online === false && pending().length) exportFile(true);
       render();
-      return offerPaused();
+      return result(true, 'ส่งงาน ' + loc + ' แล้ว', 'ของฉัน ' + fmt(locSummary(loc).qty) + ' ชิ้น\n' + sentNote(res)).then(function (how) { if (how !== 'scan') return offerPaused(); });
     });
   }
 
@@ -1199,7 +1237,7 @@
         return addEntry({ barcode: it.barcode, material: it.material, qty: d, type: 'RECOUNT_SET', basis: cur,
           reason: (needReason ? 'แก้ยอดรวม Location ' : 'แก้ยอด Location ') + fmt(cur) + ' → ' + fmt(nv) + (why ? ' · เหตุผล: ' + why : '') }).then(function () {
           return addEvent('EDIT', loc);
-        }).then(function () { SOUND.ok(); toast('แก้แล้ว: ' + fmt(cur) + ' → ' + fmt(nv)); renderLoc(); renderTop(); });
+        }).then(function () { SOUND.ok(); renderLoc(); renderTop(); result(true, needReason ? 'แก้ยอดรวมแล้ว' : 'แก้ยอดแล้ว', m.n + '\n' + fmt(cur) + ' → ' + fmt(nv)); });
       });
     });
   }
@@ -1216,7 +1254,7 @@
         (isHelper(loc) ? 'แจ้งผู้ดูแล' + ((S.info[loc] || {}).owner ? ' (' + esc(memberLabel(S.info[loc].owner)) + ')' : '') + ' ให้แก้ยอดรวมแทน' : 'ใช้ "แก้ยอดรวม" (เมื่อทุกคนส่งงานแล้ว) แทน'), yes: 'ตกลง', noCancel: true });
     }
     if (!S.entries.some(function (e) { return e.location === loc && e.seq > clearSeq(loc) && itemKey(e) === key; })) {
-      toast('SKU นี้ไม่มียอดของฉัน — ถ้าเจอของ ยิงเพิ่มได้ตามปกติ', true); return;
+      SOUND.warn(); result(false, 'SKU นี้ไม่มียอดของฉัน', 'แก้ได้เฉพาะชิ้นที่เครื่องนี้ยิง\nถ้าเจอของ ยิงเพิ่มได้ตามปกติ'); return;
     }
     modal({
       title: 'แก้ยอดของฉันใน ' + loc,
@@ -1238,7 +1276,7 @@
         if (!yes) return;
         return addEntry({ barcode: it.barcode, material: it.material, qty: d, type: 'SELF_SET', basis: cur, reason: (isHelper(loc) ? 'ผู้ช่วย' : 'ผู้ดูแล') + 'แก้ยอดของตัวเอง ' + fmt(cur) + ' → ' + fmt(nv) }).then(function () {
           return addEvent('EDIT', loc, { mine: true });
-        }).then(function () { SOUND.ok(); toast('แก้ยอดของฉันแล้ว: ' + fmt(cur) + ' → ' + fmt(nv)); renderLoc(); renderTop(); });
+        }).then(function () { SOUND.ok(); renderLoc(); renderTop(); result(true, 'แก้ยอดของฉันแล้ว', m.n + '\n' + fmt(cur) + ' → ' + fmt(nv)); });
       });
     });
   }
@@ -1248,21 +1286,21 @@
     var loc = S.loc, v = voidedSet();
     if (ownScope(loc)) {
       var mineLast = S.entries.slice().reverse().find(function (e) { return e.location === loc && e.type === 'SELF_SET' && !v[e.logId]; });
-      if (!mineLast) { toast('ไม่มีการแก้ของฉันให้ย้อน', true); return; }
+      if (!mineLast) { SOUND.warn(); result(false, 'ไม่มีการแก้ของฉันให้ย้อน', 'ย้อนได้เฉพาะการแก้ยอดของเครื่องนี้'); return; }
       var mi = info(mineLast);
       return confirmBox('ย้อนการแก้ของฉันล่าสุด', esc(mi.n) + '<br>' + esc(mineLast.reason) + '<br>จะคืนยอด ' + (mineLast.qty > 0 ? '−' : '+') + fmt(Math.abs(mineLast.qty)), 'ย้อนการแก้').then(function (yes) {
         if (!yes) return;
         addEntry({ barcode: mineLast.barcode, material: mineLast.material, qty: -mineLast.qty, type: 'VOID', refId: mineLast.logId, reason: 'ย้อนการแก้: ' + mineLast.reason })
-          .then(function () { return addEvent('EDIT', loc, { mine: true }); }).then(function () { SOUND.warn(); renderLoc(); renderTop(); });
+          .then(function () { return addEvent('EDIT', loc, { mine: true }); }).then(function () { SOUND.ok(); renderLoc(); renderTop(); result(true, 'ย้อนการแก้ของฉันแล้ว', mi.n + '\nคืนยอด ' + (mineLast.qty > 0 ? '−' : '+') + fmt(Math.abs(mineLast.qty))); });
       });
     }
     var last = S.entries.slice().reverse().find(function (e) { return e.location === loc && e.type === 'RECOUNT_SET' && !v[e.logId]; });
-    if (!last) { toast('ไม่มีการแก้ให้ย้อน', true); return; }
+    if (!last) { SOUND.warn(); result(false, 'ไม่มีการแก้ให้ย้อน', ''); return; }
     var m = info(last);
     confirmBox('ย้อนการแก้ล่าสุด', esc(m.n) + '<br>' + esc(last.reason) + '<br>จะคืนยอด ' + (last.qty > 0 ? '−' : '+') + fmt(Math.abs(last.qty)), 'ย้อนการแก้').then(function (yes) {
       if (!yes) return;
       addEntry({ barcode: last.barcode, material: last.material, qty: -last.qty, type: 'VOID', refId: last.logId, reason: 'ย้อนการแก้: ' + last.reason })
-        .then(function () { return addEvent('EDIT', loc); }).then(function () { SOUND.warn(); renderLoc(); renderTop(); });
+        .then(function () { return addEvent('EDIT', loc); }).then(function () { SOUND.ok(); renderLoc(); renderTop(); result(true, 'ย้อนการแก้แล้ว', m.n + '\nคืนยอด ' + (last.qty > 0 ? '−' : '+') + fmt(Math.abs(last.qty))); });
     });
   };
   $('btnLocClear').onclick = function () {
@@ -1291,7 +1329,8 @@
           return confirmSent(loc, 'กำลังล้าง ' + loc + '…', 'แจ้งเซิร์ฟเวอร์ว่าเริ่มนับใหม่');
         }).then(function (res) {
           S.recountBanner = 'นับใหม่ ' + loc + ' (ยอดเดิม ' + fmt(s.qty) + ')'; S.totalMode = null;
-          SOUND.warn(); setCard('idle', 'ล้าง ' + loc + ' แล้ว — เริ่มนับใหม่ได้', sentNote(res)); show('count');
+          SOUND.ok(); setCard('idle', 'ล้าง ' + loc + ' แล้ว — เริ่มนับใหม่ได้', sentNote(res)); show('count');
+          result(true, 'ล้าง ' + loc + ' แล้ว', 'เริ่มนับใหม่ได้\n' + sentNote(res));
         });
       });
     });
@@ -1305,7 +1344,7 @@
       if (q !== 0) keys.push({ it: it, q: q, blocked: !!(x && x.oe) });
     });
     var ok = keys.filter(function (k) { return !k.blocked; }), blocked = keys.length - ok.length;
-    if (!ok.length) { toast(blocked ? 'SKU ที่มียอดของฉัน ผู้ดูแลแก้ยอดรวมไปแล้วทั้งหมด — แจ้งผู้ดูแล' : 'ไม่มียอดของฉันใน ' + loc, true); return; }
+    if (!ok.length) { SOUND.warn(); result(false, blocked ? 'ล้างยอดของฉันไม่ได้' : 'ไม่มียอดของฉันใน ' + loc, blocked ? 'SKU ที่มียอดของฉัน ผู้ดูแลแก้ยอดรวมไปแล้วทั้งหมด\nแจ้งผู้ดูแล' : ''); return; }
     var tot = Math.round(ok.reduce(function (a, k) { return a + k.q; }, 0) * 1000) / 1000;
     confirmBox('ล้างยอดของฉันใน ' + loc + '?', 'ล้าง <span class="bignum">' + fmt(tot) + '</span> ชิ้น ' + ok.length + ' SKU <b>เฉพาะที่เครื่องนี้ยิง</b><br>ยอดของเครื่องอื่นไม่ถูกแตะ' +
       (blocked ? '<br><span class="warnline">ข้าม ' + blocked + ' SKU ที่ผู้ดูแลแก้ยอดรวมแล้ว (แจ้งผู้ดูแล)</span>' : '') +
@@ -1318,7 +1357,8 @@
       p.then(function () { return addEvent('EDIT', loc, { mine: true, clearMine: true }); }).then(function () {
         return confirmSent(loc, 'กำลังล้างยอดของฉัน…', 'แจ้งเซิร์ฟเวอร์');
       }).then(function (res) {
-        SOUND.warn(); setCard('idle', 'ล้างยอดของฉันใน ' + loc + ' แล้ว — นับส่วนของฉันใหม่ได้', sentNote(res)); show('count');
+        SOUND.ok(); setCard('idle', 'ล้างยอดของฉันใน ' + loc + ' แล้ว — นับส่วนของฉันใหม่ได้', sentNote(res)); show('count');
+        result(true, 'ล้างยอดของฉันใน ' + loc + ' แล้ว', 'นับส่วนของฉันใหม่ได้\n' + sentNote(res));
       });
     });
   }

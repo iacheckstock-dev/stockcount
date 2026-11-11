@@ -52,6 +52,10 @@ with sync_playwright() as p:
         pg.wait_for_selector('#modal:not(.hidden)', timeout=timeout)
         return pg.inner_text('#mTitle') + ' | ' + pg.inner_text('#mBody')
 
+    def settle(pg):
+        # กล่อง ✓ กลางจอ (v2.3.3) ปิดเองใน 1.5 วิ แล้วจึงมีคำถามต่อ (เช่น Location ที่พักไว้)
+        pg.wait_for_selector('#result.hidden', state='attached', timeout=6000); pg.wait_for_timeout(300)
+
     def yes(pg): pg.click('#mYes'); pg.wait_for_timeout(300)
     def no(pg): pg.click('#mNo'); pg.wait_for_timeout(300)
 
@@ -62,7 +66,7 @@ with sync_playwright() as p:
 
     print('เปิด / เข้าร่วม')
     scan(C, 'LOC:D80'); C.wait_for_timeout(1500)
-    check(C.is_hidden('#modal'), 'ผู้ดูแลเปิด D80: ไม่มีคำถามใด ๆ (เช็กเบื้องหลังเงียบ)')
+    check(C.is_hidden('#modal'), 'ผู้ดูแลเปิด D80: ไม่มีคำถามใด ๆ (เช็กเบื้องหลังเงียบ)' + ('' if C.is_hidden('#modal') else ' — เจอ: ' + C.inner_text('#modal')))
     scan(C, BC1); scan(C, BC1); synced(C)
     scan(K, 'LOC:D80')
     t = modal(K)
@@ -247,6 +251,7 @@ with sync_playwright() as p:
     yes(C)
     K.click('#btnClose'); C.wait_for_timeout(300)
     if K.is_visible('#modal'): yes(K)
+    settle(K)
     synced(K)
     C.click('#btnClose'); t = modal(C, 12000)
     check('ปิด' in t and 'ได้เมื่อ' not in t, 'ผู้ช่วยส่งงานแล้ว → ผู้ดูแลกดปิดได้ทันที (ถามสด ไม่ต้องรอรอบ): ' + t.replace('\n', ' '))
@@ -255,6 +260,7 @@ with sync_playwright() as p:
     check('อัปเดตสถานะล่าสุด' in C.inner_text('#locFreshText'), 'หน้า Location บอกเวลาอัปเดตสถานะ: ' + C.inner_text('#locFreshText'))
     C.screenshot(path=f'{SHOT}/m08-fresh.png')
     C.click('#btnLocBack')
+    settle(K)
     while K.is_visible('#modal'): no(K)
     K.click('#btnMenu'); K.click('#menu button[data-m=status]'); K.wait_for_timeout(300)
     st = K.inner_text('#perfBox')
@@ -276,6 +282,7 @@ with sync_playwright() as p:
 
     print('ธงต้องตรวจซ้ำ: แจ้งผู้ดูแล · เตือนตอนปิด · ล้างนับใหม่แล้วธงหาย (v2.2.8)')
     K.click('#btnClose'); modal(K); yes(K); synced(K)
+    settle(K)
     while K.is_visible('#modal'): no(K)
     C.click('#btnLoc'); C.wait_for_selector('#v-loc.on'); C.wait_for_timeout(1500)
     C.click('#btnLocTotal'); C.wait_for_function("/โหมดแก้ยอดรวม/.test(document.querySelector('#locEdited').textContent)", timeout=15000)
@@ -284,8 +291,10 @@ with sync_playwright() as p:
     scan(K, 'LOC:E20'); t = modal(K, 12000); yes(K)
     scan(K, BC1); synced(K)
     K.click('#btnClose'); modal(K); yes(K); synced(K)
+    settle(K)
     while K.is_visible('#modal'): no(K)
-    C.fill('#mInput', '2'); yes(C); modal(C)
+    C.fill('#mInput', '2'); yes(C)
+    C.wait_for_function("/เหตุผล/.test(document.querySelector('#mTitle').textContent) && !document.querySelector('#modal').classList.contains('hidden')", timeout=10000)
     C.fill('#mInput', 'ทดสอบแก้ชน'); yes(C)
     t = modal(C, 20000)
     check('ต้องตรวจซ้ำ E20' in t and 'เห็น 3 เซิร์ฟเวอร์ 4' in t, 'เครื่องผู้ดูแลได้รับแจ้งกลางจอทันที: ' + t.replace('\n', ' '))
@@ -298,7 +307,9 @@ with sync_playwright() as p:
     C.click('#btnLoc'); C.wait_for_selector('#v-loc.on')
     C.click('#btnLocTotal'); C.wait_for_function("/โหมดแก้ยอดรวม/.test(document.querySelector('#locEdited').textContent)", timeout=15000)
     C.click('#btnLocClear'); t = modal(C, 20000)
-    yes(C); modal(C); C.fill('#mInput', 'ธงต้องตรวจซ้ำ นับใหม่ทั้งหมด'); yes(C); synced(C)
+    yes(C)
+    C.wait_for_function("/เหตุผล/.test(document.querySelector('#mTitle').textContent) && !document.querySelector('#modal').classList.contains('hidden')", timeout=10000)
+    C.fill('#mInput', 'ธงต้องตรวจซ้ำ นับใหม่ทั้งหมด'); yes(C); synced(C)
     l = [x for x in get('/debug/locations')['locations'] if x['Location'] == 'E20'][0]
     check(l['Flag'] == '', 'ล้าง Location นับใหม่ → ธงหาย (หน้า Admin)')
     print('ล้างแล้วเครื่องไม่เตือนธงเดิม · เซิร์ฟเวอร์เป็นตัวตัดสินธง · กล่องรอส่ง (v2.2.9)')
@@ -319,7 +330,26 @@ with sync_playwright() as p:
     C.wait_for_selector('#busy.hidden', state='attached', timeout=15000)
     get('/debug/apidelay?ms=0')
     check('ปิด E20 แล้ว' in C.inner_text('#cardTitle') and 'เซิร์ฟเวอร์รับแล้ว' in C.inner_text('#cardSub'), 'ปิดแล้ว การ์ดบอกว่าเซิร์ฟเวอร์รับแล้ว ✓')
+    settle(C)
     while C.is_visible('#modal'): no(C)
+
+    print('กล่องผลลัพธ์กลางจอ: ยิงต่อระหว่างกล่อง ✓ (v2.3.3)')
+    scan(C, 'LOC:E30'); C.wait_for_timeout(1500)
+    while C.is_visible('#modal'): yes(C)
+    scan(C, BC1); synced(C)
+    C.click('#btnClose'); modal(C, 20000); yes(C)
+    C.wait_for_selector('#result:not(.hidden)', timeout=15000)
+    check('ปิด E30 แล้ว' in C.inner_text('#result') and '✓' in C.inner_text('#resIcon'), 'ปิดแล้ว → กล่อง ✓ กลางจอ "ปิด E30 แล้ว"')
+    C.screenshot(path=f'{SHOT}/m14-result-ok.png')
+    C.keyboard.type('LOC:E31', delay=5); C.keyboard.press('Enter'); C.wait_for_timeout(1500)   # DataWedge ส่งตัวอักษรอย่างเดียว ไม่แตะจอ
+    check(C.is_hidden('#result') and C.inner_text('#tbLoc') == 'E31', 'ยิงป้าย Location ระหว่างกล่อง ✓ → กล่องปิดและเปิด E31 ทันที ไม่เสียการยิง')
+    check(C.is_hidden('#modal'), 'ไม่มีคำถามแทรกหลังยิงต่อ (ไม่ถาม Location ที่พักไว้)')
+    scan(C, BC1); synced(C)
+    C.click('#btnLoc'); C.wait_for_selector('#v-loc.on'); C.wait_for_timeout(800)
+    C.locator('#locItems li').first.click(); modal(C); C.fill('#mInput', '0'); yes(C)
+    C.wait_for_selector('#result:not(.hidden)', timeout=5000)
+    check('แก้ยอดแล้ว' in C.inner_text('#result') and '1 → 0' in C.inner_text('#result'), 'แก้ยอด → กล่อง ✓ กลางจอบอกผล: ' + C.inner_text('#result').replace('\n', ' '))
+    settle(C)
 
     check(not errors, 'ไม่มี JavaScript error: ' + '; '.join(errors))
     b.close()

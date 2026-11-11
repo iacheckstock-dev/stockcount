@@ -151,3 +151,10 @@ table.perf td.bad { color: #b42318; font-weight: 700; }
 .busybox .muted { font-size: 14px; font-weight: 400; margin-top: 4px; white-space: pre-line; }
 .spin { width: 34px; height: 34px; margin: 0 auto 10px; border: 4px solid #e3e1dc; border-top-color: #111; border-radius: 50%; animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* กล่องผลลัพธ์กลางจอ (v2.3.3) */
+.resbox { padding: 20px 20px 18px; }
+.resicon { width: 64px; height: 64px; margin: 0 auto 10px; border-radius: 50%; color: #fff; font-size: 40px; line-height: 64px; font-weight: 700; }
+.resicon.ok { background: #1f9d55; }
+.resicon.bad { background: #d92d20; }
+#resOk { margin-top: 14px; width: 100%; }

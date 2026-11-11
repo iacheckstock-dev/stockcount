@@ -12,7 +12,7 @@ var SCHEMA_VERSION = 5;
  * เวอร์ชันของระบบ (ใช้เลขเดียวทั้งแอป TC21 และเซิร์ฟเวอร์ ตาม Semantic Versioning MAJOR.MINOR.PATCH)
  * ต้องตรงกับ APP_VERSION ใน app/app.js และ appVersion ใน app/config.json — ดู CHANGELOG.md
  */
-var SYSTEM_VERSION = '2.3.2';
+var SYSTEM_VERSION = '2.3.3';
 
 var SHEETS = {
   Config: ['Key', 'Value', 'Note'],
@@ -170,7 +170,7 @@ function ensureSetup_() {
 // ---------- Config / Log ----------
 
 function readConfig_() {
-  // ในคำขอจากเครื่อง อ่านครั้งเดียวต่อคำขอ (v2.3.2) — คืนสำเนา ผู้เรียกแก้ได้โดยไม่กระทบกัน
+  // ในคำขอจากเครื่อง อ่านครั้งเดียวต่อคำขอ (v2.3.3) — คืนสำเนา ผู้เรียกแก้ได้โดยไม่กระทบกัน
   if (typeof REQ_ !== 'undefined' && REQ_ && REQ_.cfg) return Object.assign({}, REQ_.cfg);
   var sh = SpreadsheetApp.getActive().getSheetByName('Config');
   var out = {};
@@ -380,7 +380,7 @@ function apiOpenRound(projectId, countDate) {
       throw new Error('รอบ ' + cfg.PROJECT_ID + ' อยู่ในสถานะ ' + st + ' ต้องปิดรอบก่อนจึงเปิดรอบใหม่ได้');
     }
     setConfig_({ PROJECT_ID: projectId, COUNT_DATE: countDate, ROUND_STATUS: 'SETUP' });
-    lxReset_();   // ดัชนี Count_Log ของรอบเดิมไม่ใช้ต่อ (v2.3.2)
+    lxReset_();   // ดัชนี Count_Log ของรอบเดิมไม่ใช้ต่อ (v2.3.3)
     logAdmin_('OPEN_ROUND', projectId, 'วันนับ ' + countDate + (st === 'SETUP' && cfg.PROJECT_ID ? ' (แก้จาก ' + cfg.PROJECT_ID + ' ' + cfg.COUNT_DATE + ')' : ''));
     return apiGetState();
   });
@@ -562,7 +562,7 @@ function apiDevicesState() {
   };
 }
 
-/** ยอดบนเซิร์ฟเวอร์ต่อ Location และต่อเครื่อง (จากดัชนี — ไม่อ่าน Count_Log ทั้งชีต) (v2.3.2) */
+/** ยอดบนเซิร์ฟเวอร์ต่อ Location และต่อเครื่อง (จากดัชนี — ไม่อ่าน Count_Log ทั้งชีต) (v2.3.3) */
 function locTotalsForAdmin_(project, locs) {
   if (!project) return {};
   var names = locs.rows.map(function (r) { return r[locs.idx.Location]; }).filter(String);
@@ -577,7 +577,7 @@ function locTotalsForAdmin_(project, locs) {
   return out;
 }
 
-/** ผลตรวจยอดกับเครื่องครั้งล่าสุดต่อ Location (ส่งงาน/พัก/ปิด/แก้) — ตัวเลขเครื่องเทียบเซิร์ฟเวอร์ (v2.3.2) */
+/** ผลตรวจยอดกับเครื่องครั้งล่าสุดต่อ Location (ส่งงาน/พัก/ปิด/แก้) — ตัวเลขเครื่องเทียบเซิร์ฟเวอร์ (v2.3.3) */
 function locChecksForAdmin_(project) {
   var rows = readRaw_('Loc_Checks'), out = {};
   if (rows.length < 2) return out;
