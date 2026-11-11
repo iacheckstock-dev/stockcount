@@ -21,7 +21,7 @@ env.sheets.Staff.data.push(['EMP-NU', 'นุ่น', 'ผู้ตรวจส�
 run('apiSeedDevices(5, "TC21")');
 
 let offline = false;
-let appVersion = '2.3.0';
+let appVersion = '2.3.1';
 let slowMs = 0;
 let apiDelay = { ms: 0, action: '' };   // จำลองเซิร์ฟเวอร์ช้า (GAS จริงตอบ 1–5 วินาที) v2.2.6
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'application/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.webmanifest': 'application/manifest+json' };

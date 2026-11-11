@@ -186,5 +186,48 @@ test('ทดสอบแรงงาน: loadTestSeed เติม 11,000 แถ
   same('หลังลบแถวทดสอบ');
 });
 
+test('cache คืนค่ารุ่นเก่าแบบสุ่ม (2 เครื่องส่งสลับ + คำตอบหายแล้วส่งซ้ำ) → ดัชนีที่บันทึกไว้ยังตรงชีต (v2.3.1)', () => {
+  let seed = 7; const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+  env.cacheCfg.rnd = rnd;
+  const pend = { A: [], B: [] };
+  for (let step = 0; step < 120; step++) {
+    const key = rnd() < 0.5 ? 'A' : 'B', d = key === 'A' ? A : B;
+    pend[key] = pend[key].concat(d.batch('S' + (1 + Math.floor(step / 30)), 1 + Math.floor(rnd() * 8)));
+    env.cacheCfg.stale = 0.3;
+    const r = d.call('sync', { entries: pend[key].slice(0, 20), events: [] });
+    env.cacheCfg.stale = 0;
+    if (r.ok && rnd() < 0.85) { const got = {}; r.accepted.concat(r.duplicate).forEach(x => { got[x] = 1; }); pend[key] = pend[key].filter(e => !got[e.logId]); }
+  }
+  same('หลัง cache คืนค่าเก่า');
+  const ids = env.sheets.Count_Log.data.slice(1).map(r => r[0]);
+  assert.strictEqual(new Set(ids).size, ids.length, 'ไม่มีแถวซ้ำ');
+});
+test('ดัชนีนับเกิน (แบบ T3) → ตรวจกับชีตก่อนตัดสิน: ผลตรง ✓ + บันทึก INDEX_FIX + ดัชนีถูกแก้ (v2.3.1)', () => {
+  A.sync(A.batch('V1', 10));
+  // ทำให้ดัชนีของ V1 นับเกิน 13 รายการ (ตราไม่เปลี่ยน → ระบบดูไม่ออกจาก cache อย่างเดียว)
+  const k = 'lx_L_2026Q4_V1', L = JSON.parse(cache().get(k));
+  L.d['TC21-01'][0] += 13; L.d['TC21-01'][1] += 13; L.n += 13; L.q += 13;
+  cache().put(k, JSON.stringify(L));
+  const seqs = env.sheets.Count_Log.data.slice(1).filter(r => r[2] === 'TC21-01' && r[5] === 'V1').map(r => Number(r[3]));
+  const ev = { id: 'TC21-01-EV1', type: 'CLOSE', projectId: '2026Q4', location: 'V1', staff: 'EMP-1', time: '2026-11-04 12:00:00',
+    lines: seqs.length, qty: seqs.length, fromSeq: Math.min(...seqs), upToSeq: Math.max(...seqs), total: seqs.length, at: 1 };
+  const r = A.call('sync', { entries: [], events: [ev] });
+  assert.strictEqual(r.events[0].match, 'OK', JSON.stringify(r.events[0]));
+  assert.strictEqual(r.events[0].srvLines, seqs.length);
+  const fix = env.sheets.Admin_Log.data.filter(x => x.includes('INDEX_FIX')).pop();
+  assert.ok(fix && /V1 TC21-01 ดัชนี 23\/23 ชีต 10\/10/.test(fix.join(' ')), 'บันทึกตัวเลขทั้งสองฝั่ง: ' + (fix || []).join(' '));
+  same('หลังแก้จากการตรวจทาน');
+});
+test('ตรวจทานตามรอบ (ทุก 5 นาที) แก้ดัชนีที่เพี้ยนแม้ไม่มีการปิด/ส่งงาน', () => {
+  const k = 'lx_L_2026Q4_A1', L = JSON.parse(cache().get(k));
+  L.d['TC21-02'] = [99, 99, 1, '']; cache().put(k, JSON.stringify(L));
+  cache().remove('lx_audit_2026Q4');                     // ครบ 5 นาที
+  const r = B.sync(B.batch('A2', 1));
+  assert.ok(r.prof.audit !== undefined && r.prof.fixed > 0, JSON.stringify(r.prof));
+  same('หลังตรวจทานตามรอบ');
+  const r2 = B.sync(B.batch('A2', 1));
+  assert.strictEqual(r2.prof.audit, undefined, 'ภายใน 5 นาทีไม่ตรวจซ้ำ');
+});
+
 console.log(`\nผล: ผ่าน ${pass} / ไม่ผ่าน ${fail}`);
 process.exit(fail ? 1 : 0);

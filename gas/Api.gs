@@ -7,7 +7,8 @@
  */
 
 var API_VERSION = 2;
-var ENTRY_TYPES = ['SCAN', 'MANUAL', 'VOID', 'FOUND', 'RECOUNT_SET', 'SWAP', 'SALE', 'HOLD'];
+// SELF_SET (v2.3.1) = ผู้ช่วยแก้ยอดของตัวเอง (เฉพาะชิ้นที่เครื่องนี้ยิง) · RECOUNT_SET = ผู้ดูแลแก้ยอดรวมทั้ง Location
+var ENTRY_TYPES = ['SCAN', 'MANUAL', 'VOID', 'FOUND', 'RECOUNT_SET', 'SELF_SET', 'SWAP', 'SALE', 'HOLD'];
 var SYNC_STATUSES = ['SETUP', 'COUNTING', 'COUNT_CLOSED'];
 var PAIR_MINUTES = 30;
 var PAIR_MAX_FAILS = 5;
@@ -304,10 +305,11 @@ function apiStock_(a) {
 // - ยอดแต่ละ Location เก็บ upto (แถวที่รวมแล้ว) กันนับซ้ำเมื่ออ่านขณะเครื่องอื่นกำลังบันทึก
 // - บันทึกดัชนีกลับเฉพาะตอนถือล็อก (ingest_) · คำขออ่านอย่างเดียว (locInfo) คำนวณในหน่วยความจำ ไม่เขียน
 
-var LX_VER = 1;
+var LX_VER = 2;   // 2 = v2.3.1 (ตราประจำ Location + ยอดต่อ SKU สำหรับผู้ช่วยแก้ยอดตัวเอง)
 var LX_TTL = 21600;
 var LX_COLS = 14;
 var LX_PREFIX = 'lx_L_';
+var LX_AUDIT_SEC = 300;   // ตรวจทานดัชนีกับชีตทุก 5 นาที (v2.3.1)
 
 /** ช่วงตัวเลข [[a,b],...] เรียงและไม่ซ้อนกัน */
 function rgAdd_(rg, n) {
@@ -339,37 +341,119 @@ function lxId_(id) {
   return m ? { dev: m[1], seq: parseInt(m[2], 10) } : null;
 }
 
-/** เก็บใน cache แบบย่อ (cache รับได้ ~100KB ต่อรายการ → ~1,500 SKU ต่อ Location) · Material ได้จากคีย์ */
+/** เก็บใน cache แบบย่อ (cache รับได้ ~100KB ต่อรายการ → ~1,000+ SKU ต่อ Location) · Material ได้จากคีย์ */
 function lxPack_(L) {
   var it = {};
-  Object.keys(L.items).forEach(function (k) { var x = L.items[k]; it[k] = [x.barcode, x.qty, x.byDevice]; });
+  Object.keys(L.items).forEach(function (k) { var x = L.items[k]; it[k] = [x.barcode, x.qty, x.byDevice, x.since, x.oe ? 1 : 0, x.le || 0]; });
   var dv = {};
   Object.keys(L.devices).forEach(function (d) { var x = L.devices[d]; dv[d] = [x.lines, x.qty, x.maxSeq, x.lastTime]; });
-  return JSON.stringify({ d: dv, i: it, q: L.qty, n: L.lines, u: L.upto });
+  return JSON.stringify({ d: dv, i: it, q: L.qty, n: L.lines, u: L.upto, c: L.clr });
 }
 function lxUnpack_(s) {
-  var o = JSON.parse(s), L = { devices: {}, items: {}, qty: o.q, lines: o.n, upto: o.u };
+  var o = JSON.parse(s), L = { devices: {}, items: {}, qty: o.q, lines: o.n, upto: o.u, clr: o.c || {} };
   Object.keys(o.d).forEach(function (d) { var x = o.d[d]; L.devices[d] = { lines: x[0], qty: x[1], maxSeq: x[2], lastTime: x[3] }; });
-  Object.keys(o.i).forEach(function (k) { var x = o.i[k]; L.items[k] = { key: k, material: k.indexOf('BC:') === 0 ? '' : k, barcode: x[0], qty: x[1], byDevice: x[2] }; });
+  Object.keys(o.i).forEach(function (k) {
+    var x = o.i[k];
+    L.items[k] = { key: k, material: k.indexOf('BC:') === 0 ? '' : k, barcode: x[0], qty: x[1], byDevice: x[2], since: x[3] || {}, oe: !!x[4], le: x[5] || null };
+  });
   return L;
 }
 
-function lxNewLoc_() { return { devices: {}, items: {}, qty: 0, lines: 0, upto: 0 }; }
-/** รวมแถว Count_Log (ค่าแสดงผล คอลัมน์ A–N) เข้ายอดของ Location */
+function lxNewLoc_() { return { devices: {}, items: {}, qty: 0, lines: 0, upto: 0, clr: {} }; }
+/** แถวนี้คือ "ล้าง Location นับใหม่" ของผู้ดูแล */
+function lxIsClear_(type, reason) { return type === 'RECOUNT_SET' && String(reason).indexOf('ล้าง Location') === 0; }
+/**
+ * รวมแถว Count_Log (ค่าแสดงผล คอลัมน์ A–N) เข้ายอดของ Location
+ * นอกจากยอด ยังจำต่อ SKU (v2.3.1 — ผู้ช่วยแก้ยอดของตัวเอง):
+ *   since[dev] = ยอดของเครื่องนั้นนับจากการล้าง Location ครั้งล่าสุด · oe = ผู้ดูแลแก้ยอดรวมแล้ว (หลังล้างครั้งล่าสุด)
+ *   le = [เครื่อง, เวลา] การแก้ล่าสุด · clr[dev] = Seq สูงสุดของเครื่องนั้นตอนล้าง Location ครั้งล่าสุด
+ */
 function lxAddRow_(L, r) {
-  var qty = Number(r[8]) || 0, seq = Number(r[3]) || 0;
-  var d = L.devices[r[2]] || (L.devices[r[2]] = { lines: 0, qty: 0, maxSeq: 0, lastTime: '' });
+  var qty = Number(r[8]) || 0, seq = Number(r[3]) || 0, dev = r[2], type = r[9], reason = r[11];
+  var d = L.devices[dev] || (L.devices[dev] = { lines: 0, qty: 0, maxSeq: 0, lastTime: '' });
+  var clear = lxIsClear_(type, reason);
+  if (clear && !L._clearing) {
+    // ชุดรายการล้างของผู้ดูแล: ทุกเครื่องเริ่มนับ "ของฉัน" ใหม่จากตรงนี้
+    Object.keys(L.devices).forEach(function (x) { L.clr[x] = L.devices[x].maxSeq; });
+  }
   d.lines++; d.qty = r3_(d.qty + qty); if (seq > d.maxSeq) d.maxSeq = seq; if (String(r[13]) > d.lastTime) d.lastTime = String(r[13]);
   var k = itemKey_(r[7], r[6]);
-  var it = L.items[k] || (L.items[k] = { key: k, material: r[7], barcode: r[6], qty: 0, byDevice: {} });
-  it.qty = r3_(it.qty + qty); it.byDevice[r[2]] = r3_((it.byDevice[r[2]] || 0) + qty);
+  var it = L.items[k] || (L.items[k] = { key: k, material: r[7], barcode: r[6], qty: 0, byDevice: {}, since: {}, oe: false, le: null });
+  it.qty = r3_(it.qty + qty); it.byDevice[dev] = r3_((it.byDevice[dev] || 0) + qty);
+  if (clear) { it.since = {}; it.oe = false; }
+  else {
+    it.since[dev] = r3_((it.since[dev] || 0) + qty);
+    if (type === 'RECOUNT_SET') it.oe = true;
+    if (type === 'RECOUNT_SET' || type === 'SELF_SET') it.le = [dev, String(r[13])];
+  }
   if (!it.barcode && r[6]) it.barcode = r[6];
   L.qty = r3_(L.qty + qty); L.lines++;
+  L._clearing = clear;
+}
+
+/**
+ * ใส่แถวลงดัชนี (ใช้ทั้งตอนสร้างใหม่ ตอนตามแถวที่เพิ่ม และตอนตรวจทาน)
+ * st = { meta, locs, dirty } · rows = ค่าแสดงผลคอลัมน์ A–N เริ่มที่แถว firstRow ของชีต
+ */
+function lxApply_(st, rows, firstRow, project) {
+  rows.forEach(function (r, i) {
+    var p = lxId_(r[0]);
+    if (p) rgAdd_(st.meta.ids[p.dev] || (st.meta.ids[p.dev] = []), p.seq);
+    else st.meta.odd++;
+    if (r[1] !== project) return;
+    var seq = Number(r[3]) || 0;
+    if (seq > 0) rgAdd_(st.meta.pseq[r[2]] || (st.meta.pseq[r[2]] = []), seq);
+    var loc = r[5];
+    if (!loc) return;
+    if (st.meta.locs.indexOf(loc) < 0) st.meta.locs.push(loc);
+    var L = st.locs[loc] || (st.locs[loc] = lxNewLoc_());
+    if (firstRow + i <= L.upto) return;
+    lxAddRow_(L, r);
+    st.dirty[loc] = true;
+  });
+}
+function lxNewMeta_(project, last) { return { v: LX_VER, project: project, last: last, ids: {}, pseq: {}, odd: 0, locs: [], lv: {} }; }
+/** สร้างดัชนีจากชีตทั้งชีต (ไม่แตะ cache) */
+function lxFromSheet_(sh, project) {
+  var last = sh.getLastRow();
+  var st = { meta: lxNewMeta_(project, last), locs: {}, dirty: {} };
+  var rows = last > 1 ? sh.getRange(2, 1, last - 1, LX_COLS).getDisplayValues() : [];
+  lxApply_(st, rows, 2, project);
+  Object.keys(st.locs).forEach(function (l) { st.locs[l].upto = last; delete st.locs[l]._clearing; });
+  st.last = last;
+  return st;
+}
+/** เทียบ { key: ตัวเลข } โดยไม่สนลำดับคีย์ (ค่า 0 = ไม่มี) */
+function lxSameMap_(a, b) {
+  a = a || {}; b = b || {};
+  var ks = {};
+  Object.keys(a).concat(Object.keys(b)).forEach(function (k) { ks[k] = 1; });
+  return Object.keys(ks).every(function (k) { return (a[k] || 0) === (b[k] || 0); });
+}
+/** เทียบดัชนีสองชุด (ยอดต่อเครื่อง / ต่อ SKU) คืนรายการที่ต่าง */
+function lxDiff_(a, b, names) {
+  var out = [];
+  names.forEach(function (l) {
+    var A = a[l] || lxNewLoc_(), B = b[l] || lxNewLoc_();
+    var ds = {};
+    Object.keys(A.devices).concat(Object.keys(B.devices)).forEach(function (d) { ds[d] = 1; });
+    Object.keys(ds).forEach(function (d) {
+      var x = A.devices[d] || { lines: 0, qty: 0 }, y = B.devices[d] || { lines: 0, qty: 0 };
+      if (x.lines !== y.lines || x.qty !== y.qty) out.push(l + ' ' + d + ' ดัชนี ' + x.lines + '/' + x.qty + ' ชีต ' + y.lines + '/' + y.qty);
+    });
+    var ks = {};
+    Object.keys(A.items).concat(Object.keys(B.items)).forEach(function (k) { ks[k] = 1; });
+    Object.keys(ks).forEach(function (k) {
+      var x = A.items[k] || { qty: 0, since: {} }, y = B.items[k] || { qty: 0, since: {} };
+      if (x.qty !== y.qty || lxSameMap_(x.since, y.since) === false || !!x.oe !== !!y.oe) out.push(l + ' ' + k + ' ดัชนี ' + x.qty + ' ชีต ' + y.qty);
+    });
+  });
+  return out;
 }
 
 /**
  * เปิดดัชนีของรอบ project · opt.write = ถือล็อกอยู่ บันทึกกลับได้
- * คืน { loc(names) → {loc: D}, has(dev, seq), stats(dev), maxAll(dev), add(rows, firstRow), save(), sh, last, rebuilt }
+ * คืน { loc(names) → {loc: D}, has(dev, seq), hasP, stats(dev), maxAll(dev), add(rows, firstRow), verify(...), audit(), save(), sh, last, rebuilt }
  */
 function logIdx_(project, opt) {
   opt = opt || {};
@@ -379,51 +463,31 @@ function logIdx_(project, opt) {
   var last = sh.getLastRow();
   var meta = null;
   try { meta = JSON.parse(cache.get('lx_meta') || 'null'); } catch (e) { meta = null; }
-  var X = { project: project, sh: sh, last: last, locs: {}, dirty: {}, rebuilt: false, write: !!opt.write, cache: cache, tail: [] };
+  var X = { project: project, sh: sh, last: last, locs: {}, dirty: {}, rebuilt: false, write: !!opt.write, cache: cache, fixes: [] };
 
-  function build(rows, firstRow) {
-    // rows = ค่าแสดงผลคอลัมน์ A–N เริ่มที่แถว firstRow ของชีต
-    rows.forEach(function (r, i) {
-      var p = lxId_(r[0]);
-      if (p) {
-        rgAdd_(X.meta.ids[p.dev] || (X.meta.ids[p.dev] = []), p.seq);
-      } else X.meta.odd++;
-      if (r[1] !== project) return;
-      var seq = Number(r[3]) || 0;
-      if (seq > 0) rgAdd_(X.meta.pseq[r[2]] || (X.meta.pseq[r[2]] = []), seq);
-      var loc = r[5];
-      if (!loc) return;
-      if (X.meta.locs.indexOf(loc) < 0) X.meta.locs.push(loc);
-      var L = X.locs[loc] || (X.locs[loc] = lxNewLoc_());
-      if (firstRow + i <= L.upto) return;
-      lxAddRow_(L, r);
-      X.dirty[loc] = true;
-    });
+  function adopt(st, why) {
+    X.meta = st.meta; X.locs = st.locs; X.dirty = {}; X.last = last = st.last;
+    Object.keys(X.locs).forEach(function (l) { X.dirty[l] = true; });
+    X.rebuilt = true; X.full = true; X.why = why;
   }
-  function rebuild() {
-    last = X.last = sh.getLastRow();   // อ่านใหม่: อาจเรียกหลังเพิ่มแถวแล้ว
-    X.meta = { v: LX_VER, project: project, last: last, ids: {}, pseq: {}, odd: 0, locs: [] };
-    X.locs = {}; X.dirty = {}; X.rebuilt = true;
-    var rows = last > 1 ? sh.getRange(2, 1, last - 1, LX_COLS).getDisplayValues() : [];
-    build(rows, 2);
-    Object.keys(X.locs).forEach(function (l) { X.locs[l].upto = last; X.dirty[l] = true; });
-    X.full = true;
-  }
+  function rebuild(why) { adopt(lxFromSheet_(sh, project), why || 'rebuild'); }
+  X.rebuild = rebuild;
 
   if (meta && meta.v === LX_VER && meta.project === project && meta.last <= last) {
     X.meta = meta;
+    if (!X.meta.lv) X.meta.lv = {};
     if (meta.last < last) {
       // มีแถวเพิ่มจากทางอื่น (หรือเครื่องอื่นกำลังบันทึก) → อ่านเฉพาะแถวที่เพิ่ม
       var rows = sh.getRange(meta.last + 1, 1, last - meta.last, LX_COLS).getDisplayValues();
       var need = {};
       rows.forEach(function (r) { if (r[1] === project && r[5]) need[r[5]] = true; });
-      if (!lxLoad_(X, Object.keys(need))) rebuild();
-      else { build(rows, meta.last + 1); X.meta.last = last; Object.keys(X.dirty).forEach(function (l) { X.locs[l].upto = last; }); }
+      if (!lxLoad_(X, Object.keys(need))) rebuild('cache ไม่ครบ');
+      else { lxApply_(X, rows, meta.last + 1, project); X.meta.last = last; Object.keys(X.dirty).forEach(function (l) { X.locs[l].upto = last; }); }
     }
-  } else rebuild();
+  } else rebuild(meta ? 'รอบ/รุ่น/จำนวนแถวเปลี่ยน' : 'ไม่มีดัชนีใน cache');
 
   X.loc = function (names) {
-    if (!X.full && !lxLoad_(X, names)) { rebuild(); }
+    if (!X.full && !lxLoad_(X, names)) rebuild('cache ไม่ครบ');
     var out = {};
     names.forEach(function (n) { if (X.locs[n]) out[n] = X.locs[n]; });
     return out;
@@ -437,16 +501,39 @@ function logIdx_(project, opt) {
     if (!rows.length) return;
     var need = {};
     rows.forEach(function (r) { if (r[1] === project && r[5]) need[r[5]] = true; });
-    if (!X.full && !lxLoad_(X, Object.keys(need))) { rebuild(); return; }   // rebuild อ่านชีตที่มีแถวใหม่แล้ว
+    if (!X.full && !lxLoad_(X, Object.keys(need))) { rebuild('cache ไม่ครบ'); return; }   // อ่านชีตที่มีแถวใหม่แล้ว
     var disp = rows.map(function (r) { return r.slice(0, LX_COLS).map(function (v) { return v === null || v === undefined ? '' : String(v); }); });
-    build(disp, firstRow);
+    lxApply_(X, disp, firstRow, project);
     X.last = X.meta.last = firstRow + rows.length - 1;
     Object.keys(X.dirty).forEach(function (l) { X.locs[l].upto = X.last; });
+  };
+  /**
+   * ตรวจทานกับชีตจริง (v2.3.1): อ่าน Count_Log ทั้งชีต เทียบ Location ที่ระบุ (ไม่ระบุ = ทุก Location)
+   * ต่าง → ใช้ค่าจากชีต + บันทึก INDEX_FIX ใน Admin_Log (ข้อมูลไว้หาต้นเหตุ) · คืนรายการที่ต่าง
+   */
+  X.verify = function (names, why) {
+    var fresh = lxFromSheet_(sh, project);
+    names = names || fresh.meta.locs.concat(X.meta.locs.filter(function (l) { return fresh.meta.locs.indexOf(l) < 0; }));
+    if (!X.full && !lxLoad_(X, names)) { adopt(fresh, 'cache ไม่ครบ (ตรวจทาน)'); return []; }
+    var diff = lxDiff_(X.locs, fresh.locs, names);
+    if (diff.length) {
+      try {
+        logAdmin_('INDEX_FIX', project, why + ' · ดัชนีไม่ตรงชีต ' + diff.length + ' จุด: ' + diff.slice(0, 6).join(' | ') +
+          ' · meta.last ' + X.meta.last + ' ชีต ' + fresh.last + ' · upto ' + names.slice(0, 3).map(function (l) { return l + '=' + (X.locs[l] ? X.locs[l].upto : '-'); }).join(','));
+      } catch (e) { }
+      X.fixes.push(diff.length);
+      adopt(fresh, 'แก้จากการตรวจทาน');
+    }
+    return diff;
   };
   X.save = function () {
     if (!X.write) return;
     var put = {};
-    Object.keys(X.dirty).forEach(function (l) { put[LX_PREFIX + project + '_' + l] = lxPack_(X.locs[l]); });
+    Object.keys(X.dirty).forEach(function (l) {
+      delete X.locs[l]._clearing;
+      put[LX_PREFIX + project + '_' + l] = lxPack_(X.locs[l]);
+      X.meta.lv[l] = X.locs[l].upto;   // ตราประจำ Location: ตอนโหลดต้องตรงกัน ไม่งั้นถือว่าได้ค่าเก่า
+    });
     try {
       if (Object.keys(put).length) cache.putAll(put, LX_TTL);
       cache.put('lx_meta', JSON.stringify(X.meta), LX_TTL);   // meta หลังสุด: ถ้าบันทึกไม่ครบ ครั้งหน้าจะเห็นแถวเพิ่มแล้วอ่านซ้ำเอง
@@ -461,7 +548,11 @@ function logIdx_(project, opt) {
   return X;
 }
 
-/** โหลดยอด Location จาก cache · Location ที่ดัชนีรู้จักแต่หายจาก cache → false (ต้องสร้างใหม่) */
+/**
+ * โหลดยอด Location จาก cache · คืน false (ต้องสร้างใหม่) เมื่อ
+ * - Location ที่ดัชนีรู้จักหายจาก cache
+ * - ตราไม่ตรง: upto ของ Location ≠ ที่ meta จดไว้ (cache ให้ค่ารุ่นเก่าของอย่างใดอย่างหนึ่ง) (v2.3.1)
+ */
 function lxLoad_(X, names) {
   var want = names.filter(function (n) { return !X.locs[n] && X.meta.locs.indexOf(n) >= 0; });
   if (!want.length) return true;
@@ -469,7 +560,9 @@ function lxLoad_(X, names) {
   for (var i = 0; i < want.length; i++) {
     var s = got[LX_PREFIX + X.project + '_' + want[i]];
     if (!s) return false;
-    X.locs[want[i]] = lxUnpack_(s);
+    var L = lxUnpack_(s);
+    if (X.meta.lv && X.meta.lv[want[i]] !== undefined && X.meta.lv[want[i]] !== L.upto) return false;
+    X.locs[want[i]] = L;
   }
   return true;
 }
@@ -654,9 +747,22 @@ function ingest_(deviceId, entries, events, source, device, appVersion) {
   if (need.length) refreshLocations_(project, need);
   prof.refresh = Date.now() - p0;
   out.seq = X.stats(deviceId);
+  // ตรวจทานดัชนีทั้งหมดกับชีตทุก ~5 นาที (v2.3.1): ดัชนีเพี้ยนด้วยเหตุใดก็ตาม → แก้เอง + บันทึก INDEX_FIX
+  if (source === 'SYNC') {
+    var ak = 'lx_audit_' + project, ac = CacheService.getScriptCache();
+    var due = true;
+    try { due = !ac.get(ak); } catch (e) { }
+    if (due) {
+      p0 = Date.now();
+      try { ac.put(ak, '1', LX_AUDIT_SEC); } catch (e) { }
+      X.verify(null, 'ตรวจทานตามรอบ');
+      prof.audit = Date.now() - p0;
+    }
+  }
   p0 = Date.now();
   X.save();
   prof.save = Date.now() - p0;
+  if (X.fixes.length) prof.fixed = X.fixes.reduce(function (a, b) { return a + b; }, 0);
   if (X.rebuilt) prof.rebuilt = 1;   // สร้างดัชนีใหม่จากชีตในคำขอนี้ (cache หาย / ชีตถูกแก้)
   return out;
 }
@@ -843,13 +949,17 @@ function applyLocEvents_(deviceId, events, project, source, X) {
     var ck = 'ev_' + deviceId + '_' + ev.id, prev = null;
     try { prev = evCache.get(ck); } catch (e) { }
     if (prev) { out.push(JSON.parse(prev)); return; }
-    var upTo = Number(ev.upToSeq) || 0, missing = 0;
-    var mine = ((X.loc([loc])[loc] || { devices: {} }).devices[deviceId]) || { lines: 0, qty: 0 };
-    var srvLines = mine.lines, srvQty = mine.qty;
-    // ยังได้รับรายการของเครื่องนี้ไม่ครบถึง upToSeq → ยังตัดสินไม่ได้ (WAIT)
-    for (var s = Number(ev.fromSeq) || upTo + 1; s <= upTo; s++) if (!X.hasP(deviceId, s)) { missing++; break; }
-    srvQty = r3_(srvQty);
-    var match = missing ? 'WAIT' : (srvLines === Number(ev.lines) && srvQty === Number(ev.qty) ? 'OK' : 'MISMATCH');
+    var upTo = Number(ev.upToSeq) || 0, missing, srvLines, srvQty, match;
+    function judge() {
+      var mine = ((X.loc([loc])[loc] || { devices: {} }).devices[deviceId]) || { lines: 0, qty: 0 };
+      srvLines = mine.lines; srvQty = r3_(mine.qty); missing = 0;
+      // ยังได้รับรายการของเครื่องนี้ไม่ครบถึง upToSeq → ยังตัดสินไม่ได้ (WAIT)
+      for (var s = Number(ev.fromSeq) || upTo + 1; s <= upTo; s++) if (!X.hasP(deviceId, s)) { missing++; break; }
+      match = missing ? 'WAIT' : (srvLines === Number(ev.lines) && srvQty === Number(ev.qty) ? 'OK' : 'MISMATCH');
+    }
+    judge();
+    // ดัชนีบอกว่าไม่ตรง → ตรวจกับชีตจริงก่อนตัดสิน (v2.3.1 — กรณี T3: ดัชนีนับเกิน ทั้งที่ชีตตรงกับเครื่อง)
+    if (match === 'MISMATCH' && X.write && X.verify([loc], 'ก่อนตัดสินไม่ตรง ' + loc + ' ' + deviceId + ' ' + ev.type + ' เครื่อง ' + ev.lines + '/' + ev.qty + ' ดัชนี ' + srvLines + '/' + srvQty).length) judge();
     var res = applyRole_(mt, locs, project, loc, deviceId, ev, match, upTo);
     if (ev.type !== 'OPEN' && ev.type !== 'JOIN' || res.note) {
       checks.push([now_(), project, deviceId, loc, res.logType || ev.type, normStaff_(ev.staff), Number(ev.lines) || 0, Number(ev.qty) || 0,
@@ -953,6 +1063,13 @@ function applyRole_(mt, locs, project, loc, deviceId, ev, match, upTo) {
       locSet(upd);
       break;
     case 'EDIT':
+      if (me && me.Role === 'HELPER' && !isOwner) {
+        // ผู้ช่วยแก้/ล้างยอดของตัวเอง (v2.3.1): นับครั้งที่แก้ ไม่เปลี่ยนผลตรวจของ Location และไม่ปิดธง
+        locSet({ Edits: (parseInt(L.Edits, 10) || 0) + 1 });
+        res.note = ev.mine ? (ev.clearMine ? 'ผู้ช่วยล้างยอดของตัวเอง' : 'ผู้ช่วยแก้ยอดของตัวเอง') : 'ผู้ช่วยแก้ยอด';
+        res.role = 'HELPER'; res.state = me.State;
+        break;
+      }
       var eu = { Last_Check: match, Edits: (parseInt(L.Edits, 10) || 0) + 1 };
       if (ev.clear && L.Flag_Check) {
         // ล้าง Location แล้วนับใหม่ = ตรวจซ้ำแล้ว → ปิดธงเดิม (เก็บข้อความเดิมไว้ใน Loc_Checks / Admin_Log)
@@ -1047,23 +1164,47 @@ function refreshLocations_(project, locNames, locs, mt) {
  */
 function basisChecker_(project, X) {
   // ยอดบนเซิร์ฟเวอร์จากดัชนี (v2.3.0) + รายการก่อนหน้าในชุดเดียวกัน (ยังไม่ได้บันทึก)
-  var map = {}, devs = {}, loaded = {};
+  // since/oe (v2.3.1): ยอดของแต่ละเครื่องนับจากล้าง Location ครั้งล่าสุด และผู้ดูแลแก้ยอดรวม SKU แล้วหรือยัง
+  var map = {}, devs = {}, loaded = {}, since = {}, oe = {};
   function load(loc) {
     if (loaded[loc]) return;
     loaded[loc] = true;
     var D = (X || logIdx_(project)).loc([loc])[loc];
     if (!D) return;
-    Object.keys(D.items).forEach(function (k) { map[loc + '|' + k] = r3_((map[loc + '|' + k] || 0) + D.items[k].qty); });
+    Object.keys(D.items).forEach(function (k) {
+      var it = D.items[k], kk = loc + '|' + k;
+      map[kk] = r3_((map[kk] || 0) + it.qty);
+      Object.keys(it.since || {}).forEach(function (d) { since[kk + '|' + d] = it.since[d]; });
+      if (it.oe) oe[kk] = true;
+    });
     Object.keys(D.devices).forEach(function (d) { (devs[loc] || (devs[loc] = {}))[d] = true; });
   }
-  function add(loc, mat, bc, qty, dev) {
-    var k = loc + '|' + itemKey_(mat, bc);
-    map[k] = r3_((map[k] || 0) + (Number(qty) || 0));
+  function add(loc, e, dev) {
+    var kk = loc + '|' + itemKey_(e.material, e.barcode), qty = Number(e.qty) || 0;
+    map[kk] = r3_((map[kk] || 0) + qty);
     (devs[loc] || (devs[loc] = {}))[dev] = true;
+    if (lxIsClear_(e.type, e.reason)) {
+      Object.keys(since).forEach(function (x) { if (x.indexOf(kk + '|') === 0) delete since[x]; });
+      delete oe[kk];
+    } else {
+      since[kk + '|' + dev] = r3_((since[kk + '|' + dev] || 0) + qty);
+      if (e.type === 'RECOUNT_SET') oe[kk] = true;
+    }
   }
   var problems = [];
   return {
     check: function (e, loc, deviceId) {
+      if (e.type === 'SELF_SET') {
+        // ผู้ช่วยแก้ยอดของตัวเอง: เทียบกับยอดของเครื่องนี้ (นับจากล้างครั้งล่าสุด) + ผู้ดูแลแก้ SKU นี้ไปแล้วหรือยัง
+        load(loc);
+        var kk = loc + '|' + itemKey_(e.material, e.barcode), sku = e.material || e.barcode;
+        var mine = since[kk + '|' + deviceId] || 0;
+        if (oe[kk]) problems.push({ loc: loc, note: 'ผู้ช่วย ' + deviceId + ' แก้ยอดของตัวเองหลังผู้ดูแลแก้ยอดรวม ' + sku + ' (อาจแก้ซ้ำ)' });
+        if (e.basis === undefined || e.basis === null || e.basis === '' || r3_(e.basis) !== mine) {
+          problems.push({ loc: loc, note: 'ผู้ช่วย ' + deviceId + ' แก้ ' + sku + ' จากยอดของตัวเองที่ไม่ตรง: เห็น ' + e.basis + ' เซิร์ฟเวอร์ ' + mine });
+        } else if (r3_(mine + (Number(e.qty) || 0)) < 0) problems.push({ loc: loc, note: 'ผู้ช่วย ' + deviceId + ' แก้ ' + sku + ' จนยอดของตัวเองติดลบ' });
+        return;
+      }
       if (e.type !== 'RECOUNT_SET') return;
       load(loc);
       var k = loc + '|' + itemKey_(e.material, e.barcode);
@@ -1075,7 +1216,7 @@ function basisChecker_(project, X) {
       }
       if (r3_(e.basis) !== cur) problems.push({ loc: loc, note: 'ยอดเปลี่ยนระหว่างแก้ ' + (e.material || e.barcode) + ': เห็น ' + r3_(e.basis) + ' เซิร์ฟเวอร์ ' + cur });
     },
-    added: function (e, loc, deviceId) { if (loaded[loc]) add(loc, e.material, e.barcode, e.qty, deviceId); },
+    added: function (e, loc, deviceId) { if (loaded[loc]) add(loc, e, deviceId); },
     problems: problems
   };
 }
@@ -1160,9 +1301,16 @@ function apiLocInfo_(a, req) {
   });
   var t = table_('Locations'), li = locIdx_(t, loc);
   var L = li >= 0 ? rowObj_(t, t.rows[li]) : {};
+  // การแก้ต่อ SKU (v2.3.1): ผู้ดูแลแก้ยอดรวมแล้ว (ผู้ช่วยแก้ของตัวเองไม่ได้) · ใครแก้ล่าสุด (เตือนก่อนแก้)
+  var edits = {};
+  Object.keys(D.items).forEach(function (k) {
+    var it = D.items[k];
+    if (it.oe || it.le) edits[k] = { oe: it.oe ? 1 : 0, by: it.le ? it.le[0] : '', at: it.le ? it.le[1] : '' };
+  });
   return {
     ok: true, location: loc, status: L.Status || '', flag: L.Flag || '', owner: owner, me: me, members: list,
-    others: { items: others, qty: r3_(othersQty) }, total: D.qty
+    others: { items: others, qty: r3_(othersQty) }, total: D.qty,
+    clr: (D.clr && D.clr[a.deviceId]) || 0, edits: edits
   };
 }
 

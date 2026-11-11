@@ -472,5 +472,82 @@ console.log('\nธงต้องตรวจซ้ำ: ปิดไม่ลบ
   });
 }
 
+console.log('\nผู้ช่วยแก้ยอดของตัวเอง (v2.3.1)');
+{
+  const O = device('TC21-01', 'EMP-K', '2.3.1'), H = device('TC21-02', 'EMP-KH', '2.3.1'), H2 = device('TC21-03', 'EMP-C', '2.3.1');
+  [O, H, H2].forEach(d => { d.seq = 3000 + d.seq; d.at = 5000; });
+  const flagOf = l => (loc(l).Flag_Check || '');
+  test('ผู้ช่วยแก้ยอดของตัวเองจาก basis ที่ตรง → ไม่ติดธง · ยอดรวมเปลี่ยนเฉพาะส่วนของผู้ช่วย · Edits +1 แต่ผลตรวจ Location ไม่เปลี่ยน', () => {
+    O.sync([O.scan('W1', BC1, MAT1, 1), O.scan('W1', BC1, MAT1, 1), O.scan('W1', BC1, MAT1, 1)], [O.ev('OPEN', 'W1')]);
+    H.sync([1, 2, 3, 4, 5, 6, 7].map(() => H.scan('W1', BC1, MAT1, 1)), [H.ev('JOIN', 'W1')]);
+    const before = loc('W1');
+    const r = H.sync([H.scan('W1', BC1, MAT1, -2, { type: 'SELF_SET', basis: 7, reason: 'ผู้ช่วยแก้ยอดของตัวเอง 7 → 5' })], [H.ev('EDIT', 'W1', { mine: true })]);
+    assert.ok(!r.flags, JSON.stringify(r.flags));
+    assert.strictEqual(flagOf('W1'), '');
+    const st = run('apiDevicesState()');
+    assert.strictEqual(st.locTotals.W1.qty, 8);
+    assert.strictEqual(st.locTotals.W1.dev['TC21-02'].qty, 5);
+    assert.strictEqual(Number(loc('W1').Edits), (Number(before.Edits) || 0) + 1);
+    assert.strictEqual(loc('W1').Last_Check, before.Last_Check);
+    assert.ok(env.sheets.Loc_Checks.data.slice(-1)[0].join(' ').includes('ผู้ช่วยแก้ยอดของตัวเอง'));
+  });
+  test('ผู้ช่วยแก้จาก basis ที่ไม่ตรงกับยอดของตัวเองบนเซิร์ฟเวอร์ → ติดธงต้องตรวจซ้ำ', () => {
+    const r = H.sync([H.scan('W1', BC1, MAT1, -1, { type: 'SELF_SET', basis: 9, reason: 'ผู้ช่วยแก้ยอดของตัวเอง' })], [H.ev('EDIT', 'W1', { mine: true })]);
+    assert.ok(r.flags && /จากยอดของตัวเองที่ไม่ตรง: เห็น 9 เซิร์ฟเวอร์ 5/.test(r.flags[0].note), JSON.stringify(r.flags));
+    run('apiLocResolveFlag("W1", "ทดสอบ")');
+  });
+  test('ผู้ช่วย 2 เครื่องแก้ SKU เดียวกันพร้อมกัน → ไม่ชนกัน (ต่างคนแก้ส่วนของตัวเอง)', () => {
+    H2.sync([H2.scan('W1', BC1, MAT1, 1), H2.scan('W1', BC1, MAT1, 1)], [H2.ev('JOIN', 'W1')]);
+    const r1 = H.sync([H.scan('W1', BC1, MAT1, -1, { type: 'SELF_SET', basis: 4, reason: 'แก้' })]);
+    const r2 = H2.sync([H2.scan('W1', BC1, MAT1, -1, { type: 'SELF_SET', basis: 2, reason: 'แก้' })]);
+    assert.ok(!r1.flags && !r2.flags, JSON.stringify([r1.flags, r2.flags]));
+  });
+  test('locInfo บอกเครื่องอื่นว่าใครแก้ SKU ล่าสุด (ใช้เตือนก่อนแก้)', () => {
+    const i = O.info('W1');
+    assert.strictEqual(i.edits[MAT1].by, 'TC21-03');
+    assert.strictEqual(i.edits[MAT1].oe, 0);
+  });
+  test('ผู้ดูแลแก้ยอดรวม SKU แล้ว → locInfo บอก oe · ผู้ช่วยยังส่ง SELF_SET มา (เช่นออฟไลน์) → ติดธง "อาจแก้ซ้ำ"', () => {
+    const tot = run('apiDevicesState()').locTotals.W1.qty;
+    O.sync([O.scan('W1', BC1, MAT1, -1, { type: 'RECOUNT_SET', basis: tot, reason: 'แก้ยอด Location' })], [O.ev('EDIT', 'W1')]);
+    assert.strictEqual(H.info('W1').edits[MAT1].oe, 1);
+    const r = H.sync([H.scan('W1', BC1, MAT1, -1, { type: 'SELF_SET', basis: 3, reason: 'แก้' })]);
+    assert.ok(r.flags && /หลังผู้ดูแลแก้ยอดรวม .* \(อาจแก้ซ้ำ\)/.test(r.flags[0].note), JSON.stringify(r.flags));
+    run('apiLocResolveFlag("W1", "ทดสอบ")');
+  });
+  test('ผู้ดูแลล้าง Location นับใหม่ → ยอดของฉันของผู้ช่วยเริ่มใหม่ (clr = Seq ตอนล้าง) · oe หาย · แก้จากยอดใหม่ได้ไม่ติดธง', () => {
+    const items = run('apiDevicesState()').locTotals.W1;
+    O.sync([O.scan('W1', BC1, MAT1, -items.qty, { type: 'RECOUNT_SET', basis: items.qty, reason: 'ล้าง Location นับใหม่ (เดิม ' + items.qty + ')' })], [O.ev('EDIT', 'W1', { clear: true })]);
+    const i = H.info('W1');
+    assert.strictEqual(i.clr, H.seq, 'clr = Seq ล่าสุดของผู้ช่วยตอนล้าง');
+    assert.strictEqual((i.edits[MAT1] || {}).oe || 0, 0);
+    H.sync([H.scan('W1', BC1, MAT1, 1), H.scan('W1', BC1, MAT1, 1), H.scan('W1', BC1, MAT1, 1)]);
+    const r = H.sync([H.scan('W1', BC1, MAT1, -1, { type: 'SELF_SET', basis: 3, reason: 'แก้' })]);
+    assert.ok(!r.flags, JSON.stringify(r.flags));
+    assert.strictEqual(run('apiDevicesState()').locTotals.W1.qty, 2);
+  });
+  test('ผู้ช่วยแก้จนยอดของตัวเองติดลบ → ติดธง', () => {
+    const r = H.sync([H.scan('W1', BC1, MAT1, -5, { type: 'SELF_SET', basis: 2, reason: 'แก้' })]);
+    assert.ok(r.flags && /ติดลบ/.test(r.flags[0].note), JSON.stringify(r.flags));
+    run('apiLocResolveFlag("W1", "ทดสอบ")');
+  });
+}
+
+test('หน้า Admin: ยอดเซิร์ฟเวอร์ต่อ Location/เครื่อง ตรงกับชีต + ผลตรวจล่าสุดมีตัวเลขเครื่อง vs เซิร์ฟเวอร์ (v2.3.1)', () => {
+  const st = run('apiDevicesState()');
+  const rows = env.sheets.Count_Log.data.slice(1).filter(r => r[1] === st.projectId);
+  const names = Object.keys(st.locTotals);
+  assert.ok(names.length > 0);
+  names.forEach(l => {
+    const mine = rows.filter(r => r[5] === l);
+    const q = Math.round(mine.reduce((a, r) => a + Number(r[8]), 0) * 1000) / 1000;
+    assert.strictEqual(st.locTotals[l].qty, q, l);
+    assert.strictEqual(st.locTotals[l].lines, mine.length, l);
+    Object.keys(st.locTotals[l].dev).forEach(d => assert.strictEqual(st.locTotals[l].dev[d].lines, mine.filter(r => r[2] === d).length, l + ' ' + d));
+  });
+  const c = Object.values(st.locChecks)[0];
+  assert.ok(c && c.devLines !== undefined && c.srvLines !== undefined && c.match, JSON.stringify(c));
+});
+
 console.log('\nผล: ผ่าน ' + pass + ' / ไม่ผ่าน ' + fail);
 process.exit(fail ? 1 : 0);

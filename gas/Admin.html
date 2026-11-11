@@ -541,22 +541,31 @@ function renderDevices(d) {
   var byLoc = {};
   (d.members || []).forEach(function (m) { (byLoc[m.location] = byLoc[m.location] || []).push(m); });
   var locs = d.locations.slice().sort(function (a, b) { return (b.Flag ? 1 : 0) - (a.Flag ? 1 : 0) || String(a.Location).localeCompare(String(b.Location), 'en', { numeric: true }); });
-  $('locTbl').innerHTML = '<tr><th>Location</th><th>สถานะ</th><th>ผู้ดูแล</th><th>เครื่องที่ร่วมนับ</th><th>ต้องตรวจซ้ำ</th><th>ปิดเมื่อ</th><th>ตรวจยอดกับเครื่อง</th><th class="n">แก้</th><th></th></tr>' +
+  var TOT = d.locTotals || {}, CHK = d.locChecks || {};
+  var n0 = function (v) { return Number(v || 0).toLocaleString('en-US', { maximumFractionDigits: 3 }); };
+  $('locTbl').innerHTML = '<tr><th>Location</th><th>สถานะ</th><th>ผู้ดูแล</th><th>เครื่องที่ร่วมนับ</th><th class="n">ยอดเซิร์ฟเวอร์</th><th class="n">ยอดตอนปิด</th><th>ต้องตรวจซ้ำ</th><th>ปิดเมื่อ</th><th>ตรวจยอดกับเครื่อง</th><th class="n">แก้</th><th></th></tr>' +
     (locs.length ? locs.map(function (l) {
       var m = l.Last_Check === 'OK' ? '<span class="pill ok">✓ ตรง</span>' : l.Last_Check === 'MISMATCH' ? '<span class="pill bad">ไม่ตรง</span>' : l.Last_Check === 'WAIT' ? '<span class="pill warn">รอข้อมูล</span>' : '';
+      // ไม่ตรง / รอข้อมูล → แสดงตัวเลขที่เทียบกัน (เครื่อง vs เซิร์ฟเวอร์ ตอนตรวจครั้งล่าสุด) (v2.3.1)
+      var c = CHK[l.Location];
+      if (c && c.match !== 'OK' && l.Last_Check !== 'OK') m += '<div class="muted">' + esc(c.device) + ' ' + esc(c.event) + ': เครื่อง ' + n0(c.devLines) + ' ร./' + n0(c.devQty) + ' ชิ้น · เซิร์ฟเวอร์ ' + n0(c.srvLines) + ' ร./' + n0(c.srvQty) + ' ชิ้น</div>';
+      var T = TOT[l.Location] || { qty: 0, lines: 0, sku: 0, dev: {} };
+      var ct = l.Close_Total === '' || l.Close_Total === undefined || l.Close_Total === null ? '' : Number(l.Close_Total);
+      var ctHtml = ct === '' ? '' : n0(ct) + (l.Status === 'ปิดแล้ว' && ct !== T.qty ? ' <span class="pill warn">≠ เซิร์ฟเวอร์</span>' : '');
       var mem = (byLoc[l.Location] || []);
       var memHtml = mem.map(function (x) {
+        var dq = T.dev[x.device];
         var st = STATE[x.state] || x.state;
         var cls = x.role === 'HELPER' && !(x.state === 'SUBMITTED' && x.match === 'OK') ? 'warn' : 'info';
         return '<div><b>' + esc(x.device) + '</b> ' + (x.role === 'OWNER' ? 'ผู้ดูแล' : 'ผู้ช่วย') + ' <span class="pill ' + cls + '">' + esc(st) +
-          (x.state === 'SUBMITTED' && x.match !== 'OK' ? ' (รอข้อมูล)' : '') + '</span>' + (x.subBy === 'ADMIN' ? ' <span class="muted">แทนโดยหัวหน้าทีม</span>' : '') +
+          (x.state === 'SUBMITTED' && x.match !== 'OK' ? ' (รอข้อมูล)' : '') + '</span>' + (dq ? ' <span class="muted">' + n0(dq.qty) + ' ชิ้น</span>' : '') + (x.subBy === 'ADMIN' ? ' <span class="muted">แทนโดยหัวหน้าทีม</span>' : '') +
           (x.role === 'HELPER' && x.state !== 'SUBMITTED' ? ' <button class="btn sec" onclick="submitFor(\'' + esc(l.Location) + '\',\'' + esc(x.device) + '\')">ส่งงานแทน</button>' : '') + '</div>';
       }).join('');
       return '<tr><td><b>' + esc(l.Location) + '</b></td><td>' + esc(l.Status) + (l.Status_Detail ? '<div class="muted">' + esc(l.Status_Detail) + '</div>' : '') + '</td><td>' + esc(l.Owner || l.Open_By) +
-        '</td><td>' + (memHtml || esc(l.Devices)) + '</td><td>' + (l.Flag ? '<span class="pill bad">' + esc(l.Flag) + '</span>' : '') +
+        '</td><td>' + (memHtml || esc(l.Devices)) + '</td><td class="n"><b>' + n0(T.qty) + '</b><div class="muted">' + n0(T.lines) + ' ร. · ' + T.sku + ' SKU</div></td><td class="n">' + ctHtml + '</td><td>' + (l.Flag ? '<span class="pill bad">' + esc(l.Flag) + '</span>' : '') +
         (l.Flag_Check ? '<div><button class="btn sec" onclick="resolveFlag(\'' + esc(l.Location) + '\')">ปิดธง</button></div>' : '') + '</td><td>' + esc(l.Closed_Time) + '</td><td>' + m +
         '</td><td class="n">' + esc(l.Edits) + '</td><td><button class="btn sec" onclick="transferLoc(\'' + esc(l.Location) + '\')">โอนการดูแล</button></td></tr>';
-    }).join('') : '<tr><td colspan="9" class="muted">ยังไม่มี Location</td></tr>');
+    }).join('') : '<tr><td colspan="11" class="muted">ยังไม่มี Location</td></tr>');
   renderLabelLinks();
 }
 function renderLabelLinks() {

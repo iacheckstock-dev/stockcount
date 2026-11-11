@@ -93,14 +93,23 @@ function createEnv() {
   const cacheStore = {};
   const LIM = 100 * 1024;   // CacheService จริง: ค่าละไม่เกิน 100KB
   const chk = (k, v) => { if (String(v).length > LIM) throw new Error('Argument too large: ' + k); };
-  const cache = { put: (k, v) => { chk(k, v); cacheStore[k] = String(v); }, putAll: o => { Object.keys(o).forEach(k => chk(k, o[k])); Object.keys(o).forEach(k => { cacheStore[k] = String(o[k]); }); }, get: k => cacheStore[k] || null, remove: k => { delete cacheStore[k]; },
-    getAll: ks => { const o = {}; ks.forEach(k => { if (k in cacheStore) o[k] = cacheStore[k]; }); return o; } };
+  // stale: จำลอง CacheService ที่คืนค่ารุ่นก่อนหน้าได้ (แต่ละคีย์อิสระ) — ใช้ใน tests/index-test.js
+  const hist = {}, cacheCfg = { stale: 0, rnd: Math.random };
+  const keep = (k, v) => { cacheStore[k] = String(v); (hist[k] = hist[k] || []).push(String(v)); if (hist[k].length > 3) hist[k].shift(); };
+  const read = k => {
+    if (!(k in cacheStore)) return null;
+    if (cacheCfg.stale && hist[k] && hist[k].length > 1 && cacheCfg.rnd() < cacheCfg.stale) return hist[k][Math.floor(cacheCfg.rnd() * (hist[k].length - 1))];
+    return cacheStore[k];
+  };
+  const cache = { put: (k, v) => { chk(k, v); keep(k, v); }, putAll: o => { Object.keys(o).forEach(k => chk(k, o[k])); Object.keys(o).forEach(k => keep(k, o[k])); },
+    get: k => read(k), remove: k => { delete cacheStore[k]; delete hist[k]; },
+    getAll: ks => { const o = {}; ks.forEach(k => { const v = read(k); if (v !== null) o[k] = v; }); return o; } };
   ctx.CacheService = { getScriptCache: () => cache };
   vm.createContext(ctx);
   for (const f of ['Core.gs', 'Code.gs', 'Api.gs']) vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'gas', f), 'utf8'), ctx, { filename: f });
   const run = (code, vars) => vm.runInContext(code, Object.assign(ctx, vars || {}));
   const post = body => JSON.parse(run('doPost(_req).getContent()', { _req: { postData: { contents: JSON.stringify(body) } } }));
-  return { ctx, sheets, run, post, lockTrace, stats };
+  return { ctx, sheets, run, post, lockTrace, stats, cacheCfg };
 }
 
 function loadSamples(Core) {

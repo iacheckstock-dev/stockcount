@@ -12,7 +12,7 @@ var SCHEMA_VERSION = 5;
  * เวอร์ชันของระบบ (ใช้เลขเดียวทั้งแอป TC21 และเซิร์ฟเวอร์ ตาม Semantic Versioning MAJOR.MINOR.PATCH)
  * ต้องตรงกับ APP_VERSION ใน app/app.js และ appVersion ใน app/config.json — ดู CHANGELOG.md
  */
-var SYSTEM_VERSION = '2.3.0';
+var SYSTEM_VERSION = '2.3.1';
 
 var SHEETS = {
   Config: ['Key', 'Value', 'Note'],
@@ -170,7 +170,7 @@ function ensureSetup_() {
 // ---------- Config / Log ----------
 
 function readConfig_() {
-  // ในคำขอจากเครื่อง อ่านครั้งเดียวต่อคำขอ (v2.3.0) — คืนสำเนา ผู้เรียกแก้ได้โดยไม่กระทบกัน
+  // ในคำขอจากเครื่อง อ่านครั้งเดียวต่อคำขอ (v2.3.1) — คืนสำเนา ผู้เรียกแก้ได้โดยไม่กระทบกัน
   if (typeof REQ_ !== 'undefined' && REQ_ && REQ_.cfg) return Object.assign({}, REQ_.cfg);
   var sh = SpreadsheetApp.getActive().getSheetByName('Config');
   var out = {};
@@ -380,7 +380,7 @@ function apiOpenRound(projectId, countDate) {
       throw new Error('รอบ ' + cfg.PROJECT_ID + ' อยู่ในสถานะ ' + st + ' ต้องปิดรอบก่อนจึงเปิดรอบใหม่ได้');
     }
     setConfig_({ PROJECT_ID: projectId, COUNT_DATE: countDate, ROUND_STATUS: 'SETUP' });
-    lxReset_();   // ดัชนี Count_Log ของรอบเดิมไม่ใช้ต่อ (v2.3.0)
+    lxReset_();   // ดัชนี Count_Log ของรอบเดิมไม่ใช้ต่อ (v2.3.1)
     logAdmin_('OPEN_ROUND', projectId, 'วันนับ ' + countDate + (st === 'SETUP' && cfg.PROJECT_ID ? ' (แก้จาก ' + cfg.PROJECT_ID + ' ' + cfg.COUNT_DATE + ')' : ''));
     return apiGetState();
   });
@@ -555,9 +555,40 @@ function apiDevicesState() {
       .map(function (s) { return { code: normStaff_(s.Staff_Code), name: s.Name, role: s.Role, active: String(s.Active).toUpperCase() !== 'N' }; }),
     quarantine: Math.max(0, q.length - 1),
     locations: locs.rows.filter(function (r) { return r[0]; }).map(function (r) { return rowObj_(locs, r); }),
+    locTotals: locTotalsForAdmin_(cfg.PROJECT_ID, locs),
+    locChecks: locChecksForAdmin_(cfg.PROJECT_ID),
     members: membersForAdmin_(cfg.PROJECT_ID),
     imports: readRaw_('Import_Files').slice(1).slice(-20).reverse()
   };
+}
+
+/** ยอดบนเซิร์ฟเวอร์ต่อ Location และต่อเครื่อง (จากดัชนี — ไม่อ่าน Count_Log ทั้งชีต) (v2.3.1) */
+function locTotalsForAdmin_(project, locs) {
+  if (!project) return {};
+  var names = locs.rows.map(function (r) { return r[locs.idx.Location]; }).filter(String);
+  var X = logIdx_(project);
+  names = names.concat(X.meta.locs.filter(function (l) { return names.indexOf(l) < 0; }));
+  var D = X.loc(names), out = {};
+  Object.keys(D).forEach(function (l) {
+    var dev = {};
+    Object.keys(D[l].devices).forEach(function (d) { dev[d] = { qty: D[l].devices[d].qty, lines: D[l].devices[d].lines }; });
+    out[l] = { qty: D[l].qty, lines: D[l].lines, sku: Object.keys(D[l].items).filter(function (k) { return D[l].items[k].qty !== 0; }).length, dev: dev };
+  });
+  return out;
+}
+
+/** ผลตรวจยอดกับเครื่องครั้งล่าสุดต่อ Location (ส่งงาน/พัก/ปิด/แก้) — ตัวเลขเครื่องเทียบเซิร์ฟเวอร์ (v2.3.1) */
+function locChecksForAdmin_(project) {
+  var rows = readRaw_('Loc_Checks'), out = {};
+  if (rows.length < 2) return out;
+  var h = rows[0], ix = {};
+  h.forEach(function (c, i) { ix[c] = i; });
+  rows.slice(1).forEach(function (r) {
+    if (r[ix.Project_ID] !== project || !r[ix.Match]) return;
+    out[r[ix.Location]] = { device: r[ix.Device_ID], event: r[ix.Event], match: r[ix.Match], devLines: r[ix.Dev_Lines], devQty: r[ix.Dev_Qty],
+      srvLines: r[ix.Srv_Lines], srvQty: r[ix.Srv_Qty], time: String(r[ix.Time]) };
+  });
+  return out;
 }
 
 function membersForAdmin_(project) {
