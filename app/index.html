@@ -30,7 +30,7 @@
 <div id="menu" class="hidden">
   <button data-m="status">สถานะ / Export</button>
   <button data-m="locs">Location ที่นับแล้ว</button>
-  <button data-m="typeloc">ไปที่ Location (พิมพ์ชื่อ)</button>
+  <button data-m="typeloc">พิมพ์ชื่อ Location</button>
   <button data-m="ready">ตรวจความพร้อมใหม่</button>
 </div>
 <div id="banner" class="hidden"></div>
@@ -132,11 +132,15 @@
 <!-- Location ที่นับแล้ว -->
 <section id="v-locs" class="view">
   <h2>Location ที่นับแล้ว</h2>
+  <div id="locsSum" class="locsum"></div>
+  <div id="locsChips" class="chips">
+    <button data-f="todo">ต้องทำต่อ</button><button data-f="done">เสร็จแล้ว</button><button data-f="all">ทั้งหมด</button>
+  </div>
   <div id="locsHead" class="muted"></div>
   <ul id="locsList" class="items locs"></ul>
   <div class="actions">
     <button class="btn sec" id="btnLocsBack">กลับหน้านับ</button>
-    <button class="btn sec" id="btnLocsType">ไปที่ Location (พิมพ์ชื่อ)</button>
+    <button class="btn sec" id="btnLocsType">พิมพ์ชื่อ Location</button>
   </div>
 </section>
 

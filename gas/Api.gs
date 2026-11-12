@@ -1359,10 +1359,15 @@ function apiMyLocs_(a) {
   Object.keys(count).forEach(function (l) { names[l] = true; });
   var list = Object.keys(mine).map(function (loc) {
     var m = mine[loc], li = locIdx_(t, loc), L = li >= 0 ? rowObj_(t, t.rows[li]) : {};
-    var D = data[loc] || { qty: 0 };
-    return { location: loc, role: m.Role, state: m.State, match: m.Match, status: L.Status || '', total: D.qty, devices: count[loc] || 1, flag: L.Flag || '', owner: L.Owner || '' };
+    var D = data[loc] || { qty: 0 }, me = (D.devices || {})[a.deviceId];
+    // หน้า "Location ที่นับแล้ว" (v2.3.7): ยอดของฉันหลังล้าง · ผู้ช่วยส่งงานกี่เครื่อง · ยอดตอนปิด
+    var hp = mt.rows.filter(function (r) { return r[mt.idx.Project_ID] === project && r[mt.idx.Location] === loc && r[mt.idx.Role] === 'HELPER'; });
+    return { location: loc, role: m.Role, state: m.State, match: m.Match, status: L.Status || '', total: D.qty, devices: count[loc] || 1, flag: L.Flag || '', owner: L.Owner || '',
+      mineSc: me ? (me.sc === undefined ? me.qty : me.sc) : 0, closedTime: L.Closed_Time ? String(L.Closed_Time) : '',
+      closeTotal: L.Close_Total === '' || L.Close_Total === undefined ? null : Number(String(L.Close_Total).replace(/,/g, '')),
+      helpers: hp.length, helpersDone: hp.filter(function (r) { return r[mt.idx.State] === 'SUBMITTED' || r[mt.idx.State] === 'CLOSED'; }).length };
   });
-  return { ok: true, locs: list, names: Object.keys(names) };
+  return { ok: true, locs: list, names: Object.keys(names), at: now_() };
 }
 
 /** รุ่นเก่า (ก่อน 2.2.0) ยังเรียก locStatus — คืนผู้ดูแลถ้าเป็นเครื่องอื่น */

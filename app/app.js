@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2.3.6';
+  var APP_VERSION = '2.3.7';
   var QTY_CONFIRM = 150;      // จำนวนที่ป้อนเองเกินนี้ต้องยืนยันอีกครั้ง
   var QTY_MAX_DIGITS = 5;     // ยาวกว่านี้ = น่าจะยิงบาร์โค้ดเข้าช่องจำนวน
   var INFO_EVERY = 15000;     // ถามสถานะผู้ช่วย/ผู้ดูแลระหว่างนับร่วมกัน
@@ -626,7 +626,7 @@
     if (v === 'status') renderStatus();
     if (v === 'revoked') renderRevoked();
     renderBanner();
-    if (v === 'locs') { renderLocs(); loadMyLocs(); }
+    if (v === 'locs') { S.locsFilter = null; renderLocs(); loadMyLocs(); }   // เข้าหน้านี้ทุกครั้งเริ่มที่ "ต้องทำต่อ" (ถ้ามี)
     if (v === 'manual') { $('manQ').value = ''; renderManual(); setTimeout(function () { $('manQ').focus(); }, 50); }
     renderTop();
   }
@@ -1161,32 +1161,83 @@
   }
 
   // ---------- Location ที่นับแล้ว ----------
+  // v2.3.7: จัดกลุ่มตามสิ่งที่ต้องทำต่อ (กำลังนับ → ต้องทำต่อ → เสร็จแล้ว) · ในกลุ่มเรียงตามชื่อป้ายแบบตัวเลข (A2 ก่อน A10)
+  // ตัวเลขใหญ่ขวา = ยอดรวมทุกเครื่อง (ปิดแล้ว = ยอดตอนปิด) · "ของฉัน" นับหลังล้าง Location
   var STATE_TXT = { COUNTING: 'กำลังนับ', PAUSED: 'พักไว้', SUBMITTED: 'ส่งงานแล้ว', CLOSED: 'ปิดแล้ว' };
+  function natCmp(a, b) { return String(a).localeCompare(String(b), 'th', { numeric: true, sensitivity: 'base' }); }
+  function r3(v) { return Math.round(v * 1000) / 1000; }
+  /** ยอดของฉันหลังล้าง Location ครั้งล่าสุด: เซิร์ฟเวอร์ (sc) + รายการที่ยังไม่ส่ง · ถ้ามีรายการล้างค้างส่ง คิดจากในเครื่อง */
+  function mineAfterClear(loc, srv) {
+    var mine = S.entries.filter(function (e) { return e.location === loc && !e.rejected; });
+    var un = mine.filter(function (e) { return !e.synced; });
+    if (srv && srv.mineSc !== undefined && !un.some(isClearEntry)) return r3(un.reduce(function (t, e) { return t + e.qty; }, srv.mineSc));
+    var cut = clearSeq(loc);
+    mine.forEach(function (e) { if (isClearEntry(e) && e.seq > cut) cut = e.seq; });
+    return r3(mine.reduce(function (t, e) { return e.seq > cut && !isClearEntry(e) ? t + e.qty : t; }, 0));
+  }
+  function locRow(l) {
+    var r = S.roles[l] || {}, srv = S.myLocs[l], role = r.role || (srv && srv.role) || 'OWNER';
+    var state = l === S.loc ? 'COUNTING' : r.state || (srv && srv.state) || 'COUNTING';
+    var unsent = S.entries.reduce(function (t, e) { return e.location === l && !e.synced && !e.rejected ? t + e.qty : t; }, 0);
+    var x = { loc: l, role: role, state: state, srv: srv || {}, mine: mineAfterClear(l, srv), flag: srv && srv.flag || '' };
+    var closed = srv ? /ปิดแล้ว|CLOSED/.test(srv.status) : state === 'CLOSED';
+    x.done = !x.flag && l !== S.loc && (role === 'HELPER' ? state === 'SUBMITTED' || state === 'CLOSED' : state === 'CLOSED');
+    if (closed && srv && srv.closeTotal !== null && srv.closeTotal !== undefined && !unsent) x.total = srv.closeTotal;
+    else if (srv) x.total = r3(srv.total + unsent);
+    else x.total = combinedSummary(l).qty;   // ยังไม่เคยถามเซิร์ฟเวอร์ (ออฟไลน์): ยอดที่เครื่องรู้
+    if (l === S.loc) x.total = combinedSummary(l).qty;   // Location ปัจจุบัน: ยอดเดียวกับหน้านับ
+    x.closed = closed;
+    if (l === S.loc) x.tag = ['b', 'กำลังนับ'];
+    else if (x.flag) x.tag = ['r', 'ต้องตรวจซ้ำ'];
+    else if (x.done) x.tag = ['g', role === 'HELPER' && !closed ? 'ส่งงานแล้ว' : 'ปิด' + (srv && srv.closedTime ? ' ' + String(srv.closedTime).slice(11, 16) : 'แล้ว')];
+    else if (state === 'PAUSED') x.tag = ['y', 'พักไว้'];
+    else if (role === 'OWNER' && srv && srv.helpers > srv.helpersDone) x.tag = ['y', 'รอผู้ช่วยส่งงาน ' + srv.helpersDone + '/' + srv.helpers];
+    else if (role === 'HELPER' && state === 'SUBMITTED') x.tag = ['g', 'ส่งงานแล้ว'];
+    else x.tag = ['y', 'ยังไม่ปิด'];
+    return x;
+  }
   function renderLocs() {
     var locs = {};
-    S.entries.forEach(function (e) { if (e.location) { var x = locs[e.location] || (locs[e.location] = { last: '' }); if (e.scanTime > x.last) x.last = e.scanTime; } });
-    Object.keys(S.roles).forEach(function (l) { if (!locs[l]) locs[l] = { last: '' }; });
-    var order = { COUNTING: 1, PAUSED: 2, SUBMITTED: 3, CLOSED: 4 };
-    var list = Object.keys(locs).map(function (l) {
-      var r = S.roles[l] || {}, srv = S.myLocs[l] || {}, m = locSummary(l);
-      return { loc: l, role: r.role || srv.role || 'OWNER', state: l === S.loc ? 'COUNTING' : r.state || srv.state || 'COUNTING', mine: m.qty, sku: m.sku, last: locs[l].last || '', srv: srv };
-    }).sort(function (a, b) {
-      return (b.loc === S.loc) - (a.loc === S.loc) || (order[a.state] || 9) - (order[b.state] || 9) || String(b.last).localeCompare(String(a.last));
+    S.entries.forEach(function (e) { if (e.location) locs[e.location] = 1; });
+    Object.keys(S.roles).forEach(function (l) { locs[l] = 1; });
+    Object.keys(S.myLocs).forEach(function (l) { locs[l] = 1; });
+    var list = Object.keys(locs).map(locRow);
+    var here = list.filter(function (x) { return x.loc === S.loc; });
+    var todo = list.filter(function (x) { return x.loc !== S.loc && !x.done; }).sort(function (a, b) { return !!b.flag - !!a.flag || natCmp(a.loc, b.loc); });
+    var done = list.filter(function (x) { return x.done; }).sort(function (a, b) { return natCmp(a.loc, b.loc); });
+    var f = S.locsFilter || (todo.length ? 'todo' : 'all');
+    var total = r3(list.reduce(function (t, x) { return t + (x.total || 0); }, 0));
+    $('locsSum').innerHTML = '<div>เสร็จแล้ว<b>' + done.length + '</b></div><div>ยังไม่เสร็จ<b>' + (todo.length + here.length) + '</b></div><div>ยอดรวม<b>' + fmt(total) + '</b></div>';
+    $('locsChips').querySelectorAll('button').forEach(function (b) {
+      var n = { todo: todo.length, done: done.length, all: list.length }[b.dataset.f];
+      b.textContent = { todo: 'ต้องทำต่อ', done: 'เสร็จแล้ว', all: 'ทั้งหมด' }[b.dataset.f] + ' ' + n;
+      b.classList.toggle('on', b.dataset.f === f);
     });
-    $('locsHead').textContent = list.length ? list.length + ' Location · แตะเพื่อไปที่ Location นั้น' : 'ยังไม่มี Location ในรอบนี้';
-    $('locsList').innerHTML = list.map(function (x) {
-      var st = x.loc === S.loc ? 'อยู่ที่นี่' : STATE_TXT[x.state] || x.state;
-      var multi = x.srv.devices > 1;
-      return '<li data-l="' + esc(x.loc) + '" class="st-' + esc(x.state) + (x.loc === S.loc ? ' here' : '') + '"><div><div class="n"><span class="ln">' + esc(x.loc) + '</span> ' + esc(st) +
-        ' · ' + (x.role === 'HELPER' ? 'ผู้ช่วย' : 'ผู้ดูแล') + '</div><div class="c">ของฉัน ' + fmt(x.mine) + ' ชิ้น · ' + x.sku + ' SKU' + (x.last ? ' · ยิงล่าสุด ' + esc(x.last.slice(11, 16)) : '') + '</div>' +
-        (multi ? '<div class="c"><span class="badge">มีเครื่องอื่นร่วมนับ ' + x.srv.devices + ' เครื่อง · รวม ' + fmt(x.srv.total) + '</span></div>' : '') +
-        (x.srv.flag ? '<div class="c"><span class="badge r">' + esc(x.srv.flag) + '</span></div>' : '') + '</div></li>';
-    }).join('');
+    var old = S.online === false && S.myLocsAt ? ' · ยอดจากเซิร์ฟเวอร์เมื่อ ' + String(S.myLocsAt).slice(11, 16) + ' (ออฟไลน์)' : '';
+    $('locsHead').textContent = list.length ? 'ตัวเลขขวา = ยอดรวมทุกเครื่อง · แตะเพื่อไปที่ Location' + old : 'ยังไม่มี Location ในรอบนี้';
+    function row(x) {
+      var who = x.role === 'HELPER' ? 'ผู้ช่วย' : 'ผู้ดูแล';
+      var sub = 'ของฉัน ' + fmt(x.mine) + ' · ' + who + (x.srv.devices > 1 ? ' · ' + x.srv.devices + ' เครื่อง' : '');
+      return '<li data-l="' + esc(x.loc) + '" class="st-' + esc(x.state) + (x.done ? ' st-done' : '') + (x.loc === S.loc ? ' here' : '') + '"><div class="lmain"><div class="n"><span class="ln">' + esc(x.loc) + '</span>' +
+        '<span class="badge ' + x.tag[0] + '">' + esc(x.tag[1]) + '</span></div><div class="c">' + esc(sub) + '</div>' +
+        (x.flag ? '<div class="c"><span class="badge r">' + esc(x.flag) + '</span></div>' : '') + '</div>' +
+        '<div class="lq">' + fmt(x.total) + (x.closed && x.done ? '<small>ยอดสุดท้าย</small>' : '') + '</div></li>';
+    }
+    function grp(t, xs) { return xs.length ? '<li class="grp">' + esc(t) + '</li>' + xs.map(row).join('') : ''; }
+    var html = grp('กำลังนับ', here);
+    if (f !== 'done') html += grp('ต้องทำต่อ', todo);
+    if (f !== 'todo') html += grp('เสร็จแล้ว', done);
+    if (f === 'todo' && !todo.length) html += '<li class="grp">ไม่มีงานค้าง · แตะ "ทั้งหมด" เพื่อดู Location ที่เสร็จแล้ว</li>';
+    $('locsList').innerHTML = html;
   }
+  $('locsChips').addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-f]'); if (!b) return;
+    S.locsFilter = b.dataset.f; renderLocs(); $('locsList').scrollTop = 0; window.scrollTo(0, 0);
+  });
   function loadMyLocs() {
     if (S.online === false || !S.cfg.token) return Promise.resolve();
     return api('myLocs', {}, 8000).then(function (r) {
-      S.myLocs = {}; S.knownNames = r.names || [];
+      S.myLocs = {}; S.knownNames = r.names || []; S.myLocsAt = r.at || '';
       r.locs.forEach(function (x) {
         S.myLocs[x.location] = x;
         // เครื่องที่ข้อมูลถูกล้างแล้วจับคู่ใหม่ ได้บทบาทคืนจากเซิร์ฟเวอร์
@@ -1194,6 +1245,7 @@
         if (!cur || cur.role !== x.role) setRole(x.location, { role: x.role, state: x.location === S.loc ? 'COUNTING' : (cur && cur.state) || x.state });
       });
       DB.set('knownNames_' + S.projectId, S.knownNames);
+      DB.set('myLocs_' + S.projectId, { at: S.myLocsAt, locs: S.myLocs });   // ใช้ตอนออฟไลน์ (v2.3.7)
       return saveState();
     }, function () {}).then(function () { if (S.view === 'locs') renderLocs(); });
   }
@@ -1654,9 +1706,9 @@
   function switchProject(pid) {
     if (pid === S.projectId) return Promise.resolve();
     return loadEntries(pid).then(function () {
-      return Promise.all([DB.get('closedLocs_' + pid), DB.get('locChecks_' + pid), DB.get('loc'), DB.get('roles_' + pid), DB.get('knownNames_' + pid)]);
+      return Promise.all([DB.get('closedLocs_' + pid), DB.get('locChecks_' + pid), DB.get('loc'), DB.get('roles_' + pid), DB.get('knownNames_' + pid), DB.get('myLocs_' + pid)]);
     }).then(function (v) {
-      S.locChecks = v[1] || {}; S.roles = v[3] || {}; S.knownNames = v[4] || []; S.info = {}; S.myLocs = {};
+      S.locChecks = v[1] || {}; S.roles = v[3] || {}; S.knownNames = v[4] || []; S.info = {}; S.myLocs = (v[5] && v[5].locs) || {}; S.myLocsAt = (v[5] && v[5].at) || '';
       // ข้อมูลจากรุ่นก่อน 2.2.0: Location ที่ปิดแล้ว = ผู้ดูแลที่ปิดแล้ว
       (v[0] || []).forEach(function (l) { if (!S.roles[l]) S.roles[l] = { role: 'OWNER', state: 'CLOSED' }; });
       var lastLoc = v[2];

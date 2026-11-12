@@ -171,7 +171,8 @@ sequenceDiagram
 `owner` = null แปลว่ายังไม่มีใครเปิด · `me` = null แปลว่าเครื่องนี้ยังไม่เคยร่วม
 
 ## myLocs
-คำตอบ: `{ ok, locs: [{ location, role, state, match, status, total, devices, flag, owner }], names: ["A1", "D80", …] }`
+คำตอบ: `{ ok, locs: [{ location, role, state, match, status, total, devices, flag, owner, mineSc, closedTime, closeTotal, helpers, helpersDone }], names: ["A1", "D80", …], at }`
+- (v2.3.7) `mineSc` ยอดของเครื่องนี้หลังล้าง Location ครั้งล่าสุด · `closedTime` / `closeTotal` เวลาและยอดตอนปิด (ยังไม่ปิด = `""` / `null`) · `helpers` / `helpersDone` จำนวนผู้ช่วย / ที่ส่งงานแล้ว · `at` เวลาเซิร์ฟเวอร์ (แอปเก็บไว้แสดง "ยอดจากเซิร์ฟเวอร์เมื่อ" ตอนออฟไลน์)
 - `locs` = Location ที่เครื่องนี้เคยร่วมในรอบนี้ (ใช้คืนบทบาทหลังจับคู่ใหม่)
 - `names` = ชื่อ Location ทั้งรอบ (ใช้เตือนเมื่อพิมพ์ชื่อที่ไม่เคยมี)
 

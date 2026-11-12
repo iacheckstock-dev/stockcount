@@ -129,11 +129,22 @@ details { margin: 10px 0; } summary { color: #555; font-size: 14px; }
 .warnline { color: #7a4a00; font-size: 14px; font-weight: 600; }
 .badge.r { background: #fbebeb; color: #b42318; }
 /* Location ที่นับแล้ว */
-.items.locs li { display: block; }
+.items.locs li { display: flex; align-items: center; gap: 8px; }
+.items.locs li .lmain { flex: 1; min-width: 0; }
+.items.locs li .lq { font-size: 26px; font-weight: 700; text-align: right; min-width: 56px; line-height: 1.1; }
+.items.locs li .lq small { display: block; font-size: 11px; font-weight: 400; color: #666; }
+.items.locs li.grp { display: block; background: none; border: none; padding: 10px 2px 2px; font-size: 13px; color: #555; font-weight: 600; min-height: 0; }
+.items.locs li.st-done .lq { color: #1f7a3a; }
+.locsum { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 4px 0 8px; }
+.locsum div { background: #f2f2f0; border-radius: 8px; padding: 6px 8px; font-size: 13px; color: #555; }
+.locsum b { display: block; font-size: 20px; color: #111; }
+.chips { display: flex; gap: 6px; margin: 0 0 6px; }
+.chips button { flex: 1; border: 1px solid #bbb; background: #fff; border-radius: 99px; padding: 8px 4px; font-size: 15px; }
+.chips button.on { background: #111; color: #fff; border-color: #111; }
+.badge.g { background: #e6f4ea; color: #1f7a3a; }
 .items.locs .ln { font-size: 24px; font-weight: 700; margin-right: 4px; }
 .items.locs li.here { border: 2px solid #111; }
 .items.locs li.st-PAUSED { background: #fff8e6; }
-.items.locs li.st-CLOSED, .items.locs li.st-SUBMITTED { opacity: .8; }
 .btn.ok { background: #1f7a3a; color: #fff; }
 
 .fresh { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 4px 0 6px; font-size: 14px; }
