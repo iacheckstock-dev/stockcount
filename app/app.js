@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2.3.7';
+  var APP_VERSION = '2.3.8';
   var QTY_CONFIRM = 150;      // จำนวนที่ป้อนเองเกินนี้ต้องยืนยันอีกครั้ง
   var QTY_MAX_DIGITS = 5;     // ยาวกว่านี้ = น่าจะยิงบาร์โค้ดเข้าช่องจำนวน
   var INFO_EVERY = 15000;     // ถามสถานะผู้ช่วย/ผู้ดูแลระหว่างนับร่วมกัน
@@ -367,6 +367,18 @@
           SOUND.warn();
           result(false, 'หัวหน้าทีมโอนการดูแล ' + loc + ' แล้ว', 'ผู้ดูแลใหม่: ' + by + '\nเครื่องนี้เป็นผู้ช่วย (ส่งงานแล้ว) · นับเพิ่มได้ แล้วกด "ส่งงาน"');
         }
+      }
+      // หัวหน้าทีมส่งงานแทนเครื่องนี้ (v2.3.8): บอกครั้งเดียวต่อ Location · ถ้ามีรายการเข้าไปหลังจากนั้น ให้กดส่งงานยืนยันยอดล่าสุด
+      if (r.me && r.me.role === 'HELPER' && was !== 'OWNER') {
+        var sf = r.me.subBy === 'ADMIN', seen = (S.roles[loc] || {}).sfSeen;
+        if (sf && !seen && !S.checking) {
+          setRole(loc, { sfSeen: 1 }); saveState();
+          SOUND.warn();
+          result(false, 'หัวหน้าทีมส่งงานแทนเครื่องนี้ที่ ' + loc,
+            'ใช้ยอดที่เซิร์ฟเวอร์ได้รับตอนนั้น' + (r.me.stateAt ? ' (' + String(r.me.stateAt).slice(11, 16) + ')' : '') + '\n' +
+            (r.me.state === 'COUNTING' ? 'มีรายการจากเครื่องนี้ส่งเข้าไปหลังจากนั้น · กด "ส่งงาน" เพื่อยืนยันยอดล่าสุด' :
+              r.status === 'ปิดแล้ว' ? loc + ' ปิดแล้ว · ถ้ายิงเพิ่ม Location จะต้องตรวจซ้ำ' : 'ยิงเพิ่มได้ แล้วกด "ส่งงาน" อีกครั้ง'));
+        } else if (!sf && seen) setRole(loc, { sfSeen: 0 });
       }
       if (S.view === 'count' || S.view === 'loc') render();
       return r;
@@ -1123,7 +1135,7 @@
   $('tbLoc').onclick = function () { if (S.view === 'count' || S.view === 'loc') show('locs'); };
   $('btnManual').onclick = function () { if (!S.loc) { toast('ยิงป้าย Location ก่อน', true); return; } show('manual'); };
   /** ตรวจความพร้อมผ่านแล้ว (รอบนี้) — ยังไม่ผ่านห้ามเข้าหน้านับทุกทาง */
-  function isReady() { return !!(S.readiness && S.readiness.pass && S.readiness.project === S.projectId); }
+  function isReady() { return !!(S.readiness && S.readiness.pass && S.readiness.project === S.projectId && S.staff); }
   $('btnMenu').onclick = function (e) {
     e.stopPropagation();
     // ยังไม่พร้อม: ซ่อนเมนูที่พาเข้าหน้านับ เหลือ สถานะ/Export และ ตรวจความพร้อมใหม่
@@ -1629,7 +1641,9 @@
   function resetPairing() {
     S.cfg.token = ''; S.lastErr = '';
     S.roles = {}; S.locChecks = {}; S.info = {}; S.myLocs = {}; S.loc = null; S.staff = null;
-    return Promise.all([DB.set('cfg', S.cfg), saveState()]);
+    // v2.3.8: ล้างผลตรวจความพร้อมด้วย — เดิมข้อ DataWedge ผ่านจากค่าเก่า ทำให้จับคู่ใหม่แล้วเริ่มนับได้โดยยังไม่ยิงบัตร
+    S.dwOk = false; S.readiness = null;
+    return Promise.all([DB.set('cfg', S.cfg), DB.set('readiness', null), saveState()]);
   }
 
   function csvCell(v) { var s = v === null || v === undefined ? '' : String(v); return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
@@ -1671,6 +1685,8 @@
     api('pair', { code: code, pendingCount: p.length, pendingFrom: seqs.length ? Math.min.apply(null, seqs) : 0, pendingTo: seqs.length ? Math.max.apply(null, seqs) : 0,
       staff: S.staff ? S.staff.code : '' }, 20000).then(function (r) {
       S.cfg.token = r.token; S.lastErr = ''; S.revoked = ''; DB.set('revoked', '');
+      // จับคู่ (ใหม่) ทุกครั้ง = ตรวจความพร้อมใหม่ทั้งหมด รวมยิงบัตรผู้ตรวจสอบ (v2.3.8)
+      S.dwOk = false; S.readiness = null; S.staff = null; DB.set('readiness', null); DB.set('staff', null);
       $('btnSetupBack').classList.add('hidden');
       return bumpSeq(r.maxSeqAll).then(function () { return DB.set('cfg', S.cfg); }).then(function () { setupMsg('จับคู่สำเร็จ: ' + r.deviceName, true); show('ready'); runChecks(false); });
     }, function (e) { setupMsg((e && e.message) || 'จับคู่ไม่สำเร็จ'); });
@@ -1712,7 +1728,9 @@
       // ข้อมูลจากรุ่นก่อน 2.2.0: Location ที่ปิดแล้ว = ผู้ดูแลที่ปิดแล้ว
       (v[0] || []).forEach(function (l) { if (!S.roles[l]) S.roles[l] = { role: 'OWNER', state: 'CLOSED' }; });
       var lastLoc = v[2];
-      S.loc = lastLoc && S.entries.some(function (e) { return e.location === lastLoc; }) ? lastLoc : null;
+      // กลับไป Location เดิม: มีรายการแล้ว หรือยังเปิดนับอยู่ (v2.3.8 — เดิมเปิด Location แล้วยังไม่ยิง ปิดเปิดแอปใหม่จะหลุดออก)
+      var lr = lastLoc && S.roles[lastLoc];
+      S.loc = lastLoc && (S.entries.some(function (e) { return e.location === lastLoc; }) || (lr && lr.state === 'COUNTING')) ? lastLoc : null;
       return DB.set('projectId', pid);
     });
   }
@@ -1792,7 +1810,7 @@
           if (!bat) add('แบตเตอรี่ ≥ 50%', 'WARN', 'อ่านค่าไม่ได้');
           else add('แบตเตอรี่ ≥ 50%', bat.level >= 0.5 || bat.charging ? 'OK' : 'WARN', Math.round(bat.level * 100) + '%' + (bat.charging ? ' (กำลังชาร์จ)' : ''));
           // 10 DataWedge
-          add('DataWedge: ได้ครบทุกหลักพร้อม Enter', S.dwOk ? 'OK' : 'FAIL', S.dwOk ? 'ผู้ตรวจสอบ ' + (S.staff ? S.staff.code : '') : 'ยิงบัตรผู้ตรวจสอบ (EMP:) 1 ครั้ง — ต้องยิงบัตรจริง เพื่อทดสอบหัวยิงไปด้วย (บัตรเสีย: พิมพ์ใหม่จากหน้า Admin)');
+          add('DataWedge: ได้ครบทุกหลักพร้อม Enter', S.dwOk && S.staff ? 'OK' : 'FAIL', S.dwOk && S.staff ? 'ผู้ตรวจสอบ ' + (S.staff ? S.staff.code : '') : 'ยิงบัตรผู้ตรวจสอบ (EMP:) 1 ครั้ง — ต้องยิงบัตรจริง เพื่อทดสอบหัวยิงไปด้วย (บัตรเสีย: พิมพ์ใหม่จากหน้า Admin)');
           // 11 เสียง
           add('เสียงเขียว/เหลือง/แดงดังครบ', $('ckSound').checked ? 'OK' : 'FAIL', $('ckSound').checked ? '' : 'กดทดสอบเสียง แล้วติ๊กยืนยัน');
           // 12 ปักหมุด
@@ -1876,7 +1894,7 @@
       if (!S.cfg.token) { if (S.revoked) { S.revoked = ''; DB.set('revoked', ''); } show('setup'); return; }
       if (S.revoked) { show('revoked'); return; }
       var r = S.readiness;
-      if (r && r.pass && r.project === S.projectId && r.date === today()) {
+      if (r && r.pass && r.project === S.projectId && r.date === today() && S.staff) {
         S.dwOk = true;
         var last = S.entries.length ? S.entries[S.entries.length - 1] : null;
         show('count'); scheduleSync(500);

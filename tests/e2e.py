@@ -80,7 +80,7 @@ with sync_playwright() as p:
     pg.wait_for_function("/พร้อมนับ ✓/.test(document.querySelector('#readyHead').textContent)", timeout=10000)
     shot('03-ready-pass')
     check(pg.is_visible('#btnStart'), 'ผ่านทุกข้อ ขึ้นปุ่มเริ่มนับ')
-    check('แอป 2.3.7 · เซิร์ฟเวอร์ 2.3.7' in pg.inner_text('#readyList'), 'แสดงเวอร์ชันแอปและเซิร์ฟเวอร์ตรงกัน')
+    check('แอป 2.3.8 · เซิร์ฟเวอร์ 2.3.8' in pg.inner_text('#readyList'), 'แสดงเวอร์ชันแอปและเซิร์ฟเวอร์ตรงกัน')
     pg.click('#btnStart'); pg.wait_for_selector('#v-count.on')
     check('นุ่น' in pg.inner_text('#tbStaff'), 'เข้างานเป็น นุ่น')
 
@@ -194,7 +194,7 @@ with sync_playwright() as p:
     check('9.9.9' in pg.inner_text('#readyList'), 'มีเวอร์ชันใหม่ → ขึ้น ✗ พร้อมปุ่ม "อัปเดตแอปตอนนี้"')
     shot('11-update')
     pg.click('#btnUpdate'); pg.wait_for_load_state('load'); pg.wait_for_timeout(1500)
-    get('/debug/version?v=2.3.7')
+    get('/debug/version?v=2.3.8')
     pg.wait_for_selector('.view.on', timeout=10000)
     check('รายการ 38' in pg.inner_text('#syncText'), 'หลังกดอัปเดต แอปโหลดใหม่ ข้อมูลในเครื่องยังครบ 38 รายการ')
 
@@ -243,6 +243,9 @@ with sync_playwright() as p:
     pg.fill('#setDevice', 'TC21-01'); pg.fill('#setCode', get('/debug/paircode?d=TC21-01')['pairCode']); pg.click('#btnPair')
     pg.wait_for_function("/พร้อม/.test(document.querySelector('#readyHead').textContent)", timeout=20000)
     check('ยิงบัตร' in pg.inner_text('#readyList') or 'EMP' in pg.inner_text('#readyList'), 'จับคู่ใหม่แล้วต้องยิงบัตรผู้ตรวจสอบใหม่')
+    pg.check('#ckSound'); pg.check('#ckPin'); pg.check('#ckRotate'); pg.wait_for_timeout(500)
+    check(not pg.is_visible('#btnStart') and 'พร้อมนับ ✓' not in pg.inner_text('#readyHead'),
+          'จับคู่ใหม่ ติ๊กครบแต่ยังไม่ยิงบัตร → ไม่มีปุ่มเริ่มนับ (เดิมข้อ DataWedge ผ่านจากค่าเก่า · v2.3.8): ' + pg.inner_text('#readyHead'))
     shot('12-repair')
 
     print('หัวหน้าทีมยกเลิกเครื่องระหว่างนับ แล้วนำกลับมา (v2.2.3)')
@@ -275,5 +278,15 @@ with sync_playwright() as p:
     check(any(l[2] == 'DEVICE_REPAIRED' and 'ค้างส่งในเครื่อง 3' in l[4] for l in logs), 'Admin_Log: จับคู่ใหม่หลังยกเลิก + ค้างส่ง 3 รายการ')
     dev = [d for d in get('/debug/locations')['devices'] if d['id'] == 'TC21-01'][0]
     check(dev['paired'] and dev['revokedAt'] and dev['repairedAt'], 'หน้า Admin เห็นเวลายกเลิกและเวลาจับคู่ใหม่')
+    check(not pg.is_visible('#btnStart'), 'นำเครื่องที่ถูกยกเลิกกลับมา → ต้องยิงบัตรผู้ตรวจสอบใหม่ก่อนเริ่มนับ (v2.3.8)')
+
+    print('เปิด Location แล้วยังไม่ยิง → ปิดเปิดแอปใหม่ ยังอยู่ที่เดิม (v2.3.8 — UAT I4 D5)')
+    scan('EMP:EMP-AOY'); pg.check('#ckSound'); pg.wait_for_timeout(200); pg.check('#ckPin'); pg.wait_for_timeout(200); pg.check('#ckRotate')
+    pg.wait_for_function("/พร้อมนับ ✓/.test(document.querySelector('#readyHead').textContent)", timeout=10000)
+    pg.click('#btnStart'); scan('LOC:C9'); modal_yes()
+    pg.wait_for_function("document.querySelector('#tbLoc').textContent === 'C9'", timeout=8000)
+    pg.wait_for_function("/ค้าง 0/.test(document.querySelector('#syncText').textContent)", timeout=15000)
+    pg.reload(); pg.wait_for_selector('#v-count.on', timeout=15000); pg.wait_for_timeout(500)
+    check(pg.inner_text('#tbLoc') == 'C9', 'เปิดแอปใหม่ยังอยู่ C9 (ยังไม่มีรายการ): ' + pg.inner_text('#tbLoc'))
     b.close()
 print(f'\nE2E ผ่าน {ok} ข้อ')

@@ -21,7 +21,7 @@ env.sheets.Staff.data.push(['EMP-NU', 'นุ่น', 'ผู้ตรวจส�
 run('apiSeedDevices(5, "TC21")');
 
 let offline = false;
-let appVersion = '2.3.7';
+let appVersion = '2.3.8';
 let slowMs = 0;
 let apiDelay = { ms: 0, action: '' };   // จำลองเซิร์ฟเวอร์ช้า (GAS จริงตอบ 1–5 วินาที) v2.2.6
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'application/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.webmanifest': 'application/manifest+json' };
@@ -48,6 +48,7 @@ http.createServer((req, res) => {
       if (url.pathname === '/debug/adminlog') return send(200, env.sheets.Admin_Log.data);
       if (url.pathname === '/debug/locations') return send(200, run('apiDevicesState()'));
       if (url.pathname === '/debug/transfer') return send(200, run(`apiLocTransfer(${JSON.stringify(url.searchParams.get('loc'))}, ${JSON.stringify(url.searchParams.get('to'))}, ${JSON.stringify(url.searchParams.get('why') || 'e2e')})`));
+      if (url.pathname === '/debug/submitfor') return send(200, run(`apiLocSubmitFor(${JSON.stringify(url.searchParams.get('loc'))}, ${JSON.stringify(url.searchParams.get('dev'))}, ${JSON.stringify(url.searchParams.get('why') || 'e2e')})`));
       if (url.pathname === '/debug/loccheck') return send(200, env.sheets.Loc_Checks.data);
       if (url.pathname === '/debug/offline') { offline = url.searchParams.get('on') === '1'; return send(200, { offline }); }
       if (url.pathname === '/debug/import') return send(200, run('apiImportDeviceFile(_t, "e2e.csv")', { _t: body }));

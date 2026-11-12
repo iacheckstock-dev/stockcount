@@ -172,7 +172,7 @@ function apiPair_(req) {
     putRow_(t, i, upd);
     var maxSeq = deviceMaxSeqAll_(deviceId);
     var pend = Number(req.pendingCount) || 0;
-    logAdmin_(repair ? 'DEVICE_REPAIRED' : 'DEVICE_PAIRED', deviceId, (repair ? 'จับคู่ใหม่หลังยกเลิก (ยกเลิกเมื่อ ' + d.Revoked_At + ' เหตุผล: ' +
+    logSys_(repair ? 'DEVICE_REPAIRED' : 'DEVICE_PAIRED', deviceId, (repair ? 'จับคู่ใหม่หลังยกเลิก (ยกเลิกเมื่อ ' + d.Revoked_At + ' เหตุผล: ' +
       (REVOKE_REASONS[d.Revoke_Reason] || '-') + ') · ' : 'จับคู่เครื่องสำเร็จ · ') + 'Seq ล่าสุดที่เซิร์ฟเวอร์มี ' + maxSeq +
       ' · ค้างส่งในเครื่อง ' + pend + ' รายการ' + (pend ? ' (Seq ' + req.pendingFrom + '–' + req.pendingTo + ' จะส่งต่ออัตโนมัติ)' : '') + (req.staff ? ' · ผู้ตรวจ ' + req.staff : ''));
     return { ok: true, deviceId: deviceId, token: token, deviceName: d.Name || deviceId, maxSeqAll: maxSeq };
@@ -231,7 +231,7 @@ function apiUnpair_(a, req) {
     var i = findDevice_(t, a.deviceId);
     putRow_(t, i, { Token_Hash: '', Pair_Code: '', Pair_Expires: '' });
     try { CacheService.getScriptCache().remove('hb_' + a.deviceId); } catch (e) { }
-    logAdmin_('DEVICE_UNPAIRED', a.deviceId, 'ยกเลิกการจับคู่จากตัวเครื่อง' + (req.staff ? ' โดย ' + req.staff : ''));
+    logSys_('DEVICE_UNPAIRED', a.deviceId, 'ยกเลิกการจับคู่จากตัวเครื่อง' + (req.staff ? ' โดย ' + req.staff : ''));
     return { ok: true };
   });
 }
@@ -538,7 +538,7 @@ function logIdx_(project, opt) {
     var diff = lxDiff_(X.locs, fresh.locs, names);
     if (diff.length) {
       try {
-        logAdmin_('INDEX_FIX', project, why + ' · ดัชนีไม่ตรงชีต ' + diff.length + ' จุด: ' + diff.slice(0, 6).join(' | ') +
+        logSys_('INDEX_FIX', project, why + ' · ดัชนีไม่ตรงชีต ' + diff.length + ' จุด: ' + diff.slice(0, 6).join(' | ') +
           ' · meta.last ' + X.meta.last + ' ชีต ' + fresh.last + ' · upto ' + names.slice(0, 3).map(function (l) { return l + '=' + (X.locs[l] ? X.locs[l].upto : '-'); }).join(','));
       } catch (e) { }
       X.fixes.push(diff.length);
@@ -560,7 +560,7 @@ function logIdx_(project, opt) {
     } catch (e) {
       // บันทึกไม่ได้ (เช่น Location ใหญ่เกิน) → ทิ้งดัชนี ครั้งหน้าอ่านชีตเหมือนรุ่นก่อน (ช้าแต่ถูก)
       try { cache.remove('lx_meta'); } catch (e2) { }
-      try { logAdmin_('INDEX_SAVE_FAIL', project, String(e && e.message || e).slice(0, 200)); } catch (e3) { }
+      try { logSys_('INDEX_SAVE_FAIL', project, String(e && e.message || e).slice(0, 200)); } catch (e3) { }
     }
     X.dirty = {};
   };
@@ -604,7 +604,7 @@ function rebuildCountIndex() {
     lxReset_();
     var X = logIdx_(readConfig_().PROJECT_ID, { write: true });
     X.save();
-    logAdmin_('INDEX_REBUILD', X.project, 'สร้างดัชนี Count_Log ใหม่ ' + (X.last - 1) + ' แถว · ' + X.meta.locs.length + ' Location');
+    logSys_('INDEX_REBUILD', X.project, 'สร้างดัชนี Count_Log ใหม่ ' + (X.last - 1) + ' แถว · ' + X.meta.locs.length + ' Location');
     return { rows: X.last - 1, locations: X.meta.locs.length };
   } finally { releaseLock_(lock); }
 }
@@ -743,12 +743,12 @@ function ingest_(deviceId, entries, events, source, device, appVersion) {
   prof.append = Date.now() - p0;
   if (qrows.length) {
     appendRows_(SpreadsheetApp.getActive().getSheetByName('Quarantine'), qrows);
-    logAdmin_('QUARANTINE', deviceId, qrows.length + ' รายการจากรอบอื่น/รอบที่ปิดแล้ว');
+    logSys_('QUARANTINE', deviceId, qrows.length + ' รายการจากรอบอื่น/รอบที่ปิดแล้ว');
   }
   var revokedLocs = rows.length && device && device.Revoked_At ? revokeWindow_(project, deviceId, device, entries, out.accepted) : [];
   if (rows.length && cfg.ROUND_STATUS === 'SETUP') {
     setConfig_({ ROUND_STATUS: 'COUNTING' });
-    logAdmin_('ROUND_COUNTING', project, 'เริ่มนับ (ได้รับรายการแรกจาก ' + deviceId + ')');
+    logSys_('ROUND_COUNTING', project, 'เริ่มนับ (ได้รับรายการแรกจาก ' + deviceId + ')');
   }
 
   // เหตุการณ์ก่อน (ล้าง Location = ปิดธงเดิม) แล้วค่อยติดธงจากการแก้ที่ชนกันในชุดนี้ — ธงใหม่จึงไม่ถูกล้างทิ้ง (v2.2.8)
@@ -940,7 +940,7 @@ function migrateMembers_(project) {
         n++;
       });
     });
-    if (n) logAdmin_('MIGRATE_MEMBERS', project, 'กำหนดผู้ดูแล/ผู้ช่วยจากข้อมูลเดิม ' + n + ' รายการ (v2.2.0)');
+    if (n) logSys_('MIGRATE_MEMBERS', project, 'กำหนดผู้ดูแล/ผู้ช่วยจากข้อมูลเดิม ' + n + ' รายการ (v2.2.0)');
   }
   setConfig_({ MEMBERS_MIGRATED: project });
 }
@@ -1095,7 +1095,7 @@ function applyRole_(mt, locs, project, loc, deviceId, ev, match, upTo) {
       if (ev.clear && L.Flag_Check) {
         // ล้าง Location แล้วนับใหม่ = ตรวจซ้ำแล้ว → ปิดธงเดิม (เก็บข้อความเดิมไว้ใน Loc_Checks / Admin_Log)
         eu.Flag_Check = '';
-        logAdmin_('LOC_FLAG_CLEARED', loc, 'ล้าง Location นับใหม่โดย ' + deviceId + ' (' + (ev.staff || '') + ') — ธงเดิม: ' + L.Flag_Check);
+        logSys_('LOC_FLAG_CLEARED', loc, 'ล้าง Location นับใหม่โดย ' + deviceId + ' (' + (ev.staff || '') + ') — ธงเดิม: ' + L.Flag_Check);
         res.note = 'ล้างนับใหม่ — ปิดธงเดิม: ' + L.Flag_Check;
       }
       locSet(eu);
@@ -1260,7 +1260,7 @@ function revokeWindow_(project, deviceId, device, entries, accepted) {
   var byLoc = {}, seqs = hit.map(function (e) { return Number(e.seq); });
   hit.forEach(function (e) { var l = normLoc_(e.location) || '(ไม่มี Location)'; byLoc[l] = (byLoc[l] || 0) + 1; });
   var lost = device.Revoke_Reason === 'LOST';
-  logAdmin_('REVOKED_DEVICE_DATA', deviceId, 'รับรายการที่ยิงหลังยกเลิกเครื่อง ' + hit.length + ' รายการ (Seq ' + Math.min.apply(null, seqs) + '–' +
+  logSys_('REVOKED_DEVICE_DATA', deviceId, 'รับรายการที่ยิงหลังยกเลิกเครื่อง ' + hit.length + ' รายการ (Seq ' + Math.min.apply(null, seqs) + '–' +
     Math.max.apply(null, seqs) + ') ' + Object.keys(byLoc).map(function (l) { return l + ' ' + byLoc[l]; }).join(', ') + (lost ? ' → ต้องตรวจซ้ำ' : ''));
   if (!lost) return [];
   var locs = Object.keys(byLoc).filter(function (l) { return l.charAt(0) !== '('; });
@@ -1396,11 +1396,12 @@ function adminResolveFlag_(loc, reason) {
   if (li < 0) throw new Error('ไม่พบ Location ' + loc);
   var old = String(rowObj_(locs, locs.rows[li]).Flag_Check || '');
   if (!old) throw new Error(loc + ' ไม่มีธงต้องตรวจซ้ำ');
-  putRow_(locs, li, { Flag_Check: '', Updated_At: now_() });
-  appendRows_(SpreadsheetApp.getActive().getSheetByName('Loc_Checks'),
-    [[now_(), project, 'ADMIN', loc, 'FLAG_RESOLVE', who_(), '', '', '', '', '', '', 'ปิดธง: ' + reason + ' — ธงเดิม: ' + old]]);
-  logAdmin_('LOC_FLAG_RESOLVE', loc, 'ปิดธงต้องตรวจซ้ำ เหตุผล: ' + reason + ' — ธงเดิม: ' + old);
-  refreshLocations_(project, [loc]);
+  adminAct_('LOC_FLAG_RESOLVE', loc, 'ปิดธงต้องตรวจซ้ำ เหตุผล: ' + reason + ' — ธงเดิม: ' + old, function () {
+    putRow_(locs, li, { Flag_Check: '', Updated_At: now_() });
+    appendRows_(SpreadsheetApp.getActive().getSheetByName('Loc_Checks'),
+      [[now_(), project, 'ADMIN', loc, 'FLAG_RESOLVE', who_(), '', '', '', '', '', '', 'ปิดธง: ' + reason + ' — ธงเดิม: ' + old]]);
+    refreshLocations_(project, [loc]);
+  });
 }
 
 function adminSubmitFor_(loc, deviceId, reason) {
@@ -1413,12 +1414,14 @@ function adminSubmitFor_(loc, deviceId, reason) {
   var m = rowObj_(mt, mt.rows[i]);
   if (m.Role !== 'HELPER') throw new Error(deviceId + ' เป็นผู้ดูแล ' + loc + ' — ใช้ "โอนการดูแล" แทน');
   var D = (locData_(project, [loc])[loc] || { devices: {} }).devices[deviceId] || { lines: 0, qty: 0, maxSeq: 0 };
+  if (!String(reason || '').trim()) throw new Error('ต้องระบุเหตุผลการส่งงานแทน');
   var seqAll = deviceSeqInfo_(deviceId, project).max;
-  putRow_(mt, i, { State: 'SUBMITTED', State_At: now_(), Cover_Seq: Math.max(seqAll, D.maxSeq), Sub_Lines: D.lines, Sub_Qty: D.qty, Match: 'OK', Sub_By: 'ADMIN', Ev_At: Date.now(), Updated_At: now_() });
   var note = 'หัวหน้าทีมส่งงานแทน ' + who_() + (reason ? ' · ' + reason : '') + ' · ยอดที่เซิร์ฟเวอร์มี ' + D.qty + ' ชิ้น ' + D.lines + ' รายการ';
-  appendRows_(SpreadsheetApp.getActive().getSheetByName('Loc_Checks'), [[now_(), project, deviceId, loc, 'ADMIN_SUBMIT', '', D.lines, D.qty, D.lines, D.qty, 'OK', Math.max(seqAll, D.maxSeq), note]]);
-  logAdmin_('LOC_SUBMIT_FOR', loc + ' ' + deviceId, note);
-  refreshLocations_(project, [loc], null, mt);
+  adminAct_('LOC_SUBMIT_FOR', loc + ' ' + deviceId, note, function () {
+    putRow_(mt, i, { State: 'SUBMITTED', State_At: now_(), Cover_Seq: Math.max(seqAll, D.maxSeq), Sub_Lines: D.lines, Sub_Qty: D.qty, Match: 'OK', Sub_By: 'ADMIN', Ev_At: Date.now(), Updated_At: now_() });
+    appendRows_(SpreadsheetApp.getActive().getSheetByName('Loc_Checks'), [[now_(), project, deviceId, loc, 'ADMIN_SUBMIT', '', D.lines, D.qty, D.lines, D.qty, 'OK', Math.max(seqAll, D.maxSeq), note]]);
+    refreshLocations_(project, [loc], null, mt);
+  });
 }
 
 /** โอนการดูแล Location ให้เครื่องอื่น (เช่น เครื่องผู้ดูแลเสีย) ผู้ดูแลเดิมกลายเป็นผู้ช่วยที่ส่งงานแล้ว */
@@ -1437,6 +1440,8 @@ function adminTransfer_(loc, toDevice, reason) {
   var owner = ownerOf_(mt, project, loc);
   if (owner && owner.m.Device_ID === toDevice) throw new Error(toDevice + ' เป็นผู้ดูแลอยู่แล้ว');
   var closed = owner && owner.m.State === 'CLOSED';
+  var note = 'โอนการดูแล ' + (owner ? owner.m.Device_ID : '-') + ' → ' + toDevice + ' โดย ' + who_() + (reason ? ' · ' + reason : '');
+  adminAct_('LOC_TRANSFER', loc, note, function () {
   if (owner) {
     var D = (locData_(project, [loc])[loc] || { devices: {} }).devices[owner.m.Device_ID] || { lines: 0, qty: 0, maxSeq: 0 };
     var seqAll = deviceSeqInfo_(owner.m.Device_ID, project).max;
@@ -1447,10 +1452,9 @@ function adminTransfer_(loc, toDevice, reason) {
   var cur = ti >= 0 ? rowObj_(mt, mt.rows[ti]) : null;
   putMember_(mt, project, loc, toDevice, { Role: 'OWNER', State: closed ? 'CLOSED' : cur && cur.State === 'COUNTING' ? 'COUNTING' : 'PAUSED', State_At: now_(), Ev_At: Date.now(),
     Staff: cur ? cur.Staff : '', Cover_Seq: cur ? cur.Cover_Seq : 0 });
-  var note = 'โอนการดูแล ' + (owner ? owner.m.Device_ID : '-') + ' → ' + toDevice + ' โดย ' + who_() + (reason ? ' · ' + reason : '');
   appendRows_(SpreadsheetApp.getActive().getSheetByName('Loc_Checks'), [[now_(), project, toDevice, loc, 'TRANSFER', '', '', '', '', '', '', '', note]]);
-  logAdmin_('LOC_TRANSFER', loc, note);
   refreshLocations_(project, [loc], null, mt);
+  });
 }
 
 // ---------- ผลตรวจความพร้อมเครื่อง ----------

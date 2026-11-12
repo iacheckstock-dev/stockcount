@@ -20,7 +20,8 @@ function createEnv() {
       getMaxRows: () => { tally('meta', name); return sh.maxRows; }, getMaxColumns: () => sh.maxCols,
       insertRowsAfter: (a, n) => { sh.maxRows += n; }, insertColumnsAfter: (a, n) => { sh.maxCols += n; },
       setFrozenRows: () => {}, clearContents: () => { sh.data = []; },
-      appendRow: row => { tally('writes', name); sh.data.push(row.map(String)); },
+      // dropWrites: จำลองชีตที่เขียนแล้วไม่ติด (UAT 12 พ.ย.: Admin_Log มี filter อยู่ appendRow เงียบหาย)
+      appendRow: row => { tally('writes', name); if (!sh.dropWrites) sh.data.push(row.map(String)); },
       getProtections: () => sh.prot,
       protect: () => { const p = { setDescription: () => p, setWarningOnly: () => p }; sh.prot.push(p); return p; },
       getRange: (a, b, c, d) => {
@@ -31,6 +32,7 @@ function createEnv() {
             tally('writes', name);
             if (vals.length !== nr || vals[0].length !== nc) throw new Error(`setValues size ${vals.length}x${vals[0].length} != ${nr}x${nc} on ${name}`);
             if (r0 + nr - 1 > sh.maxRows) throw new Error('beyond max rows on ' + name);
+            if (sh.dropWrites) return rng;
             vals.forEach((row, i) => {
               const ri = r0 - 1 + i; while (sh.data.length <= ri) sh.data.push([]);
               row.forEach((v, j) => { sh.data[ri][c0 - 1 + j] = v === null || v === undefined ? '' : String(v); });
@@ -105,6 +107,8 @@ function createEnv() {
     get: k => read(k), remove: k => { delete cacheStore[k]; delete hist[k]; },
     getAll: ks => { const o = {}; ks.forEach(k => { const v = read(k); if (v !== null) o[k] = v; }); return o; } };
   ctx.CacheService = { getScriptCache: () => cache };
+  const props = {};
+  ctx.PropertiesService = { getScriptProperties: () => ({ getProperty: k => (k in props ? props[k] : null), setProperty: (k, v) => { props[k] = String(v); }, deleteProperty: k => { delete props[k]; } }) };
   vm.createContext(ctx);
   for (const f of ['Core.gs', 'Code.gs', 'Api.gs']) vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'gas', f), 'utf8'), ctx, { filename: f });
   const run = (code, vars) => vm.runInContext(code, Object.assign(ctx, vars || {}));

@@ -12,7 +12,7 @@ var SCHEMA_VERSION = 5;
  * เวอร์ชันของระบบ (ใช้เลขเดียวทั้งแอป TC21 และเซิร์ฟเวอร์ ตาม Semantic Versioning MAJOR.MINOR.PATCH)
  * ต้องตรงกับ APP_VERSION ใน app/app.js และ appVersion ใน app/config.json — ดู CHANGELOG.md
  */
-var SYSTEM_VERSION = '2.3.7';
+var SYSTEM_VERSION = '2.3.8';
 
 var SHEETS = {
   Config: ['Key', 'Value', 'Note'],
@@ -190,7 +190,7 @@ function setConfig_(obj) {
     var i = keys.indexOf(k);
     var v = obj[k] === null || obj[k] === undefined ? '' : String(obj[k]);
     if (i >= 0) sh.getRange(i + 2, 2).setValue(v);
-    else { sh.appendRow([k, v, '']); keys.push(k); }
+    else { appendRows_(sh, [[k, v, '']]); keys.push(k); }
     if (typeof REQ_ !== 'undefined' && REQ_ && REQ_.cfg) REQ_.cfg[k] = v;
   });
 }
@@ -203,10 +203,64 @@ function now_() {
   return Utilities.formatDate(new Date(), 'Asia/Bangkok', 'yyyy-MM-dd HH:mm:ss');
 }
 
+/**
+ * บันทึก Admin_Log แบบตรวจว่าเขียนติดจริง (v2.3.8)
+ * UAT 12 พ.ย.: ตอนชีต Admin_Log มี filter เปิดอยู่ appendRow ทำงานจบโดยไม่ error แต่แถวไม่ถูกบันทึก (หลักฐานหายเงียบ)
+ * → เขียนเองที่แถวถัดจากแถวสุดท้าย แล้วอ่านกลับ ถ้าไม่ตรง = ล้มเหลว (throw) — ผู้เรียกที่เป็นการกระทำของหัวหน้าทีมจะหยุดทันที
+ */
 function logAdmin_(action, target, detail) {
   var sh = SpreadsheetApp.getActive().getSheetByName('Admin_Log');
-  if (!sh) return;
-  sh.appendRow([now_(), who_(), action, target || '', detail || '']);
+  if (!sh) throw new Error('ไม่พบชีต Admin_Log — บันทึกการกระทำไม่ได้');
+  var row = [now_(), who_(), action, String(target || ''), String(detail || '')];
+  var r = appendRows_(sh, [row]);
+  SpreadsheetApp.flush();
+  var got = sh.getRange(r, 3, 1, 2).getValues()[0];
+  if (String(got[0]) !== row[2] || String(got[1]) !== row[3]) {
+    var why = 'บันทึก Admin_Log ไม่สำเร็จ (' + action + ' ' + row[3] + ')' + (sh.getFilter && sh.getFilter() ? ' — ชีต Admin_Log มี filter เปิดอยู่ ให้ปิดก่อน (Data → Remove filter)' : '');
+    logFallback_(row, why);
+    throw new Error(why + ' — ยกเลิกการกระทำนี้แล้ว ยังไม่มีอะไรเปลี่ยน');
+  }
+}
+
+/** บันทึกของระบบ (ไม่ใช่การกดของหัวหน้าทีม เช่น INDEX_FIX, การจับคู่จากเครื่อง): ห้ามทำให้งานหลักล้ม แต่ห้ามเงียบ → สำรองไว้ใน Loc_Checks + เตือนในหน้า Admin */
+function logSys_(action, target, detail) {
+  try { logAdmin_(action, target, detail); } catch (e) { /* logAdmin_ เก็บสำรองและตั้งเตือนแล้ว */ }
+}
+
+/** เก็บบันทึกที่เขียน Admin_Log ไม่ติดไว้ใน Loc_Checks (Event ADMIN_LOG_FAIL) และตั้งคำเตือนให้หน้า Admin แสดงจนกว่าจะกดรับทราบ */
+function logFallback_(row, why) {
+  try {
+    appendRows_(SpreadsheetApp.getActive().getSheetByName('Loc_Checks'),
+      [[row[0], readConfig_().PROJECT_ID, 'ADMIN', '-', 'ADMIN_LOG_FAIL', row[1], '', '', '', '', '', '', row[2] + ' · ' + row[3] + ' · ' + row[4]]]);
+  } catch (e) { }
+  try {
+    var p = PropertiesService.getScriptProperties(), w = JSON.parse(p.getProperty('ADMIN_LOG_WARN') || '{"n":0}');
+    w.n++; w.last = row[0]; w.what = row[2] + ' ' + row[3]; w.why = why;
+    p.setProperty('ADMIN_LOG_WARN', JSON.stringify(w));
+  } catch (e) { }
+}
+
+/** การกระทำของหัวหน้าทีม: บันทึกก่อน แล้วค่อยทำ (fail closed) · ทำไม่สำเร็จ → บันทึก _FAILED ตามหลัง */
+function adminAct_(action, target, detail, fn) {
+  logAdmin_(action, target, detail);
+  try { return fn(); } catch (e) {
+    try { logAdmin_(action + '_FAILED', target, String(e && e.message || e).slice(0, 300)); } catch (e2) { }
+    throw e;
+  }
+}
+
+function adminLogWarn_() {
+  try { var v = PropertiesService.getScriptProperties().getProperty('ADMIN_LOG_WARN'); return v ? JSON.parse(v) : null; } catch (e) { return null; }
+}
+
+/** หน้า Admin กดรับทราบคำเตือนบันทึกหาย (บันทึกผู้กด) */
+function apiAckLogWarn() {
+  return withLock_(function () {
+    var w = adminLogWarn_();
+    logAdmin_('ADMIN_LOG_WARN_ACK', '-', 'รับทราบ: บันทึก Admin_Log ไม่สำเร็จ ' + (w ? w.n + ' ครั้ง ล่าสุด ' + w.last + ' (' + w.what + ')' : '') + ' — รายละเอียดสำรองใน Loc_Checks (ADMIN_LOG_FAIL)');
+    PropertiesService.getScriptProperties().deleteProperty('ADMIN_LOG_WARN');
+    return apiDevicesState();
+  });
 }
 
 function withLock_(fn) {
@@ -307,6 +361,7 @@ function apiGetState() {
   return {
     user: who_(),
     version: SYSTEM_VERSION,
+    logWarn: adminLogWarn_(),
     spreadsheetUrl: SpreadsheetApp.getActive().getUrl(),
     round: { projectId: cfg.PROJECT_ID, countDate: cfg.COUNT_DATE, status: cfg.ROUND_STATUS || 'NONE' },
     files: {
@@ -356,7 +411,7 @@ function apiAckWarnings(ids) {
     var t = now_(), by = who_();
     var sh = SpreadsheetApp.getActive().getSheetByName('Master_Check');
     open.filter(function (c) { return ids.indexOf(c.id) >= 0; }).forEach(function (c) {
-      sh.appendRow([t, 'ACK หลังอนุมัติ v' + cfg.MASTER_APPROVED_VERSION, m.hash, c.level, c.title, c.count, 'รับทราบ', c.note, by]);
+      appendRows_(sh, [[t, 'ACK หลังอนุมัติ v' + cfg.MASTER_APPROVED_VERSION, m.hash, c.level, c.title, c.count, 'รับทราบ', c.note, by]]);
     });
     logAdmin_('ACK_WARNING', 'v' + cfg.MASTER_APPROVED_VERSION, ids.join(', '));
     return apiGetState();
@@ -443,7 +498,7 @@ function apiDecide(key, decision) {
     for (var i = 1; i < rows.length; i++) if (rows[i][0] === key) idx = i;
     var row = [key, c.type, c.id, decision, who_(), now_()];
     if (idx > 0) sh.getRange(idx + 1, 1, 1, row.length).setValues([row]);
-    else sh.appendRow(row);
+    else appendRows_(sh, [row]);
     logAdmin_('DECIDE_CONFLICT', key, 'เลือก ' + decision + ' (' + c.detail + ')');
     persistMaster_(computeMaster_(), 'ตัดสินขัดแย้ง');
     return apiGetState();
@@ -462,18 +517,19 @@ function apiApprove(seenHash, ackIds) {
     var notAck = warns.filter(function (id) { return ackIds.indexOf(id) < 0; });
     if (notAck.length) throw new Error('ยังไม่ได้กดรับทราบคำเตือน: ' + notAck.join(', '));
 
-    writeTable_('Device_Master', SHEETS.Device_Master, m.deviceRows);
     var cfg = m.cfg;
     var version = (parseInt(cfg.MASTER_APPROVED_VERSION, 10) || 0) + 1;
+    adminAct_('APPROVE_MASTER', 'v' + version, m.hash + ', ' + m.deviceRows.length + ' รายการ', function () {
+    writeTable_('Device_Master', SHEETS.Device_Master, m.deviceRows);
     setConfig_({
       MASTER_APPROVED_HASH: m.hash, MASTER_APPROVED_VERSION: version, MASTER_APPROVED_AT: now_(),
       MASTER_APPROVED_BY: who_(), MASTER_APPROVED_COUNT: m.deviceRows.length,
       MASTER_APPROVED_PROJECT: cfg.PROJECT_ID, MASTER_APPROVED_ACK: warns.join(',')
     });
     var sh = SpreadsheetApp.getActive().getSheetByName('Master_Check');
-    sh.appendRow([now_(), 'APPROVE v' + version, m.hash, '', 'อนุมัติ Master', m.deviceRows.length, 'อนุมัติ',
-      'รับทราบคำเตือน: ' + (warns.join(', ') || '-') + (m.hasSap ? '' : ' (ยอดชั่วคราวจาก POS)'), who_()]);
-    logAdmin_('APPROVE_MASTER', 'v' + version, m.hash + ', ' + m.deviceRows.length + ' รายการ');
+    appendRows_(sh, [[now_(), 'APPROVE v' + version, m.hash, '', 'อนุมัติ Master', m.deviceRows.length, 'อนุมัติ',
+      'รับทราบคำเตือน: ' + (warns.join(', ') || '-') + (m.hasSap ? '' : ' (ยอดชั่วคราวจาก POS)'), who_()]]);
+    });
     return apiGetState();
   });
 }
@@ -518,7 +574,7 @@ function resetRound_() {
     blank.ROUND_STATUS = 'NONE';
     setConfig_(blank);
     var mc = SpreadsheetApp.getActive().getSheetByName('Master_Check');
-    mc.appendRow([now_(), 'RESET', '', '', 'ล้างข้อมูลรอบ ' + (cfg.PROJECT_ID || ''), '', '', '', who_()]);
+    appendRows_(mc, [[now_(), 'RESET', '', '', 'ล้างข้อมูลรอบ ' + (cfg.PROJECT_ID || ''), '', '', '', who_()]]);
     logAdmin_('RESET_ROUND', cfg.PROJECT_ID || '-', 'ล้างไฟล์นำเข้า, Barcode_Map, การตัดสิน และ Master ที่อนุมัติ (Admin_Log/Master_Check/Drive คงไว้)');
   });
 }
@@ -558,8 +614,41 @@ function apiDevicesState() {
     locTotals: locTotalsForAdmin_(cfg.PROJECT_ID, locs),
     locChecks: locChecksForAdmin_(cfg.PROJECT_ID),
     members: membersForAdmin_(cfg.PROJECT_ID),
-    imports: readRaw_('Import_Files').slice(1).slice(-20).reverse()
+    imports: readRaw_('Import_Files').slice(1).slice(-20).reverse(),
+    logWarn: adminLogWarn_()
   };
+}
+
+/**
+ * กระทบยอดทั้งรอบ (v2.3.8): อ่าน Count_Log ทั้งชีต เทียบกับดัชนีทุก Location (ต่าง → แก้ตามชีต + INDEX_FIX)
+ * และเทียบยอดตอนปิด (Close_Total) ของ Location ที่ปิดแล้วกับยอดในชีตปัจจุบัน — ใช้ก่อนดู Dashboard / ก่อนปิดรอบ
+ */
+function apiReconcile() {
+  return withLock_(function () {
+    var project = readConfig_().PROJECT_ID;
+    if (!project) throw new Error('ยังไม่ได้เปิดรอบนับ');
+    var X = logIdx_(project, { write: true });
+    var idx = X.verify(null, 'กระทบยอดทั้งรอบ (หน้า Admin)');
+    X.save();
+    var t = table_('Locations'), seen = {}, closeDiffs = [], closed = 0, qty = 0, lines = 0;
+    t.rows.forEach(function (r) {
+      var L = rowObj_(t, r), l = L.Location; if (!l) return;
+      seen[l] = 1;
+      var D = X.locs[l] || { qty: 0, lines: 0 };
+      if (!/ปิดแล้ว|CLOSED/.test(String(L.Status))) return;
+      closed++;
+      var ct = String(L.Close_Total === undefined ? '' : L.Close_Total).replace(/,/g, '');
+      if (ct !== '' && Number(ct) !== D.qty) closeDiffs.push({ loc: l, close: Number(ct), sheet: D.qty, flag: String(L.Flag_Check || '') });
+    });
+    var names = Object.keys(X.locs).filter(function (l) { var D = X.locs[l]; qty += D.qty; lines += D.lines; return true; });
+    var missing = names.filter(function (l) { return !seen[l] && X.locs[l].lines; });
+    var res = { at: now_(), locs: names.length, closed: closed, qty: Math.round(qty * 1000) / 1000, lines: lines,
+      indexDiffs: idx, closeDiffs: closeDiffs, missing: missing };
+    res.ok = !idx.length && !closeDiffs.filter(function (c) { return !c.flag; }).length && !missing.length;
+    logAdmin_('RECONCILE', project, (res.ok ? 'ตรงทั้งหมด' : 'พบจุดต่าง') + ' · ' + res.locs + ' Location (ปิดแล้ว ' + closed + ') · ' + res.lines + ' รายการ ' + res.qty + ' ชิ้น' +
+      ' · ดัชนีไม่ตรงชีต ' + idx.length + ' · ยอดตอนปิดไม่ตรงชีต ' + closeDiffs.length + (missing.length ? ' · ไม่มีในชีต Locations ' + missing.join(',') : ''));
+    return res;
+  });
 }
 
 /** ยอดบนเซิร์ฟเวอร์ต่อ Location และต่อเครื่อง (จากดัชนี — ไม่อ่าน Count_Log ทั้งชีต) (v2.3.5) */
@@ -703,8 +792,9 @@ function apiPairCode(deviceId) {
     var i = findDevice_(t, deviceId);
     if (i < 0) throw new Error('ไม่พบเครื่อง ' + deviceId);
     var code = String(Math.floor(100000 + Math.random() * 900000));
-    putRow_(t, i, { Pair_Code: code, Pair_Expires: Date.now() + PAIR_MINUTES * 60000, Pair_Fails: 0, Active: 'Y' });
-    logAdmin_('DEVICE_PAIR_CODE', deviceId, 'สร้างรหัสจับคู่ (หมดอายุใน ' + PAIR_MINUTES + ' นาที)');
+    adminAct_('DEVICE_PAIR_CODE', deviceId, 'สร้างรหัสจับคู่ (หมดอายุใน ' + PAIR_MINUTES + ' นาที)', function () {
+      putRow_(t, i, { Pair_Code: code, Pair_Expires: Date.now() + PAIR_MINUTES * 60000, Pair_Fails: 0, Active: 'Y' });
+    });
     return apiDevicesState();
   });
 }
@@ -723,10 +813,11 @@ function apiSetDeviceActive(deviceId, active, reason, note) {
       upd.Token_Hash = ''; upd.Pair_Code = ''; upd.Pair_Expires = '';
       upd.Revoked_At = now_(); upd.Revoke_Reason = reason; upd.Repaired_At = '';
     }
-    putRow_(t, i, upd);
-    try { CacheService.getScriptCache().remove('hb_' + deviceId); } catch (e) { }
-    logAdmin_(active ? 'DEVICE_ENABLE' : 'DEVICE_REVOKE', deviceId, active ? 'เปิดใช้งาน' :
-      'ยกเลิกเครื่อง (token เดิมใช้ไม่ได้) เหตุผล: ' + REVOKE_REASONS[reason] + (note ? ' · ' + note : ''));
+    adminAct_(active ? 'DEVICE_ENABLE' : 'DEVICE_REVOKE', deviceId, active ? 'เปิดใช้งาน' :
+      'ยกเลิกเครื่อง (token เดิมใช้ไม่ได้) เหตุผล: ' + REVOKE_REASONS[reason] + (note ? ' · ' + note : ''), function () {
+      putRow_(t, i, upd);
+      try { CacheService.getScriptCache().remove('hb_' + deviceId); } catch (e) { }
+    });
     return apiDevicesState();
   });
 }

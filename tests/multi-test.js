@@ -633,6 +633,83 @@ console.log('\nยอดแยกเครื่องหลังล้าง L
   });
 }
 
+console.log('\nบันทึก Admin_Log ต้องติดจริง · บันทึกก่อนทำ · กระทบยอดทั้งรอบ (v2.3.8 — UAT: filter ใน Admin_Log ทำให้บันทึกหายเงียบ)');
+{
+  const O = device('TC21-01', 'EMP-K', '2.3.8'), H = device('TC21-02', 'EMP-KH', '2.3.8');
+  [O, H].forEach(d => { d.seq = 7000 + d.seq; d.at = 9500; });
+  const AL = env.sheets.Admin_Log, LM = env.sheets.Loc_Members;
+  const memState = (loc, dev) => { const h = LM.data[0], r = LM.data.find(x => x[h.indexOf('Location')] === loc && x[h.indexOf('Device_ID')] === dev); return r[h.indexOf('State')]; };
+  O.sync([O.scan('D7', BC1, MAT1, 1)], [O.ev('OPEN', 'D7')]);
+  H.sync([H.scan('D7', BC1, MAT1, 1)], [H.ev('JOIN', 'D7')]);
+  test('Admin_Log เขียนไม่ติด → ส่งงานแทนถูกยกเลิก (สถานะไม่เปลี่ยน) · สำรองใน Loc_Checks · หน้า Admin เตือน', () => {
+    const n = AL.data.length; AL.dropWrites = true;
+    assert.throws(() => run('apiLocSubmitFor("D7", "TC21-02", "แบตหมด")'), /บันทึก Admin_Log ไม่สำเร็จ.*ยกเลิก/);
+    AL.dropWrites = false;
+    assert.strictEqual(AL.data.length, n);
+    assert.strictEqual(memState('D7', 'TC21-02'), 'COUNTING', 'ยังไม่ถูกส่งงานแทน');
+    assert.ok(!env.sheets.Loc_Checks.data.some(r => r[3] === 'D7' && r[4] === 'ADMIN_SUBMIT'));
+    assert.ok(env.sheets.Loc_Checks.data.some(r => r[4] === 'ADMIN_LOG_FAIL' && /LOC_SUBMIT_FOR · D7 TC21-02/.test(r[12])));
+    const w = run('apiDevicesState()').logWarn;
+    assert.strictEqual(w.n, 1); assert.ok(/LOC_SUBMIT_FOR/.test(w.what));
+  });
+  test('สร้างรหัสจับคู่ตอนบันทึกไม่ติด → ไม่สร้าง', () => {
+    const DV = env.sheets.Devices, h = DV.data[0], r = DV.data.find(x => x[0] === 'TC21-05'), before = r[h.indexOf('Pair_Code')];
+    AL.dropWrites = true;
+    assert.throws(() => run('apiPairCode("TC21-05")'), /Admin_Log/);
+    AL.dropWrites = false;
+    assert.strictEqual(r[h.indexOf('Pair_Code')], before);
+    assert.strictEqual(run('apiDevicesState()').logWarn.n, 2);
+  });
+  test('บันทึกของระบบ (INDEX_FIX) เขียนไม่ติด → งานส่งข้อมูลไม่ล้ม แต่สำรองใน Loc_Checks', () => {
+    const CL = env.sheets.Count_Log, row = CL.data.find(x => x[5] === 'D7' && x[2] === 'TC21-01');
+    row[8] = '0';   // แก้ชีตตรง ๆ
+    AL.dropWrites = true;
+    const X = run('logIdx_(readConfig_().PROJECT_ID, { write: true })');
+    const d = X.verify(['D7'], 'ทดสอบ'); X.save();
+    AL.dropWrites = false;
+    assert.ok(d.length);
+    assert.ok(env.sheets.Loc_Checks.data.some(r => r[4] === 'ADMIN_LOG_FAIL' && /INDEX_FIX/.test(r[12])));
+    row[8] = '1';
+  });
+  test('กดรับทราบคำเตือน → หายไป และบันทึกผู้กด', () => {
+    run('apiAckLogWarn()');
+    assert.strictEqual(run('apiDevicesState()').logWarn, null);
+    assert.ok(AL.data.some(r => r[2] === 'ADMIN_LOG_WARN_ACK' && /3 ครั้ง/.test(r[4])));
+  });
+  test('บันทึกได้ปกติ → ส่งงานแทนสำเร็จ และ Admin_Log มาก่อน Loc_Checks', () => {
+    run('apiLocSubmitFor("D7", "TC21-02", "แบตหมด")');
+    assert.strictEqual(memState('D7', 'TC21-02'), 'SUBMITTED');
+    assert.ok(AL.data.some(r => r[2] === 'LOC_SUBMIT_FOR' && r[3] === 'D7 TC21-02'));
+    assert.throws(() => run('apiLocSubmitFor("D7", "TC21-02", "  ")'), /เหตุผล/);
+  });
+  test('กระทบยอดทั้งรอบ: ดัชนีที่เพี้ยนจากการแก้ชีต (ยังไม่มีใครตรวจ) ถูกพบและแก้ · บันทึก RECONCILE', () => {
+    const X = run('logIdx_(readConfig_().PROJECT_ID, { write: true })'); X.verify(null, 'ก่อนทดสอบ'); X.save();
+    let r = run('apiReconcile()');
+    assert.strictEqual(r.indexDiffs.length, 0, JSON.stringify(r.indexDiffs));
+    const CL = env.sheets.Count_Log, row = CL.data.find(x => x[5] === 'D7' && x[2] === 'TC21-01');
+    row[8] = '5';
+    r = run('apiReconcile()');
+    assert.ok(r.indexDiffs.length && !r.ok, JSON.stringify(r));
+    assert.ok(AL.data.some(x => x[2] === 'RECONCILE' && /พบจุดต่าง/.test(x[4])));
+    assert.ok(AL.data.some(x => x[2] === 'INDEX_FIX' && /กระทบยอดทั้งรอบ/.test(x[4])));
+    row[8] = '1';
+    r = run('apiReconcile()');
+    assert.ok(r.indexDiffs.length > 0, 'แก้กลับ = ต่างอีกครั้ง แล้วตรง');
+    assert.strictEqual(run('apiReconcile()').indexDiffs.length, 0);
+  });
+  test('กระทบยอด: Location ที่ปิดแล้วแต่ยอดในชีตเปลี่ยน (ไม่มีธง) ถูกพบ', () => {
+    O.sync([], [O.ev('CLOSE', 'D7', { lines: 1, qty: 1, total: 2 })]);
+    let r = run('apiReconcile()');
+    assert.ok(!r.closeDiffs.some(c => c.loc === 'D7'), JSON.stringify(r.closeDiffs));
+    const CL = env.sheets.Count_Log, row = CL.data.find(x => x[5] === 'D7' && x[2] === 'TC21-02');
+    row[8] = '4';
+    r = run('apiReconcile()');
+    const c = r.closeDiffs.find(x => x.loc === 'D7');
+    assert.ok(c && c.close === 2 && c.sheet === 5 && !r.ok, JSON.stringify(r.closeDiffs));
+    row[8] = '1'; run('apiReconcile()');
+  });
+}
+
 // DUMP_ADMIN=ไฟล์ → เก็บ apiDevicesState() ไว้ให้ tests/admin-ui.py ใช้แสดงหน้า Admin จริงในเบราว์เซอร์
 if (process.env.DUMP_ADMIN) require('fs').writeFileSync(process.env.DUMP_ADMIN, JSON.stringify(run('apiDevicesState()')));
 

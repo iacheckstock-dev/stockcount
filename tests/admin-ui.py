@@ -16,7 +16,7 @@ window.google = { script: { run: (function mk(ok, bad) {
   return new Proxy({}, { get: function (t, k) {
     if (k === 'withSuccessHandler') return function (f) { return mk(f, bad); };
     if (k === 'withFailureHandler') return function (f) { return mk(ok, f); };
-    return function () { CALLS.push([k].concat([].slice.call(arguments))); var r = k === 'apiDevicesState' || k.indexOf('apiLoc') === 0 || k === 'apiPairCode' ? window.ST : {};
+    return function () { CALLS.push([k].concat([].slice.call(arguments))); var r = k === 'apiReconcile' ? window.RECON : k === 'apiDevicesState' || k.indexOf('apiLoc') === 0 || k === 'apiPairCode' ? window.ST : {};
       setTimeout(function () { ok && ok(r); }, 0); };
   } });
 })() } };
@@ -74,7 +74,21 @@ with sync_playwright() as p:
     check(pg.is_visible('#askDlg') and 'อนุมัติ Master' in pg.inner_text('#askTitle'), 'อนุมัติ Master → กล่องยืนยัน')
     pg.click('#askOk'); pg.wait_for_timeout(50)
     check(pg.evaluate('CALLS')[0][0] == 'apiApprove', 'กดอนุมัติ → เรียก apiApprove')
+    # กระทบยอดทั้งรอบ + คำเตือนบันทึก Admin_Log ไม่สำเร็จ (v2.3.8)
+    pg.evaluate("""window.RECON = { at: '2026-11-12 16:30:00', ok: false, locs: 20, closed: 15, qty: 1234, lines: 900,
+      indexDiffs: ['T9 TC21-01 ดัชนี 38/38 ชีต 38/37'], closeDiffs: [{ loc: 'T9', close: 39, sheet: 38, flag: '' }, { loc: 'D6', close: 30, sheet: 32, flag: 'มีรายการหลังปิด' }], missing: [] };
+      var orig = google.script.run; """)
+    pg.evaluate("CALLS.length = 0; ST.logWarn = { n: 2, last: '2026-11-12 15:10:00', what: 'LOC_SUBMIT_FOR D6 TC21-02', why: 'บันทึก Admin_Log ไม่สำเร็จ' }; renderDevices(ST)")
+    w = pg.inner_text('#logWarn')
+    check(pg.is_visible('#logWarn') and '2 ครั้ง' in w and 'LOC_SUBMIT_FOR' in w, 'แถบแดงเตือนบันทึก Admin_Log ไม่สำเร็จ: ' + w.replace('\n', ' ')[:80])
+    pg.click('#logWarn >> text=รับทราบ'); pg.wait_for_timeout(50)
+    check(pg.evaluate('CALLS')[0][0] == 'apiAckLogWarn', 'กดรับทราบ → apiAckLogWarn')
+    pg.evaluate("ST.logWarn = null")
+    check(pg.locator('text=กระทบยอดทั้งรอบ').count() >= 1, 'มีปุ่มกระทบยอดทั้งรอบในตาราง Location')
     check(not dialogs, 'ไม่มี popup ของเบราว์เซอร์เลย: ' + json.dumps(dialogs, ensure_ascii=False))
+    pg.evaluate("CALLS.length = 0; reconcile()"); pg.wait_for_timeout(100)
+    rc = pg.inner_text('#recon')
+    check('พบจุดต่าง' in rc and 'T9 ปิด 39' in rc and 'มีธงต้องตรวจซ้ำอยู่แล้ว' in rc, 'ผลกระทบยอดแสดงจุดต่าง แยกที่มีธงแล้ว: ' + rc.replace('\n', ' ')[:120])
     pg.evaluate("renderDevices(window.ST)")
     pg.screenshot(path='/tmp/admin-ui.png', full_page=True)
     b.close()

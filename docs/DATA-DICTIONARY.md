@@ -203,7 +203,7 @@
 | คอลัมน์ | ความหมาย |
 |---|---|
 | Time / Project_ID / Device_ID / Location / Staff | เมื่อไร รอบไหน เครื่องไหน ที่ไหน ใคร |
-| Event | `OPEN` `JOIN` `SUBMIT` `PAUSE` `CLOSE` `EDIT` · `EDIT_CONFLICT` · `ADMIN_SUBMIT` · `TRANSFER` |
+| Event | `OPEN` `JOIN` `SUBMIT` `PAUSE` `CLOSE` `EDIT` · `EDIT_CONFLICT` · `ADMIN_SUBMIT` · `TRANSFER` · `FLAG_RESOLVE` · `ADMIN_LOG_FAIL` (v2.3.8: สำรองบันทึกที่เขียน Admin_Log ไม่ติด) |
 | Dev_Lines / Dev_Qty | ยอดของเครื่องตามที่เครื่องส่งมา |
 | Srv_Lines / Srv_Qty | ยอดของเครื่องนั้นที่เซิร์ฟเวอร์มี |
 | Match | OK · MISMATCH · WAIT (ว่างสำหรับ OPEN/JOIN) |
@@ -224,5 +224,5 @@
 | คอลัมน์ | ความหมาย |
 |---|---|
 | Time / By | เวลา / อีเมลผู้ทำ (หรือระบบ) |
-| Action | `SETUP` `OPEN_ROUND` `RESET_ROUND` `UPLOAD_SAP` `UPLOAD_POS` `DECIDE_CONFLICT` `ACK_WARNING` `APPROVE_MASTER` `SET_API_URL` `DEVICE_ADD` `DEVICE_PAIR_CODE` `DEVICE_PAIRED` `DEVICE_REVOKE` `DEVICE_ENABLE` `IMPORT_FILE` `ROUND_COUNTING` `QUARANTINE` `LOC_SUBMIT_FOR` `LOC_TRANSFER` `MIGRATE_MEMBERS` |
+| Action | `SETUP` `OPEN_ROUND` `RESET_ROUND` `UPLOAD_SAP` `UPLOAD_POS` `DECIDE_CONFLICT` `ACK_WARNING` `APPROVE_MASTER` `SET_API_URL` `DEVICE_ADD` `DEVICE_PAIR_CODE` `DEVICE_PAIRED` `DEVICE_REVOKE` `DEVICE_ENABLE` `IMPORT_FILE` `ROUND_COUNTING` `QUARANTINE` `LOC_SUBMIT_FOR` `LOC_TRANSFER` `MIGRATE_MEMBERS` · `LOC_FLAG_RESOLVE` `LOC_FLAG_CLEARED` `INDEX_FIX` `RECONCILE` `ADMIN_LOG_WARN_ACK` · `<ACTION>_FAILED` (v2.3.8: บันทึกก่อนทำ แล้วทำไม่สำเร็จ) |
 | Target / Detail | สิ่งที่ถูกกระทำ / รายละเอียด |

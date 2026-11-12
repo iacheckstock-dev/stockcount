@@ -81,6 +81,8 @@
   <button data-t="log">บันทึก Admin</button>
 </nav>
 <main>
+  <!-- บันทึก Admin_Log ไม่สำเร็จ (v2.3.8): แสดงจนกว่าจะกดรับทราบ -->
+  <div id="logWarn" class="card" style="display:none;border-color:#b42318;background:#fbebeb;margin-bottom:12px"></div>
   <!-- ภาพรวม -->
   <section id="overview" class="on">
     <div class="grid">
@@ -191,7 +193,11 @@
       <span class="muted" id="qInfo"></span>
     </div>
     <div class="scroll"><table id="devTbl"></table></div>
-    <h3 style="margin-top:16px;font-size:14px">Location</h3>
+    <div class="row" style="margin-top:16px;align-items:center">
+      <h3 style="margin:0;font-size:14px">Location</h3>
+      <button class="btn sec" onclick="reconcile()" title="อ่าน Count_Log ทั้งชีต เทียบกับยอดที่ระบบใช้ และยอดตอนปิดทุก Location">กระทบยอดทั้งรอบ</button>
+    </div>
+    <div id="recon"></div>
     <div class="scroll" style="max-height:300px"><table id="locTbl"></table></div>
   </section>
 
@@ -290,7 +296,31 @@ document.querySelectorAll('#nav button').forEach(function (b) {
 });
 
 function load() { call('apiGetState', [], render); }
-function setState(s) { S = s; CMP = null; render(s); if ($('compare').classList.contains('on')) loadCompare(); }
+function showLogWarn(w) {
+  var el = $('logWarn');
+  if (!w) { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  el.innerHTML = '<b style="color:#b42318">⚠ บันทึก Admin_Log ไม่สำเร็จ ' + esc(w.n) + ' ครั้ง</b> · ล่าสุด ' + esc(w.last) + ' (' + esc(w.what) + ')' +
+    '<div class="muted" style="margin:4px 0">' + esc(w.why) + ' · รายละเอียดสำรองไว้ในชีต Loc_Checks (Event ADMIN_LOG_FAIL) · การกระทำของหัวหน้าทีมที่บันทึกไม่ได้ถูกยกเลิก ไม่มีผล</div>' +
+    '<button class="btn sec" onclick="ackLogWarn()">ตรวจแล้ว รับทราบ</button>';
+}
+function ackLogWarn() { call('apiAckLogWarn', [], function (d) { renderDevices(d); showLogWarn(null); toast('รับทราบแล้ว'); }, 'กำลังบันทึกการรับทราบ…'); }
+function reconcile() {
+  call('apiReconcile', [], function (r) {
+    var bad = '<span class="pill bad">', ok = '<span class="pill ok">', n0 = function (v) { return Number(v || 0).toLocaleString('en-US', { maximumFractionDigits: 3 }); };
+    var h = '<div class="card" style="margin:8px 0;' + (r.ok ? 'border-color:#1f7a3a' : 'border-color:#b42318') + '"><b>' + (r.ok ? '✓ กระทบยอดทั้งรอบ: ตรงทั้งหมด' : '⚠ กระทบยอดทั้งรอบ: พบจุดต่าง') + '</b> <span class="muted">' + esc(r.at) + '</span>' +
+      '<div>' + r.locs + ' Location (ปิดแล้ว ' + r.closed + ') · Count_Log ' + n0(r.lines) + ' รายการ ' + n0(r.qty) + ' ชิ้น</div>' +
+      '<div>ดัชนีเทียบชีต: ' + (r.indexDiffs.length ? bad + 'ไม่ตรง ' + r.indexDiffs.length + ' จุด</span> แก้ตามชีตแล้ว (INDEX_FIX)<div class="muted">' + r.indexDiffs.slice(0, 10).map(esc).join('<br>') + '</div>' : ok + 'ตรง</span>') + '</div>' +
+      '<div>ยอดตอนปิดเทียบชีต: ' + (r.closeDiffs.length ? r.closeDiffs.map(function (c) {
+        return (c.flag ? '<span class="pill warn">' : bad) + esc(c.loc) + ' ปิด ' + n0(c.close) + ' · ชีต ' + n0(c.sheet) + '</span>' + (c.flag ? ' <span class="muted">(มีธงต้องตรวจซ้ำอยู่แล้ว)</span>' : ' <span class="muted">ยอดเปลี่ยนหลังปิดโดยไม่มีธง — ตรวจ Count_Log</span>');
+      }).join('<br>') : ok + 'ตรงทุก Location ที่ปิดแล้ว</span>') + '</div>' +
+      (r.missing.length ? '<div>' + bad + 'มีรายการแต่ไม่มีในชีต Locations</span> ' + esc(r.missing.join(', ')) + '</div>' : '') +
+      '<div class="muted">บันทึกผลใน Admin_Log (RECONCILE)</div></div>';
+    $('recon').innerHTML = h;
+    loadDevices();
+  }, 'กำลังกระทบยอด… อ่าน Count_Log ทั้งชีต อาจใช้เวลาครู่หนึ่ง');
+}
+function setState(s) { S = s; CMP = null; render(s); showLogWarn(s.logWarn); if ($('compare').classList.contains('on')) loadCompare(); }
 
 function render(s) {
   S = s;
@@ -532,6 +562,7 @@ var DEV = null;
 function loadDevices() { call('apiDevicesState', [], renderDevices); }
 function renderDevices(d) {
   DEV = d;
+  showLogWarn(d.logWarn);
   $('urlKv').innerHTML = kv([
     ['API (Web app)', '<input type="text" id="apiUrlIn" class="mono" style="width:100%;font-size:12px" placeholder="https://script.google.com/macros/s/…/exec" value="' + esc(d.apiUrl) + '">' +
       '<div class="row" style="margin:4px 0"><button class="btn sec" onclick="saveApiUrl()">บันทึก</button><button class="btn sec" onclick="testApi()">ทดสอบ</button></div>' +
