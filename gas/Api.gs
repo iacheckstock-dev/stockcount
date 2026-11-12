@@ -305,7 +305,7 @@ function apiStock_(a) {
 // - ยอดแต่ละ Location เก็บ upto (แถวที่รวมแล้ว) กันนับซ้ำเมื่ออ่านขณะเครื่องอื่นกำลังบันทึก
 // - บันทึกดัชนีกลับเฉพาะตอนถือล็อก (ingest_) · คำขออ่านอย่างเดียว (locInfo) คำนวณในหน่วยความจำ ไม่เขียน
 
-var LX_VER = 2;   // 2 = v2.3.1 (ตราประจำ Location + ยอดต่อ SKU สำหรับผู้ช่วยแก้ยอดตัวเอง)
+var LX_VER = 3;   // 2 = v2.3.1 (ตราประจำ Location + ยอดต่อ SKU สำหรับผู้ช่วยแก้ยอดตัวเอง)
 var LX_TTL = 21600;
 var LX_COLS = 14;
 var LX_PREFIX = 'lx_L_';
@@ -344,7 +344,7 @@ function lxId_(id) {
 /** เก็บใน cache แบบย่อ (cache รับได้ ~100KB ต่อรายการ → ~1,000+ SKU ต่อ Location) · Material ได้จากคีย์ */
 function lxPack_(L) {
   var it = {};
-  Object.keys(L.items).forEach(function (k) { var x = L.items[k]; it[k] = [x.barcode, x.qty, x.byDevice, x.since, x.oe && x.oe.length ? x.oe : 0, x.le || 0]; });
+  Object.keys(L.items).forEach(function (k) { var x = L.items[k]; it[k] = [x.barcode, x.qty, x.byDevice, x.since, x.cp && Object.keys(x.cp).length ? x.cp : 0, x.le || 0]; });
   var dv = {};
   Object.keys(L.devices).forEach(function (d) { var x = L.devices[d]; dv[d] = [x.lines, x.qty, x.maxSeq, x.lastTime]; });
   return JSON.stringify({ d: dv, i: it, q: L.qty, n: L.lines, u: L.upto, c: L.clr });
@@ -354,18 +354,15 @@ function lxUnpack_(s) {
   Object.keys(o.d).forEach(function (d) { var x = o.d[d]; L.devices[d] = { lines: x[0], qty: x[1], maxSeq: x[2], lastTime: x[3] }; });
   Object.keys(o.i).forEach(function (k) {
     var x = o.i[k];
-    L.items[k] = { key: k, material: k.indexOf('BC:') === 0 ? '' : k, barcode: x[0], qty: x[1], byDevice: x[2], since: x[3] || {}, oe: x[4] || [], le: x[5] || null };
+    L.items[k] = { key: k, material: k.indexOf('BC:') === 0 ? '' : k, barcode: x[0], qty: x[1], byDevice: x[2], since: x[3] || {}, cp: x[4] || {}, le: x[5] || null };
   });
   return L;
 }
 
-/** เครื่องที่การแก้ยอดรวมครอบคลุม: มีเครื่องอื่นร่วมยอด SKU นี้ (นับจากล้างครั้งล่าสุด) → เครื่องเหล่านั้น + ผู้แก้ · นับคนเดียว → ไม่ครอบคลุมใคร */
-function lxCover_(oe, since, editor) {
+/** เครื่องที่การแก้ยอดรวมตัดยอด: มีเครื่องอื่นร่วมยอด SKU นี้ (นับจากจุดตัดล่าสุด) → เครื่องเหล่านั้น + ผู้แก้ · นับคนเดียว → ไม่ตัดยอดใคร */
+function lxCover_(since, editor) {
   var others = Object.keys(since || {}).filter(function (d) { return d !== editor; });
-  if (!others.length) return oe || [];
-  var out = (oe || []).slice();
-  others.concat([editor]).forEach(function (d) { if (out.indexOf(d) < 0) out.push(d); });
-  return out;
+  return others.length ? others.concat([editor]) : [];
 }
 
 function lxNewLoc_() { return { devices: {}, items: {}, qty: 0, lines: 0, upto: 0, clr: {} }; }
@@ -374,9 +371,10 @@ function lxIsClear_(type, reason) { return type === 'RECOUNT_SET' && String(reas
 /**
  * รวมแถว Count_Log (ค่าแสดงผล คอลัมน์ A–N) เข้ายอดของ Location
  * นอกจากยอด ยังจำต่อ SKU (v2.3.1 — ผู้ช่วยแก้ยอดของตัวเอง):
- *   since[dev] = ยอดของเครื่องนั้นนับจากการล้าง Location ครั้งล่าสุด
- *   oe = เครื่องที่ "แก้ยอดรวม" ของผู้ดูแลครอบคลุมไปแล้ว (หลังล้างครั้งล่าสุด) — เครื่องเหล่านี้แก้ยอดของตัวเองใน SKU นั้นไม่ได้ (v2.3.2)
- *        ผู้ดูแลแก้ยอดรวมตอนนับคนเดียว = แก้ของตัวเอง ไม่ครอบคลุมใคร
+ *   since[dev] = "ยอดของฉัน" ของเครื่องนั้น นับจากจุดตัดล่าสุด (ล้าง Location หรือผู้ดูแลแก้ยอดรวม SKU นั้น)
+ *   cp[dev] = จุดตัดยอด (v2.3.5): Seq ของเครื่องนั้นตอนผู้ดูแลแก้ยอดรวม — ยอดก่อนหน้าถือว่าผู้ดูแลตรวจแล้ว แก้ผ่านยอดของฉันไม่ได้
+ *        (แทน "ห้ามแก้" ของ v2.3.2: ผู้ช่วยกลับมายิงเพิ่มแล้วแก้ส่วนที่ยิงเพิ่มได้ · ยังกันแก้ซ้ำสองชั้น)
+ *        ผู้ดูแลแก้ยอดรวมตอนนับคนเดียว = แก้ของตัวเอง ไม่ตัดยอดใคร
  *   le = [เครื่อง, เวลา] การแก้ล่าสุด · clr[dev] = Seq สูงสุดของเครื่องนั้นตอนล้าง Location ครั้งล่าสุด
  */
 function lxAddRow_(L, r) {
@@ -389,11 +387,16 @@ function lxAddRow_(L, r) {
   }
   d.lines++; d.qty = r3_(d.qty + qty); if (seq > d.maxSeq) d.maxSeq = seq; if (String(r[13]) > d.lastTime) d.lastTime = String(r[13]);
   var k = itemKey_(r[7], r[6]);
-  var it = L.items[k] || (L.items[k] = { key: k, material: r[7], barcode: r[6], qty: 0, byDevice: {}, since: {}, oe: [], le: null });
+  var it = L.items[k] || (L.items[k] = { key: k, material: r[7], barcode: r[6], qty: 0, byDevice: {}, since: {}, cp: {}, le: null });
+  if (!it.cp) it.cp = {};
   it.qty = r3_(it.qty + qty); it.byDevice[dev] = r3_((it.byDevice[dev] || 0) + qty);
-  if (clear) { it.since = {}; it.oe = []; }
-  else {
-    if (type === 'RECOUNT_SET') it.oe = lxCover_(it.oe, it.since, dev);
+  var cover = type === 'RECOUNT_SET' && !clear ? lxCover_(it.since, dev) : [];
+  if (clear) { it.since = {}; it.cp = {}; }
+  else if (cover.length) {
+    // จุดตัดยอด: ทุกเครื่องที่ร่วมยอด (รวมผู้แก้) เริ่ม "ยอดของฉัน" ใหม่จากตรงนี้ · แถวแก้ยอดรวมไม่นับเป็นยอดของใคร
+    cover.forEach(function (x) { it.since[x] = 0; it.cp[x] = x === dev ? seq : ((L.devices[x] || {}).maxSeq || 0); });
+    it.le = [dev, String(r[13])];
+  } else {
     it.since[dev] = r3_((it.since[dev] || 0) + qty);
     if (type === 'RECOUNT_SET' || type === 'SELF_SET') it.le = [dev, String(r[13])];
   }
@@ -455,8 +458,8 @@ function lxDiff_(a, b, names) {
     var ks = {};
     Object.keys(A.items).concat(Object.keys(B.items)).forEach(function (k) { ks[k] = 1; });
     Object.keys(ks).forEach(function (k) {
-      var x = A.items[k] || { qty: 0, since: {}, oe: [] }, y = B.items[k] || { qty: 0, since: {}, oe: [] };
-      if (x.qty !== y.qty || lxSameMap_(x.since, y.since) === false || (x.oe || []).slice().sort().join() !== (y.oe || []).slice().sort().join()) out.push(l + ' ' + k + ' ดัชนี ' + x.qty + ' ชีต ' + y.qty);
+      var x = A.items[k] || { qty: 0, since: {}, cp: {} }, y = B.items[k] || { qty: 0, since: {}, cp: {} };
+      if (x.qty !== y.qty || lxSameMap_(x.since, y.since) === false || lxSameMap_(x.cp, y.cp) === false) out.push(l + ' ' + k + ' ดัชนี ' + x.qty + ' ชีต ' + y.qty);
     });
   });
   return out;
@@ -1177,7 +1180,7 @@ function refreshLocations_(project, locNames, locs, mt) {
 function basisChecker_(project, X) {
   // ยอดบนเซิร์ฟเวอร์จากดัชนี (v2.3.0) + รายการก่อนหน้าในชุดเดียวกัน (ยังไม่ได้บันทึก)
   // since/oe (v2.3.1): ยอดของแต่ละเครื่องนับจากล้าง Location ครั้งล่าสุด และผู้ดูแลแก้ยอดรวม SKU แล้วหรือยัง
-  var map = {}, devs = {}, loaded = {}, since = {}, oe = {};
+  var map = {}, devs = {}, loaded = {}, since = {};
   function load(loc) {
     if (loaded[loc]) return;
     loaded[loc] = true;
@@ -1187,7 +1190,6 @@ function basisChecker_(project, X) {
       var it = D.items[k], kk = loc + '|' + k;
       map[kk] = r3_((map[kk] || 0) + it.qty);
       Object.keys(it.since || {}).forEach(function (d) { since[kk + '|' + d] = it.since[d]; });
-      if (it.oe && it.oe.length) oe[kk] = it.oe.slice();
     });
     Object.keys(D.devices).forEach(function (d) { (devs[loc] || (devs[loc] = {}))[d] = true; });
   }
@@ -1197,25 +1199,24 @@ function basisChecker_(project, X) {
     (devs[loc] || (devs[loc] = {}))[dev] = true;
     if (lxIsClear_(e.type, e.reason)) {
       Object.keys(since).forEach(function (x) { if (x.indexOf(kk + '|') === 0) delete since[x]; });
-      delete oe[kk];
-    } else {
-      if (e.type === 'RECOUNT_SET') {
-        var sm = {};
-        Object.keys(since).forEach(function (x) { if (x.indexOf(kk + '|') === 0) sm[x.slice(kk.length + 1)] = since[x]; });
-        oe[kk] = lxCover_(oe[kk], sm, dev);
-      }
-      since[kk + '|' + dev] = r3_((since[kk + '|' + dev] || 0) + qty);
+      return;
     }
+    if (e.type === 'RECOUNT_SET') {
+      var sm = {};
+      Object.keys(since).forEach(function (x) { if (x.indexOf(kk + '|') === 0) sm[x.slice(kk.length + 1)] = since[x]; });
+      var cover = lxCover_(sm, dev);
+      if (cover.length) { cover.forEach(function (d) { since[kk + '|' + d] = 0; }); return; }   // จุดตัดยอด (v2.3.5)
+    }
+    since[kk + '|' + dev] = r3_((since[kk + '|' + dev] || 0) + qty);
   }
   var problems = [];
   return {
     check: function (e, loc, deviceId) {
       if (e.type === 'SELF_SET') {
-        // ผู้ช่วยแก้ยอดของตัวเอง: เทียบกับยอดของเครื่องนี้ (นับจากล้างครั้งล่าสุด) + ผู้ดูแลแก้ SKU นี้ไปแล้วหรือยัง
+        // แก้ยอดของตัวเอง: เทียบกับยอดของเครื่องนี้ นับจากจุดตัดล่าสุด (ล้าง Location / ผู้ดูแลแก้ยอดรวม)
         load(loc);
         var kk = loc + '|' + itemKey_(e.material, e.barcode), sku = e.material || e.barcode;
         var mine = since[kk + '|' + deviceId] || 0;
-        if (oe[kk] && oe[kk].indexOf(deviceId) >= 0) problems.push({ loc: loc, note: deviceId + ' แก้ยอดของตัวเองหลังผู้ดูแลแก้ยอดรวม ' + sku + ' (อาจแก้ซ้ำ)' });
         if (e.basis === undefined || e.basis === null || e.basis === '' || r3_(e.basis) !== mine) {
           problems.push({ loc: loc, note: deviceId + ' แก้ ' + sku + ' จากยอดของตัวเองที่ไม่ตรง: เห็น ' + e.basis + ' เซิร์ฟเวอร์ ' + mine });
         } else if (r3_(mine + (Number(e.qty) || 0)) < 0) problems.push({ loc: loc, note: deviceId + ' แก้ ' + sku + ' จนยอดของตัวเองติดลบ' });
@@ -1317,12 +1318,11 @@ function apiLocInfo_(a, req) {
   });
   var t = table_('Locations'), li = locIdx_(t, loc);
   var L = li >= 0 ? rowObj_(t, t.rows[li]) : {};
-  // การแก้ต่อ SKU (v2.3.1): oe = การแก้ยอดรวมครอบคลุมเครื่องนี้แล้ว (แก้ยอดของตัวเองไม่ได้) · ใครแก้ล่าสุด (เตือนก่อนแก้)
+  // การแก้ต่อ SKU: cp = จุดตัดยอดของเครื่องนี้ (Seq ตอนผู้ดูแลแก้ยอดรวม · v2.3.5) · by/at = ใครแก้ล่าสุด (เตือนก่อนแก้)
   var edits = {};
   Object.keys(D.items).forEach(function (k) {
-    var it = D.items[k];
-    var cov = it.oe && it.oe.indexOf(a.deviceId) >= 0;
-    if (cov || it.le) edits[k] = { oe: cov ? 1 : 0, by: it.le ? it.le[0] : '', at: it.le ? it.le[1] : '' };
+    var it = D.items[k], cp = (it.cp && it.cp[a.deviceId]) || 0;
+    if (cp || it.le) edits[k] = { cp: cp, by: it.le ? it.le[0] : '', at: it.le ? it.le[1] : '' };
   });
   return {
     ok: true, location: loc, status: L.Status || '', flag: L.Flag || '', owner: owner, me: me, members: list,

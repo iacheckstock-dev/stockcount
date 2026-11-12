@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2.3.4';
+  var APP_VERSION = '2.3.5';
   var QTY_CONFIRM = 150;      // จำนวนที่ป้อนเองเกินนี้ต้องยืนยันอีกครั้ง
   var QTY_MAX_DIGITS = 5;     // ยาวกว่านี้ = น่าจะยิงบาร์โค้ดเข้าช่องจำนวน
   var INFO_EVERY = 15000;     // ถามสถานะผู้ช่วย/ผู้ดูแลระหว่างนับร่วมกัน
@@ -292,14 +292,20 @@
   }
   /** ยอดรวมทุกเครื่องต่อ SKU = ของเครื่องนี้ (ในเครื่อง รวมที่ยังไม่ส่ง) + ของเครื่องอื่น (จากเซิร์ฟเวอร์) */
   // ---------- ผู้ช่วยแก้ยอดของตัวเอง (v2.3.1) ----------
-  // "ยอดของฉัน" = ชิ้นที่เครื่องนี้ยิงใน Location นับจากผู้ดูแลล้าง Location ครั้งล่าสุด (S.info[loc].clr = Seq ของเครื่องนี้ตอนล้าง)
+  // "ยอดของฉัน" = ชิ้นที่เครื่องนี้ยิงใน Location นับจากจุดตัดล่าสุด (v2.3.5):
+  //   ล้าง Location (S.info[loc].clr) หรือ ผู้ดูแลแก้ยอดรวม SKU นั้น (edits[key].cp) — ยอดก่อนจุดตัดผู้ดูแลตรวจแล้ว
+  //   รายการล้าง Location ไม่นับเป็นยอดของใคร (ตรงกับเซิร์ฟเวอร์)
   function clearSeq(loc) { var i = S.info[loc]; return (i && i.clr) || 0; }
-  function mineSince(loc, key) {
-    var c = clearSeq(loc), q = 0;
-    S.entries.forEach(function (e) { if (e.location === loc && e.seq > c && itemKey(e) === key) q += e.qty; });
-    return Math.round(q * 1000) / 1000;
+  function cutSeq(loc, key) { var x = editInfo(loc, key); return Math.max(clearSeq(loc), (x && x.cp) || 0); }
+  function isClearEntry(e) { return e.type === 'RECOUNT_SET' && /^ล้าง Location/.test(e.reason || ''); }
+  function mineEntries(loc, key) {
+    var c = cutSeq(loc, key);
+    return S.entries.filter(function (e) { return e.location === loc && e.seq > c && !isClearEntry(e) && itemKey(e) === key; });
   }
-  /** การแก้ SKU นี้บนเซิร์ฟเวอร์ { oe: ผู้ดูแลแก้ยอดรวมแล้ว, by: เครื่องที่แก้ล่าสุด, at } */
+  function mineSince(loc, key) {
+    return Math.round(mineEntries(loc, key).reduce(function (a, e) { return a + e.qty; }, 0) * 1000) / 1000;
+  }
+  /** การแก้ SKU นี้บนเซิร์ฟเวอร์ { cp: จุดตัดยอดของเครื่องนี้, by: เครื่องที่แก้ล่าสุด, at } */
   function editInfo(loc, key) { var i = S.info[loc]; return (i && i.edits && i.edits[key]) || null; }
   /** เตือนเมื่อเครื่องอื่นเพิ่งแก้ SKU เดียวกัน (ไม่ห้าม — ให้คุยกันก่อน) */
   function otherEditHtml(loc, key) {
@@ -339,7 +345,11 @@
       if (r.me) S.srvRole[loc] = r.me.role;
       if (r.me) setRole(loc, { role: r.me.role, state: S.loc === loc && r.me.state !== 'CLOSED' ? 'COUNTING' : r.me.state, owner: r.owner ? r.owner.device : '', ownerLabel: r.owner ? memberLabel(r.owner) : '' });
       // หัวหน้าทีมโอนการดูแลไปเครื่องอื่น (v2.3.4): บอกให้รู้ · ถ้า Location ปิดไปแล้ว ออกจาก Location ไม่ให้ยิงต่อเข้าไปเงียบ ๆ
-      if (r.me && was === 'OWNER' && r.me.role === 'HELPER') {
+      if (r.me && was === 'HELPER' && r.me.role === 'OWNER' && !S.checking) {
+        SOUND.ok();
+        result(true, 'คุณเป็นผู้ดูแล ' + loc + ' แล้ว', 'หัวหน้าทีมโอนการดูแลมาให้เครื่องนี้\nปิด Location ได้เมื่อทุกคนส่งงาน');
+      }
+      if (r.me && was === 'OWNER' && r.me.role === 'HELPER' && !S.checking) {
         var by = r.owner ? memberLabel(r.owner) : 'เครื่องอื่น';
         if (S.loc === loc && r.status === 'ปิดแล้ว') {
           S.loc = null; setRole(loc, { state: 'SUBMITTED' }); clearResume();
@@ -816,8 +826,40 @@
     if (!isReady()) { SOUND.bad(); toast('ตรวจความพร้อมยังไม่ผ่าน — แก้ข้อ ✗ ก่อน', true); show('ready'); return Promise.resolve(); }
     if (!S.staff) { SOUND.bad(); setCard('bad', 'ยิงบัตรผู้ตรวจสอบ (EMP:) ก่อน'); show('count'); return Promise.resolve(); }
     if (S.loc === loc) { show('count'); toast('อยู่ที่ ' + loc + ' แล้ว'); return Promise.resolve(); }
+    // ถามเซิร์ฟเวอร์ก่อน แล้วตัดสินคำถามจากบทบาทล่าสุด (v2.3.5 — UAT G4-13/15: บทบาทที่จำไว้เก่าหลังหัวหน้าทีมโอนการดูแล)
+    // ออฟไลน์ → ใช้บทบาทที่จำไว้ · คำตอบนี้ใช้ต่อในขั้นตรวจผู้ดูแล ไม่ถามซ้ำ
+    var online = navigator.onLine !== false && S.cfg.token;
+    var was = (S.srvRole && S.srvRole[loc]) || (S.roles[loc] || {}).role;   // บทบาทล่าสุดที่รู้ ก่อนถามเซิร์ฟเวอร์
+    S.checking = loc;
+    if (online) {
+      setCard('idle', 'กำลังตรวจ ' + loc + '…', 'ถามเซิร์ฟเวอร์ว่าใครเป็นผู้ดูแล · รอสักครู่'); show('count');
+      busy('กำลังตรวจ ' + loc + '…', 'ถามเซิร์ฟเวอร์ว่าใครเป็นผู้ดูแล');
+    }
+    return (online ? fetchInfo(loc) : Promise.resolve(null)).then(function (pre) {
+      busyOff(); S.checking = '';
+      return openLocation2(loc, pre, was, online);
+    });
+  }
+  function openLocation2(loc, pre, was, tried) {
     var r = S.roles[loc] || null;
     var ask = Promise.resolve(true);
+    var by = pre && pre.owner ? memberLabel(pre.owner) : '';
+    if (pre && pre.me && pre.me.role === 'OWNER' && was === 'HELPER') {
+      SOUND.ok();
+      ask = result(true, 'คุณเป็นผู้ดูแล ' + loc + ' แล้ว', 'หัวหน้าทีมโอนการดูแลมาให้เครื่องนี้').then(function () { return true; });
+    } else if (pre && pre.me && pre.me.role === 'HELPER' && was === 'OWNER') {
+      // ถูกโอนการดูแลออกขณะอยู่ที่อื่น: แจ้งก่อน · ปิดแล้ว → จบตรงนี้ · ยังไม่ปิด → ถามกลับไปช่วยตามปกติ
+      SOUND.warn();
+      var closed = pre.status === 'ปิดแล้ว';
+      return result(false, 'หัวหน้าทีมโอนการดูแล ' + loc + ' แล้ว', 'ผู้ดูแลใหม่: ' + by + (closed ? '\n' + loc + ' ปิดแล้ว · ยิงป้าย Location ถัดไป' : '\nเครื่องนี้เป็นผู้ช่วย')).then(function () {
+        if (closed) { show('count'); return; }
+        return openLocation2(loc, pre, 'HELPER');
+      });
+    } else if (pre && pre.status === 'ปิดแล้ว' && pre.me && pre.me.role === 'HELPER') {
+      // ผู้ดูแลปิดแล้ว (หรือถูกโอนออก แล้วผู้ดูแลใหม่ปิด) → ผู้ช่วยกลับไปยิงเพิ่มไม่ได้
+      SOUND.bad();
+      return result(false, loc + ' ปิดแล้ว', 'ผู้ดูแล ' + by + ' ปิดไปแล้ว\nถ้าต้องนับเพิ่ม ให้ผู้ดูแลเปิดก่อน').then(function () { show('count'); });
+    } else
     if (r && r.role === 'OWNER' && r.state === 'CLOSED') {
       var s0 = combinedSummary(loc);
       ask = confirmBox(loc + ' ปิดไปแล้ว', 'ยอดตอนปิด ' + fmt(s0.qty) + ' ชิ้น ' + s0.sku + ' SKU<br>ต้องการเปิดเพื่อนับเพิ่มหรือแก้ไข?', 'เปิดนับเพิ่ม');
@@ -841,7 +883,7 @@
         show('count');
         busy('กำลังตรวจ ' + loc + '…', 'ถามเซิร์ฟเวอร์ว่ามีผู้ดูแลแล้วหรือยัง' + (note ? '\n' + note : ''));
         var done = function () { busyOff(); if (S.checking === loc) S.checking = ''; render(); };
-        return saveState().then(function () { return checkOwner(loc, r, note); }).then(done, function (e) { done(); throw e; });
+        return saveState().then(function () { return checkOwner(loc, r, note, pre, tried); }).then(done, function (e) { done(); throw e; });
       });
     });
   }
@@ -862,14 +904,18 @@
    * - ออฟไลน์จริง → เปิดนับได้ เซิร์ฟเวอร์ตัดสินบทบาทตอนส่งข้อมูล และแจ้งด้วยกล่องกลางจอ
    * - เซิร์ฟเวอร์ช้า → ถาม "ลองอีกครั้ง / ไม่ใช่ (ยิงป้ายผิด)" ไม่เข้าร่วมเองโดยไม่ถาม
    */
-  function checkOwner(loc, before, note) {
+  function checkOwner(loc, before, note, pre, tried) {
     var sendOpen = function (type) { return addEvent(type || 'OPEN', loc); };
     var openCard = function (title, sub) {
       S.checking = '';
       setCard('idle', title || ('เปิด ' + loc + ' แล้ว — ยิงสินค้าได้เลย'), [sub, note].filter(Boolean).map(esc).join('<br>')); render();
     };
     var retried = false;
-    return fetchInfo(loc).then(function onInfo(info) {
+    // คำตอบที่เพิ่งถามตอนยิงป้าย (≤ 15 วิ) ใช้ต่อได้ ไม่ถามเซิร์ฟเวอร์ซ้ำ
+    // ถามไปแล้วแต่เซิร์ฟเวอร์ช้า → ไปที่ "ลองอีกครั้ง" เลย ไม่รอซ้ำอีกรอบ
+    var first = pre && S.infoAt[loc] && Date.now() - S.infoAt[loc] <= 15000 ? Promise.resolve(pre) :
+      tried && !pre && S.infoErr !== 'NETWORK' ? Promise.resolve(null) : fetchInfo(loc);
+    return first.then(function onInfo(info) {
       if (S.loc !== loc) return;
       if (info) return decide(info);
       if (S.infoErr === 'NETWORK') {
@@ -1214,11 +1260,13 @@
   /** แก้/ล้าง/ย้อน เฉพาะยอดของตัวเอง: ผู้ช่วยเสมอ · ผู้ดูแลตอนนับช่วยกัน (ยกเว้นอยู่ในโหมดแก้ยอดรวม) (v2.3.2) */
   function ownScope(loc) { return isHelper(loc) || (hasOthers(loc) && S.totalMode !== loc); }
   /** ถามเหตุผล (บังคับ) — คืนข้อความ หรือ null ถ้ายกเลิก */
-  function askReason(title, what) {
-    return modal({ title: title, html: what + '<br>ใส่<b>เหตุผล</b> (บังคับ) เช่น ตรวจนับซ้ำทั้งชั้นแล้วได้ยอดนี้', input: true, inputmode: 'text', value: '', yes: 'บันทึก' }).then(function (v) {
+  function askReason(title, what, again) {
+    // เหตุผลว่าง → ถามซ้ำพร้อมตัวแดงในกล่อง (แถบล่างถูกแป้นพิมพ์บัง · UAT G4-7 · v2.3.5)
+    return modal({ title: title, html: what + '<br>ใส่<b>เหตุผล</b> (บังคับ) เช่น ตรวจนับซ้ำทั้งชั้นแล้วได้ยอดนี้' +
+      (again ? '<div class="warnline">ต้องใส่เหตุผลก่อนบันทึก</div>' : ''), input: true, inputmode: 'text', value: '', yes: 'บันทึก' }).then(function (v) {
       if (v === null) return null;
       v = String(v).trim();
-      if (!v) { toast('ต้องใส่เหตุผล', true); return askReason(title, what); }
+      if (!v) { SOUND.warn(); return askReason(title, what, true); }
       return v;
     });
   }
@@ -1250,9 +1298,9 @@
     }).then(function (v) {
       if (v === null) return;
       if (badNumber(v)) return;
-      if (v === '' || isNaN(Number(v)) || Number(v) < 0) { toast('ใส่ตัวเลข 0 ขึ้นไป', true); return; }
+      if (v === '' || isNaN(Number(v)) || Number(v) < 0) { SOUND.warn(); result(false, 'ใส่ตัวเลข 0 ขึ้นไป', 'ยังไม่ได้แก้ยอด'); return; }
       var nv = Number(v), d = Math.round((nv - cur) * 1000) / 1000;
-      if (d === 0) { toast('ยอดเท่าเดิม ไม่มีการแก้'); return; }
+      if (d === 0) { result(true, 'ยอดเท่าเดิม', 'ไม่มีการแก้'); return; }
       return qtyCheck(nv, m.n).then(function (yes) {
         if (!yes) return;
         return needReason ? askReason('เหตุผลที่แก้ยอดรวม', esc(m.n) + ': ' + fmt(cur) + ' → ' + fmt(nv) + ' (รวมทุกเครื่อง)') : '';
@@ -1273,18 +1321,17 @@
    */
   function editMine(key) {
     var loc = S.loc, s = combinedSummary(loc), it = s.items.get(key); if (!it) return;
-    var m = info(it), cur = mineSince(loc, key), x = editInfo(loc, key);
-    if (x && x.oe) {
-      return modal({ title: 'แก้ยอดของฉันไม่ได้', html: '<b>' + esc(m.n) + '</b><br>ผู้ดูแลแก้ยอดรวมของ SKU นี้ไปแล้ว — ถ้าแก้ของตัวเองอีกจะเป็นการแก้ซ้ำ<br>' +
-        (isHelper(loc) ? 'แจ้งผู้ดูแล' + ((S.info[loc] || {}).owner ? ' (' + esc(memberLabel(S.info[loc].owner)) + ')' : '') + ' ให้แก้ยอดรวมแทน' : 'ใช้ "แก้ยอดรวม" (เมื่อทุกคนส่งงานแล้ว) แทน'), yes: 'ตกลง', noCancel: true });
-    }
-    if (!S.entries.some(function (e) { return e.location === loc && e.seq > clearSeq(loc) && itemKey(e) === key; })) {
-      SOUND.warn(); result(false, 'SKU นี้ไม่มียอดของฉัน', 'แก้ได้เฉพาะชิ้นที่เครื่องนี้ยิง\nถ้าเจอของ ยิงเพิ่มได้ตามปกติ'); return;
+    var m = info(it), cur = mineSince(loc, key), x = editInfo(loc, key), cut = x && x.cp;
+    if (!mineEntries(loc, key).length) {
+      SOUND.warn();
+      result(false, 'SKU นี้ไม่มียอดของฉัน' + (cut ? 'หลังผู้ดูแลแก้ยอดรวม' : ''), cut ? 'ยอดก่อนหน้านี้ผู้ดูแลตรวจและแก้ยอดรวมแล้ว\nยิงเพิ่มได้ตามปกติ แล้วแก้เฉพาะส่วนที่ยิงเพิ่ม' : 'แก้ได้เฉพาะชิ้นที่เครื่องนี้ยิง\nถ้าเจอของ ยิงเพิ่มได้ตามปกติ');
+      return;
     }
     modal({
       title: 'แก้ยอดของฉันใน ' + loc,
       html: '<b>' + esc(m.n) + '</b><br>' + tailHtml(m.c) + '<br>ใส่ <b>ยอดจริงที่ฉันนับได้</b> (เฉพาะส่วนที่ฉันยิง · ใส่ 0 ถ้ายิงผิดทั้งหมด)' +
-        '<div class="muted">ตอนนี้ ของฉัน ' + fmt(cur) + (s.multi ? ' · เครื่องอื่น ' + fmt(it.others) + ' · รวม ' + fmt(it.qty) : '') + '</div>' + otherEditHtml(loc, key),
+        '<div class="muted">ตอนนี้ ของฉัน ' + fmt(cur) + (s.multi ? ' · รวม SKU ' + fmt(it.qty) : '') + '</div>' +
+        (cut ? '<div class="muted">ยอดของฉันนับจากที่ผู้ดูแลแก้ยอดรวมครั้งล่าสุด (ยอดก่อนนั้นผู้ดูแลตรวจแล้ว)</div>' : '') + otherEditHtml(loc, key),
       input: true, value: '', yes: 'บันทึกยอดของฉัน',
       preview: function (v) {
         if (v === '' || isNaN(Number(v))) return '';
@@ -1294,9 +1341,9 @@
     }).then(function (v) {
       if (v === null) return;
       if (badNumber(v)) return;
-      if (v === '' || isNaN(Number(v)) || Number(v) < 0) { toast('ใส่ตัวเลข 0 ขึ้นไป', true); return; }
+      if (v === '' || isNaN(Number(v)) || Number(v) < 0) { SOUND.warn(); result(false, 'ใส่ตัวเลข 0 ขึ้นไป', 'ยังไม่ได้แก้ยอด'); return; }
       var nv = Number(v), d = Math.round((nv - cur) * 1000) / 1000;
-      if (d === 0) { toast('ยอดเท่าเดิม ไม่มีการแก้'); return; }
+      if (d === 0) { result(true, 'ยอดเท่าเดิม', 'ไม่มีการแก้'); return; }
       return qtyCheck(nv, m.n).then(function (yes) {
         if (!yes) return;
         return addEntry({ barcode: it.barcode, material: it.material, qty: d, type: 'SELF_SET', basis: cur, reason: (isHelper(loc) ? 'ผู้ช่วย' : 'ผู้ดูแล') + 'แก้ยอดของตัวเอง ' + fmt(cur) + ' → ' + fmt(nv) }).then(function () {
@@ -1365,14 +1412,14 @@
   function clearMine(loc) {
     var s = combinedSummary(loc), keys = [];
     s.items.forEach(function (it, k) {
-      var x = editInfo(loc, k), q = mineSince(loc, k);
-      if (q !== 0) keys.push({ it: it, q: q, blocked: !!(x && x.oe) });
+      var q = mineSince(loc, k);
+      if (q !== 0) keys.push({ it: it, q: q, cut: !!(editInfo(loc, k) || {}).cp });
     });
-    var ok = keys.filter(function (k) { return !k.blocked; }), blocked = keys.length - ok.length;
-    if (!ok.length) { SOUND.warn(); result(false, blocked ? 'ล้างยอดของฉันไม่ได้' : 'ไม่มียอดของฉันใน ' + loc, blocked ? 'SKU ที่มียอดของฉัน ผู้ดูแลแก้ยอดรวมไปแล้วทั้งหมด\nแจ้งผู้ดูแล' : ''); return; }
+    var ok = keys, cuts = keys.filter(function (k) { return k.cut; }).length;
+    if (!ok.length) { SOUND.warn(); result(false, 'ไม่มียอดของฉันใน ' + loc, 'ยอดที่ผู้ดูแลแก้ยอดรวมไปแล้วไม่นับเป็นยอดของฉัน'); return; }
     var tot = Math.round(ok.reduce(function (a, k) { return a + k.q; }, 0) * 1000) / 1000;
     confirmBox('ล้างยอดของฉันใน ' + loc + '?', 'ล้าง <span class="bignum">' + fmt(tot) + '</span> ชิ้น ' + ok.length + ' SKU <b>เฉพาะที่เครื่องนี้ยิง</b><br>ยอดของเครื่องอื่นไม่ถูกแตะ' +
-      (blocked ? '<br><span class="warnline">ข้าม ' + blocked + ' SKU ที่ผู้ดูแลแก้ยอดรวมแล้ว (แจ้งผู้ดูแล)</span>' : '') +
+      (cuts ? '<br><span class="muted">' + cuts + ' SKU นับเฉพาะส่วนหลังผู้ดูแลแก้ยอดรวม</span>' : '') +
       '<br><span class="muted">ระบบไม่ลบข้อมูลเดิม แต่บันทึกรายการหักยอดกำกับไว้</span>', 'ล้างยอดของฉัน').then(function (yes) {
       if (!yes) return;
       var p = Promise.resolve();

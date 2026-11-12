@@ -505,22 +505,27 @@ console.log('\nผู้ช่วยแก้ยอดของตัวเอ�
   test('locInfo บอกเครื่องอื่นว่าใครแก้ SKU ล่าสุด (ใช้เตือนก่อนแก้)', () => {
     const i = O.info('W1');
     assert.strictEqual(i.edits[MAT1].by, 'TC21-03');
-    assert.strictEqual(i.edits[MAT1].oe, 0);
+    assert.strictEqual(i.edits[MAT1].cp || 0, 0);
   });
-  test('ผู้ดูแลแก้ยอดรวม SKU แล้ว → locInfo บอก oe · ผู้ช่วยยังส่ง SELF_SET มา (เช่นออฟไลน์) → ติดธง "อาจแก้ซ้ำ"', () => {
+  test('ผู้ดูแลแก้ยอดรวม → จุดตัดยอด (v2.3.5): cp ของผู้ช่วย = Seq ล่าสุด · ยอดของฉันเริ่มที่ 0 · ยิงเพิ่มแล้วแก้ส่วนที่ยิงเพิ่มได้ไม่ติดธง', () => {
     const tot = run('apiDevicesState()').locTotals.W1.qty;
     O.sync([O.scan('W1', BC1, MAT1, -1, { type: 'RECOUNT_SET', basis: tot, reason: 'แก้ยอด Location' })], [O.ev('EDIT', 'W1')]);
-    assert.strictEqual(H.info('W1').edits[MAT1].oe, 1);
-    const r = H.sync([H.scan('W1', BC1, MAT1, -1, { type: 'SELF_SET', basis: 3, reason: 'แก้' })]);
-    assert.ok(r.flags && /หลังผู้ดูแลแก้ยอดรวม .* \(อาจแก้ซ้ำ\)/.test(r.flags[0].note), JSON.stringify(r.flags));
+    assert.strictEqual(H.info('W1').edits[MAT1].cp, H.seq);
+    H.sync([H.scan('W1', BC1, MAT1, 1), H.scan('W1', BC1, MAT1, 1)]);
+    const r = H.sync([H.scan('W1', BC1, MAT1, -1, { type: 'SELF_SET', basis: 2, reason: 'แก้ส่วนที่ยิงเพิ่ม 2 → 1' })]);
+    assert.ok(!r.flags, JSON.stringify(r.flags));
+  });
+  test('จุดตัดยอด: ผู้ช่วยแก้จากยอดก่อนจุดตัด (เช่นออฟไลน์ ไม่รู้ว่าผู้ดูแลแก้ยอดรวมแล้ว) → ติดธงยอดไม่ตรง (กันแก้ซ้ำสองชั้น)', () => {
+    const r = H.sync([H.scan('W1', BC1, MAT1, -2, { type: 'SELF_SET', basis: 6, reason: 'แก้' })]);
+    assert.ok(r.flags && /จากยอดของตัวเองที่ไม่ตรง: เห็น 6 เซิร์ฟเวอร์ 1/.test(r.flags[0].note), JSON.stringify(r.flags));
     run('apiLocResolveFlag("W1", "ทดสอบ")');
   });
-  test('ผู้ดูแลล้าง Location นับใหม่ → ยอดของฉันของผู้ช่วยเริ่มใหม่ (clr = Seq ตอนล้าง) · oe หาย · แก้จากยอดใหม่ได้ไม่ติดธง', () => {
+  test('ผู้ดูแลล้าง Location นับใหม่ → ยอดของฉันของผู้ช่วยเริ่มใหม่ (clr = Seq ตอนล้าง) · จุดตัดยอดเดิมหาย · แก้จากยอดใหม่ได้ไม่ติดธง', () => {
     const items = run('apiDevicesState()').locTotals.W1;
     O.sync([O.scan('W1', BC1, MAT1, -items.qty, { type: 'RECOUNT_SET', basis: items.qty, reason: 'ล้าง Location นับใหม่ (เดิม ' + items.qty + ')' })], [O.ev('EDIT', 'W1', { clear: true })]);
     const i = H.info('W1');
     assert.strictEqual(i.clr, H.seq, 'clr = Seq ล่าสุดของผู้ช่วยตอนล้าง');
-    assert.strictEqual((i.edits[MAT1] || {}).oe || 0, 0);
+    assert.strictEqual((i.edits[MAT1] || {}).cp || 0, 0);
     H.sync([H.scan('W1', BC1, MAT1, 1), H.scan('W1', BC1, MAT1, 1), H.scan('W1', BC1, MAT1, 1)]);
     const r = H.sync([H.scan('W1', BC1, MAT1, -1, { type: 'SELF_SET', basis: 3, reason: 'แก้' })]);
     assert.ok(!r.flags, JSON.stringify(r.flags));
@@ -551,22 +556,29 @@ console.log('\nนับช่วยกัน: ทุกคนจัดการ
     O.sync([O.scan('W6', BC2, MAT2, 1), O.scan('W6', BC2, MAT2, 1)], [O.ev('OPEN', 'W6')]);
     O.sync([O.scan('W6', BC2, MAT2, 3, { type: 'RECOUNT_SET', basis: 2, reason: 'แก้ยอด Location 2 → 5' })], [O.ev('EDIT', 'W6')]);
     H.sync([H.scan('W6', BC2, MAT2, 1), H.scan('W6', BC2, MAT2, 1)], [H.ev('JOIN', 'W6')]);
-    assert.strictEqual((H.info('W6').edits[MAT2] || {}).oe || 0, 0);
+    assert.strictEqual((H.info('W6').edits[MAT2] || {}).cp || 0, 0);
     const r = H.sync([H.scan('W6', BC2, MAT2, -1, { type: 'SELF_SET', basis: 2, reason: 'แก้' })]);
     assert.ok(!r.flags, JSON.stringify(r.flags));
     // ผู้ดูแลเองก็แก้ยอดของตัวเองต่อได้ (ยอดรวมตอนนั้น = ของตัวเอง)
     const r2 = O.sync([O.scan('W6', BC2, MAT2, -1, { type: 'SELF_SET', basis: 5, reason: 'แก้' })], [O.ev('EDIT', 'W6', { mine: true })]);
     assert.ok(!r2.flags, JSON.stringify(r2.flags));
   });
-  test('ผู้ดูแลแก้ยอดรวมขณะมีผู้ช่วยร่วมยอด → ครอบคลุมทั้งคู่: ทั้งผู้ช่วยและผู้ดูแลแก้ยอดของตัวเองใน SKU นั้นแล้วติดธง', () => {
+  test('ผู้ดูแลแก้ยอดรวมขณะมีผู้ช่วยร่วมยอด → ตัดยอดทั้งคู่ (รวมผู้แก้): แก้จากยอดก่อนจุดตัด → ติดธง', () => {
     H.sync([], [H.ev('SUBMIT', 'W6')]);
     const tot = run('apiDevicesState()').locTotals.W6.qty;
     O.sync([O.scan('W6', BC2, MAT2, -1, { type: 'RECOUNT_SET', basis: tot, reason: 'แก้ยอดรวม Location · เหตุผล: นับซ้ำ' })], [O.ev('EDIT', 'W6')]);
-    assert.strictEqual(H.info('W6').edits[MAT2].oe, 1);
-    assert.strictEqual(O.info('W6').edits[MAT2].oe, 1);
+    assert.strictEqual(H.info('W6').edits[MAT2].cp, H.seq);
+    assert.strictEqual(O.info('W6').edits[MAT2].cp, O.seq, 'จุดตัดของผู้แก้ = Seq ของแถวแก้ยอดรวม');
     const r = O.sync([O.scan('W6', BC2, MAT2, -1, { type: 'SELF_SET', basis: 3, reason: 'แก้' })], [O.ev('EDIT', 'W6', { mine: true })]);
-    assert.ok(r.flags && /TC21-01 แก้ยอดของตัวเองหลังผู้ดูแลแก้ยอดรวม/.test(r.flags[0].note), JSON.stringify(r.flags));
+    assert.ok(r.flags && /TC21-01 แก้ .* จากยอดของตัวเองที่ไม่ตรง: เห็น 3 เซิร์ฟเวอร์ 0/.test(r.flags[0].note), JSON.stringify(r.flags));
     run('apiLocResolveFlag("W6", "ทดสอบ")');
+  });
+  test('G4-8: ผู้ช่วยกลับมายิงเพิ่มหลังผู้ดูแลแก้ยอดรวม → แก้เฉพาะส่วนที่ยิงเพิ่มได้ · ยอดรวมถูก', () => {
+    const before = run('apiDevicesState()').locTotals.W6.qty;
+    H.sync([H.scan('W6', BC2, MAT2, 1), H.scan('W6', BC2, MAT2, 1), H.scan('W6', BC2, MAT2, 1)], [H.ev('JOIN', 'W6')]);
+    const r = H.sync([H.scan('W6', BC2, MAT2, -1, { type: 'SELF_SET', basis: 3, reason: 'ยิงเพิ่มเกิน 3 → 2' })], [H.ev('EDIT', 'W6', { mine: true })]);
+    assert.ok(!r.flags, JSON.stringify(r.flags));
+    assert.strictEqual(run('apiDevicesState()').locTotals.W6.qty, before + 2);
   });
 }
 
