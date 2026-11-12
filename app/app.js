@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2.3.5';
+  var APP_VERSION = '2.3.6';
   var QTY_CONFIRM = 150;      // จำนวนที่ป้อนเองเกินนี้ต้องยืนยันอีกครั้ง
   var QTY_MAX_DIGITS = 5;     // ยาวกว่านี้ = น่าจะยิงบาร์โค้ดเข้าช่องจำนวน
   var INFO_EVERY = 15000;     // ถามสถานะผู้ช่วย/ผู้ดูแลระหว่างนับร่วมกัน
@@ -317,18 +317,25 @@
 
   function combinedSummary(loc) {
     var mine = locSummary(loc), oth = othersOf(loc);
-    var items = new Map(), qty = mine.qty;
-    mine.items.forEach(function (it, k) { items.set(k, Object.assign({}, it, { mine: it.qty, others: 0 })); });
+    // "ของฉัน" ต่อ SKU นับจากล้าง Location ครั้งล่าสุด (v2.3.6) ให้ตรงกับยอดเครื่องอื่นที่เซิร์ฟเวอร์ส่งมา (นับหลังล้างเหมือนกัน)
+    // รายการล้างเป็นของเครื่องที่กดล้าง ถ้านับรวมจะเห็น "ของฉัน -5 / เครื่องอื่น 6" ทั้งที่รวมได้ 1 ถูกต้อง
+    var cut = clearSeq(loc), sc = new Map(), r3 = function (v) { return Math.round(v * 1000) / 1000; };
+    S.entries.forEach(function (e) { if (e.location === loc && isClearEntry(e) && e.seq > cut) cut = e.seq; });
+    S.entries.forEach(function (e) { if (e.location === loc && e.seq > cut && !isClearEntry(e)) { var k = itemKey(e); sc.set(k, (sc.get(k) || 0) + e.qty); } });
+    // ยอดรวม (qty) คิดแบบเดิม = ทุกรายการ (รายการล้างหักยอดเก่าไปแล้ว) เพื่อให้ตรงกับยอดเซิร์ฟเวอร์ตอนปิด
+    var items = new Map(), qty = mine.qty, mineQty = 0;
+    mine.items.forEach(function (it, k) { var m = r3(sc.get(k) || 0); items.set(k, Object.assign({}, it, { mine: m, others: 0 })); mineQty += m; });
+    mineQty = r3(mineQty);
     oth.items.forEach(function (x) {
       var k = x[0], it = items.get(k);
       if (!it) { it = { key: k, material: x[1], barcode: x[2], qty: 0, mine: 0, others: 0, edits: 0, lines: 0 }; items.set(k, it); }
-      it.others = x[3]; it.qty = Math.round((it.mine + it.others) * 1000) / 1000;
+      it.others = x[4] === undefined ? x[3] : x[4]; it.qty = r3(it.qty + x[3]);
       if (!it.barcode && x[2]) it.barcode = x[2];
       qty += x[3];
     });
     var sku = 0;
     items.forEach(function (it) { if (it.qty !== 0) sku++; });
-    return { qty: Math.round(qty * 1000) / 1000, sku: sku, items: items, mine: mine, othersQty: oth.qty, multi: hasOthers(loc) };
+    return { qty: Math.round(qty * 1000) / 1000, sku: sku, items: items, mine: mine, mineQty: mineQty, othersQty: oth.qty, multi: hasOthers(loc) };
   }
   /** ถามเซิร์ฟเวอร์ว่าใครอยู่ใน Location นี้ (ล้มเหลว/ออฟไลน์ = null) */
   function fetchInfo(loc, ms) {
@@ -668,7 +675,7 @@
     $('locTotal').textContent = fmt(sum.qty);
     fitText($('locTotal'), 40, 20);
     // หลายเครื่อง: ยอดรวม = ทุกเครื่อง และบอกยอดของเครื่องนี้แยก
-    $('locSku').textContent = sum.multi ? 'ของฉัน ' + fmt(sum.mine.qty) + ' · ' + (S.info[S.loc].members.length) + ' เครื่อง' :
+    $('locSku').textContent = sum.multi ? 'ของฉัน ' + fmt(sum.mineQty) + ' · ' + (S.info[S.loc].members.length) + ' เครื่อง' :
       fmt(sum.sku) + ' SKU' + (S.loc && S.locChecks[S.loc] === 'OK' && !locPending(S.loc) ? ' · ✓ ส่งครบ' : '');
     $('locLbl').textContent = sum.multi ? 'ยอดรวมทุกเครื่อง' : 'ยอดรวม Location';
     $('devTotal').textContent = fmt(deviceTotal());
@@ -1212,7 +1219,7 @@
         var me = m.device === S.cfg.deviceId;
         var st = m.role === 'OWNER' ? (m.state === 'CLOSED' ? 'ปิดแล้ว' : m.state === 'PAUSED' ? 'พัก' : 'กำลังนับ') :
           m.state === 'SUBMITTED' ? (m.match === 'OK' ? 'ส่งงานแล้ว ✓' : 'ส่งงานแล้ว (รอข้อมูล)') : 'กำลังนับ';
-        var q = me ? s.mine.qty : m.qty;
+        var q = me ? s.mineQty : (m.sc === undefined ? m.qty : m.sc); // นับหลังล้าง Location (v2.3.6)
         return '<div class="mrow' + (m.role === 'HELPER' && !(m.state === 'SUBMITTED' && m.match === 'OK') ? ' wait' : '') + '"><span>' + (m.role === 'OWNER' ? 'ผู้ดูแล' : 'ผู้ช่วย') + ' ' +
           esc(memberLabel(m)) + (me ? ' (ฉัน)' : '') + '</span><span>' + esc(st) + ' · ' + fmt(q) + '</span></div>';
       }).join('');

@@ -44,13 +44,13 @@
   #toast { position:fixed; bottom:16px; left:50%; transform:translateX(-50%); padding:10px 16px; border-radius:8px; background:#111; color:#fff; display:none; max-width:80%; z-index:10; }
   #toast.err { background:var(--bad); }
   .okline { color:#1a7f37; font-size:13px; margin:4px 0; }
-  #trDlg, #revDlg, #flagDlg { position:fixed; inset:0; background:rgba(0,0,0,.35); display:none; align-items:center; justify-content:center; z-index:8; }
-  #trDlg.on, #revDlg.on, #flagDlg.on { display:flex; }
-  #flagDlg textarea { width:100%; box-sizing:border-box; min-height:70px; font:inherit; padding:8px; border:1px solid var(--line); border-radius:8px; }
-  #flagDlg textarea.need { border-color:var(--bad); }
-  #flagNeed { color:var(--bad); font-size:13px; margin-top:4px; }
-  #flagDlg .btn:disabled { opacity:.4; cursor:not-allowed; }
-  #trDlg .box, #revDlg .box, #flagDlg .box { background:#fff; border-radius:10px; padding:18px 20px; width:560px; max-width:94vw; max-height:90vh; overflow:auto; }
+  #trDlg, #revDlg, #flagDlg, #askDlg { position:fixed; inset:0; background:rgba(0,0,0,.35); display:none; align-items:center; justify-content:center; z-index:8; }
+  #trDlg.on, #revDlg.on, #flagDlg.on, #askDlg.on { display:flex; }
+  #flagDlg textarea, #askDlg textarea { width:100%; box-sizing:border-box; min-height:70px; font:inherit; padding:8px; border:1px solid var(--line); border-radius:8px; }
+  #flagDlg textarea.need, #askDlg textarea.need { border-color:var(--bad); }
+  #flagNeed, #askNeed, #trNeed { color:var(--bad); font-size:13px; margin-top:4px; }
+  #flagDlg .btn:disabled, #askDlg .btn:disabled { opacity:.4; cursor:not-allowed; }
+  #trDlg .box, #revDlg .box, #flagDlg .box, #askDlg .box { background:#fff; border-radius:10px; padding:18px 20px; width:560px; max-width:94vw; max-height:90vh; overflow:auto; }
   #trDlg label.opt, #revDlg label.opt { display:block; border:1px solid var(--line); border-radius:8px; padding:8px 10px; margin:6px 0; cursor:pointer; }
   #trDlg label.opt:has(input:checked), #revDlg label.opt:has(input:checked) { border-color:#111; background:var(--soft); }
   #busy { position:fixed; inset:0; background:rgba(255,255,255,.6); display:none; align-items:center; justify-content:center; z-index:9; font-size:15px; }
@@ -204,7 +204,8 @@
   <h3 style="margin-top:0">โอนการดูแล <span id="trLoc"></span></h3>
   <div class="muted">ผู้ดูแลเดิม <b id="trFrom"></b> จะกลายเป็นผู้ช่วยที่ส่งงานแล้ว (ยอดเดิมยังอยู่) · เลือกได้เฉพาะเครื่องที่เปิดใช้และจับคู่แล้ว</div>
   <div id="trList" style="margin-top:8px"></div>
-  <div class="row" style="margin-top:8px">เหตุผล <input type="text" id="trWhy" style="flex:1" placeholder="เช่น เครื่องผู้ดูแลเสีย (บังคับ)"></div>
+  <div class="row" style="margin-top:8px">เหตุผล <input type="text" id="trWhy" style="flex:1" placeholder="เช่น เครื่องผู้ดูแลเสีย (บังคับ)" oninput="$('trNeed').textContent=''"></div>
+  <div id="trNeed"></div>
   <div class="row" style="margin-top:12px;justify-content:flex-end">
     <button class="btn sec" onclick="$('trDlg').classList.remove('on')">ยกเลิก</button>
     <button class="btn" onclick="doTransfer()">โอนการดูแล</button>
@@ -236,6 +237,20 @@
   <div class="row" style="margin-top:12px;justify-content:flex-end">
     <button class="btn sec" onclick="$('flagDlg').classList.remove('on')">ยกเลิก</button>
     <button class="btn" id="flagOk" onclick="doResolveFlag()" disabled>ปิดธง</button>
+  </div>
+</div></div>
+<!-- กล่องยืนยัน/ใส่เหตุผลกลางหน้า แทน confirm()/prompt() ของเบราว์เซอร์ (v2.3.6) -->
+<div id="askDlg"><div class="box">
+  <h3 style="margin-top:0" id="askTitle"></h3>
+  <div id="askBody"></div>
+  <div id="askWhyBox" style="display:none">
+    <div style="margin-top:10px"><b>เหตุผล</b> <span class="muted">(บังคับ)</span></div>
+    <textarea id="askWhy" oninput="askCheck()"></textarea>
+    <div id="askNeed">ต้องใส่เหตุผลก่อน</div>
+  </div>
+  <div class="row" style="margin-top:12px;justify-content:flex-end">
+    <button class="btn sec" onclick="askClose()">ยกเลิก</button>
+    <button class="btn" id="askOk" onclick="askDo()">ตกลง</button>
   </div>
 </div></div>
 <div id="busy"><div class="bx"><div class="spin"></div><div id="busyMsg">กำลังทำงาน…</div><div class="sub" id="busySub">รอเซิร์ฟเวอร์ตอบ อย่าปิดหน้านี้</div></div></div>
@@ -368,8 +383,9 @@ function ackNew() {
 }
 function approve() {
   var ids = []; document.querySelectorAll('.ack').forEach(function (x) { if (x.checked) ids.push(x.value); });
-  if (!confirm('อนุมัติ Master นี้ให้เครื่องโหลดใช้งาน?')) return;
-  call('apiApprove', [S.master.hash, ids], function (s) { setState(s); toast('อนุมัติแล้ว'); });
+  ask({ title: 'อนุมัติ Master', body: '<div>อนุมัติ Master นี้ให้เครื่องโหลดใช้งาน?</div>', ok: 'อนุมัติ' }, function () {
+    call('apiApprove', [S.master.hash, ids], function (s) { setState(s); toast('อนุมัติแล้ว'); }, 'กำลังอนุมัติ Master…');
+  });
 }
 
 function renderChecks(checks) {
@@ -565,7 +581,9 @@ function renderDevices(d) {
           (x.state === 'SUBMITTED' && x.match !== 'OK' ? ' (รอข้อมูล)' : '') + '</span>' + (dq ? ' <span class="muted">' + n0(dq.qty) + ' ชิ้น</span>' : '') + (x.subBy === 'ADMIN' ? ' <span class="muted">แทนโดยหัวหน้าทีม</span>' : '') +
           (x.role === 'HELPER' && x.state !== 'SUBMITTED' ? ' <button class="btn sec" onclick="submitFor(\'' + esc(l.Location) + '\',\'' + esc(x.device) + '\')">ส่งงานแทน</button>' : '') + '</div>';
       }).join('');
-      return '<tr><td><b>' + esc(l.Location) + '</b></td><td>' + esc(l.Status) + (l.Status_Detail ? '<div class="muted">' + esc(l.Status_Detail) + '</div>' : '') + '</td><td>' + esc(l.Owner || l.Open_By) +
+      var clrHtml = T.clearedAt ? '<div class="muted">ล้างทั้ง Location เมื่อ ' + esc(String(T.clearedAt).slice(11, 16) || T.clearedAt) + ' โดย ' + esc(T.clearedBy) + '</div>' +
+        '<div class="muted">ยอดแยกเครื่อง = นับหลังล้าง</div>' : '';
+      return '<tr><td><b>' + esc(l.Location) + '</b>' + clrHtml + '</td><td>' + esc(l.Status) + (l.Status_Detail ? '<div class="muted">' + esc(l.Status_Detail) + '</div>' : '') + '</td><td>' + esc(l.Owner || l.Open_By) +
         '</td><td>' + (memHtml || esc(l.Devices)) + '</td><td class="n"><b>' + n0(T.qty) + '</b><div class="muted">' + n0(T.lines) + ' ร. · ' + T.sku + ' SKU</div></td><td class="n">' + ctHtml + '</td><td>' + (l.Flag ? '<span class="pill bad">' + esc(l.Flag) + '</span>' : '') +
         (l.Flag_Check && ready ? '<div class="okline">✓ ปิดใหม่แล้ว: ทุกเครื่องส่งงาน · ยอดตอนปิด ' + n0(ct) + ' = เซิร์ฟเวอร์ ' + n0(T.qty) + ' — ตรวจแล้วกดปิดธงได้</div>' : '') +
         (l.Flag_Check ? '<div><button class="btn sec" onclick="resolveFlag(\'' + esc(l.Location) + '\')">ปิดธง</button></div>' : '') + '</td><td>' + esc(l.Closed_Time) + '</td><td>' + m +
@@ -628,9 +646,34 @@ function testApi() {
 }
 /** ผู้ช่วยติดต่อไม่ได้ (แบตหมด/ออฟไลน์): ใช้ยอดที่เซิร์ฟเวอร์ได้รับแล้ว รายการที่มาทีหลังจะขึ้นให้ตรวจซ้ำ */
 function submitFor(loc, dev) {
-  var why = prompt('ส่งงานแทน ' + dev + ' ที่ ' + loc + '\nใช้ยอดที่เซิร์ฟเวอร์ได้รับแล้ว ถ้าเครื่องส่งข้อมูลเพิ่มทีหลัง ระบบจะขึ้น "ต้องตรวจซ้ำ"\n\nเหตุผล (เช่น แบตหมด ติดต่อไม่ได้):');
-  if (why === null) return;
-  call('apiLocSubmitFor', [loc, dev, why], function (d) { renderDevices(d); toast('ส่งงานแทน ' + dev + ' แล้ว'); }, 'กำลังส่งงานแทน ' + dev + ' ที่ ' + loc + '…');
+  ask({ title: 'ส่งงานแทน ' + dev + ' ที่ ' + loc, ok: 'ส่งงานแทน', why: 'เช่น แบตหมด ติดต่อไม่ได้',
+    body: '<div>ใช้ยอดที่เซิร์ฟเวอร์ได้รับแล้ว · ถ้าเครื่องส่งข้อมูลเพิ่มทีหลัง ระบบจะขึ้น "ต้องตรวจซ้ำ"</div>' }, function (why) {
+    call('apiLocSubmitFor', [loc, dev, why], function (d) { renderDevices(d); toast('ส่งงานแทน ' + dev + ' แล้ว'); }, 'กำลังส่งงานแทน ' + dev + ' ที่ ' + loc + '…');
+  });
+}
+/** กล่องยืนยันกลางหน้า (v2.3.6): opt {title, body(html), ok, why(placeholder → ต้องใส่เหตุผล)} · done(why) เมื่อกดตกลง */
+var ASK = null;
+function ask(opt, done) {
+  ASK = { opt: opt, done: done };
+  $('askTitle').textContent = opt.title; $('askBody').innerHTML = opt.body || '';
+  $('askOk').textContent = opt.ok || 'ตกลง';
+  $('askWhyBox').style.display = opt.why ? 'block' : 'none';
+  $('askWhy').value = ''; $('askWhy').placeholder = opt.why || '';
+  askCheck();
+  $('askDlg').classList.add('on');
+  (opt.why ? $('askWhy') : $('askOk')).focus();
+}
+function askCheck() {
+  var need = ASK && ASK.opt.why, ok = !need || !!$('askWhy').value.trim();
+  $('askOk').disabled = !ok; $('askNeed').style.display = ok ? 'none' : 'block';
+  $('askWhy').classList.toggle('need', !ok);
+}
+function askClose() { $('askDlg').classList.remove('on'); ASK = null; }
+function askDo() {
+  if (!ASK) return;
+  var why = $('askWhy').value.trim();
+  if (ASK.opt.why && !why) { askCheck(); return; }
+  var done = ASK.done; askClose(); done(why);
 }
 /** ปิดธงต้องตรวจซ้ำ หลังหัวหน้าทีมตรวจแล้ว (อีกทาง: ผู้ดูแลล้าง Location แล้วนับใหม่ ธงหายเอง) */
 // กล่องแทน prompt(): ปุ่มปิดธงกดไม่ได้จนกว่าจะใส่เหตุผล และบอกเป็นตัวแดงว่าขาดอะไร (F3, v2.2.9)
@@ -664,21 +707,22 @@ function transferLoc(loc) {
       (ago === null ? 'ยังไม่มีสัญญาณ' : ago < 1 ? 'ติดต่อเมื่อสักครู่' : 'ติดต่อ ' + ago + ' นาทีที่แล้ว') + (x.hb && x.hb.loc ? ' · อยู่ที่ ' + esc(x.hb.loc) : '') + '</span></label>';
   }).join('');
   $('trLoc').textContent = loc; $('trFrom').textContent = owner || '-';
-  $('trList').innerHTML = opts; $('trWhy').value = '';
+  $('trList').innerHTML = opts; $('trWhy').value = ''; $('trNeed').textContent = '';
   $('trDlg').classList.add('on');
 }
 function doTransfer() {
   var r = document.querySelector('input[name=trTo]:checked'), why = $('trWhy').value.trim(), loc = $('trLoc').textContent;
-  if (!r) { toast('เลือกเครื่องที่จะรับโอน', true); return; }
-  if (!why) { toast('ใส่เหตุผล', true); return; }
-  if (!confirm('ยืนยันโอนการดูแล ' + loc + '\n' + $('trFrom').textContent + ' → ' + r.value + '\nเหตุผล: ' + why)) return;
+  // กล่องนี้แสดงผู้ดูแลเดิม → เครื่องที่เลือก อยู่แล้ว จึงไม่ถามยืนยันซ้ำ (v2.3.6) · ขาดอะไรบอกเป็นตัวแดงในกล่อง
+  if (!r) { $('trNeed').textContent = 'เลือกเครื่องที่จะรับโอนก่อน'; return; }
+  if (!why) { $('trNeed').textContent = 'ต้องใส่เหตุผลก่อน'; $('trWhy').focus(); return; }
   $('trDlg').classList.remove('on');
   call('apiLocTransfer', [loc, r.value, why], function (d) { renderDevices(d); toast('โอนการดูแล ' + loc + ' ให้ ' + r.value + ' แล้ว'); }, 'กำลังโอนการดูแล ' + loc + '…');
 }
 function seedDevices() { call('apiSeedDevices', [$('seedN').value, 'TC21'], function (d) { renderDevices(d); toast('สร้างรหัสเครื่องแล้ว'); }); }
 function pairCode(id) {
-  if (!confirm('สร้างรหัสจับคู่ใหม่ให้ ' + id + '?\nถ้าเครื่องนี้เคยจับคู่แล้ว ต้องจับคู่ใหม่บนเครื่องด้วยรหัสนี้')) return;
-  call('apiPairCode', [id], function (d) { renderDevices(d); toast('รหัสจับคู่ ' + id + ' ใช้ได้ 30 นาที'); });
+  ask({ title: 'สร้างรหัสจับคู่ใหม่ให้ ' + id, ok: 'สร้างรหัส', body: '<div>ถ้าเครื่องนี้เคยจับคู่แล้ว ต้องจับคู่ใหม่บนเครื่องด้วยรหัสนี้</div>' }, function () {
+    call('apiPairCode', [id], function (d) { renderDevices(d); toast('รหัสจับคู่ ' + id + ' ใช้ได้ 30 นาที'); }, 'กำลังสร้างรหัสจับคู่…');
+  });
 }
 function setActive(id, on) {
   if (on) { call('apiSetDeviceActive', [id, true], function (d) { renderDevices(d); toast('เปิดใช้ ' + id + ' แล้ว — กด "สร้างรหัสจับคู่" ต่อ'); }); return; }

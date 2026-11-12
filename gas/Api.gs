@@ -305,7 +305,7 @@ function apiStock_(a) {
 // - ยอดแต่ละ Location เก็บ upto (แถวที่รวมแล้ว) กันนับซ้ำเมื่ออ่านขณะเครื่องอื่นกำลังบันทึก
 // - บันทึกดัชนีกลับเฉพาะตอนถือล็อก (ingest_) · คำขออ่านอย่างเดียว (locInfo) คำนวณในหน่วยความจำ ไม่เขียน
 
-var LX_VER = 3;   // 2 = v2.3.1 (ตราประจำ Location + ยอดต่อ SKU สำหรับผู้ช่วยแก้ยอดตัวเอง)
+var LX_VER = 4;   // 2 = v2.3.1 (ตราประจำ Location + ยอดต่อ SKU สำหรับผู้ช่วยแก้ยอดตัวเอง)
 var LX_TTL = 21600;
 var LX_COLS = 14;
 var LX_PREFIX = 'lx_L_';
@@ -344,17 +344,17 @@ function lxId_(id) {
 /** เก็บใน cache แบบย่อ (cache รับได้ ~100KB ต่อรายการ → ~1,000+ SKU ต่อ Location) · Material ได้จากคีย์ */
 function lxPack_(L) {
   var it = {};
-  Object.keys(L.items).forEach(function (k) { var x = L.items[k]; it[k] = [x.barcode, x.qty, x.byDevice, x.since, x.cp && Object.keys(x.cp).length ? x.cp : 0, x.le || 0]; });
+  Object.keys(L.items).forEach(function (k) { var x = L.items[k]; it[k] = [x.barcode, x.qty, x.byDevice, x.since, x.cp && Object.keys(x.cp).length ? x.cp : 0, x.le || 0, x.sc && !lxSameMap_(x.sc, x.byDevice) ? x.sc : 0]; });   // sc = byDevice (ยังไม่เคยล้าง) → เก็บ 0 ประหยัดที่ (cache จำกัด 100KB ต่อคีย์)
   var dv = {};
-  Object.keys(L.devices).forEach(function (d) { var x = L.devices[d]; dv[d] = [x.lines, x.qty, x.maxSeq, x.lastTime]; });
-  return JSON.stringify({ d: dv, i: it, q: L.qty, n: L.lines, u: L.upto, c: L.clr });
+  Object.keys(L.devices).forEach(function (d) { var x = L.devices[d]; dv[d] = x.sc === undefined || x.sc === x.qty ? [x.lines, x.qty, x.maxSeq, x.lastTime] : [x.lines, x.qty, x.maxSeq, x.lastTime, x.sc]; });
+  return JSON.stringify({ d: dv, i: it, q: L.qty, n: L.lines, u: L.upto, c: L.clr, ca: L.ca || 0 });
 }
 function lxUnpack_(s) {
-  var o = JSON.parse(s), L = { devices: {}, items: {}, qty: o.q, lines: o.n, upto: o.u, clr: o.c || {} };
-  Object.keys(o.d).forEach(function (d) { var x = o.d[d]; L.devices[d] = { lines: x[0], qty: x[1], maxSeq: x[2], lastTime: x[3] }; });
+  var o = JSON.parse(s), L = { devices: {}, items: {}, qty: o.q, lines: o.n, upto: o.u, clr: o.c || {}, ca: o.ca || null };
+  Object.keys(o.d).forEach(function (d) { var x = o.d[d]; L.devices[d] = { lines: x[0], qty: x[1], maxSeq: x[2], lastTime: x[3], sc: x.length > 4 ? x[4] : x[1] }; });
   Object.keys(o.i).forEach(function (k) {
     var x = o.i[k];
-    L.items[k] = { key: k, material: k.indexOf('BC:') === 0 ? '' : k, barcode: x[0], qty: x[1], byDevice: x[2], since: x[3] || {}, cp: x[4] || {}, le: x[5] || null };
+    L.items[k] = { key: k, material: k.indexOf('BC:') === 0 ? '' : k, barcode: x[0], qty: x[1], byDevice: x[2], since: x[3] || {}, cp: x[4] || {}, le: x[5] || null, sc: x[6] ? x[6] : Object.assign({}, x[2]) };
   });
   return L;
 }
@@ -365,7 +365,7 @@ function lxCover_(since, editor) {
   return others.length ? others.concat([editor]) : [];
 }
 
-function lxNewLoc_() { return { devices: {}, items: {}, qty: 0, lines: 0, upto: 0, clr: {} }; }
+function lxNewLoc_() { return { devices: {}, items: {}, qty: 0, lines: 0, upto: 0, clr: {}, ca: null }; }
 /** แถวนี้คือ "ล้าง Location นับใหม่" ของผู้ดูแล */
 function lxIsClear_(type, reason) { return type === 'RECOUNT_SET' && String(reason).indexOf('ล้าง Location') === 0; }
 /**
@@ -379,17 +379,23 @@ function lxIsClear_(type, reason) { return type === 'RECOUNT_SET' && String(reas
  */
 function lxAddRow_(L, r) {
   var qty = Number(r[8]) || 0, seq = Number(r[3]) || 0, dev = r[2], type = r[9], reason = r[11];
-  var d = L.devices[dev] || (L.devices[dev] = { lines: 0, qty: 0, maxSeq: 0, lastTime: '' });
+  var d = L.devices[dev] || (L.devices[dev] = { lines: 0, qty: 0, maxSeq: 0, lastTime: '', sc: 0 });
   var clear = lxIsClear_(type, reason);
   if (clear && !L._clearing) {
     // ชุดรายการล้างของผู้ดูแล: ทุกเครื่องเริ่มนับ "ของฉัน" ใหม่จากตรงนี้
-    Object.keys(L.devices).forEach(function (x) { L.clr[x] = L.devices[x].maxSeq; });
+    Object.keys(L.devices).forEach(function (x) { L.clr[x] = L.devices[x].maxSeq; L.devices[x].sc = 0; });
+    // ยอดแยกเครื่องหลังล้าง (sc · v2.3.6): เริ่มใหม่ทุก SKU · รายการล้างไม่นับเป็นยอดของเครื่องที่กดล้าง
+    Object.keys(L.items).forEach(function (k2) { L.items[k2].sc = {}; });
+    L.ca = [dev, String(r[13])];
   }
+  if (!clear) d.sc = r3_((d.sc || 0) + qty);
   d.lines++; d.qty = r3_(d.qty + qty); if (seq > d.maxSeq) d.maxSeq = seq; if (String(r[13]) > d.lastTime) d.lastTime = String(r[13]);
   var k = itemKey_(r[7], r[6]);
   var it = L.items[k] || (L.items[k] = { key: k, material: r[7], barcode: r[6], qty: 0, byDevice: {}, since: {}, cp: {}, le: null });
   if (!it.cp) it.cp = {};
+  if (!it.sc) it.sc = {};
   it.qty = r3_(it.qty + qty); it.byDevice[dev] = r3_((it.byDevice[dev] || 0) + qty);
+  if (!clear) it.sc[dev] = r3_((it.sc[dev] || 0) + qty);
   var cover = type === 'RECOUNT_SET' && !clear ? lxCover_(it.since, dev) : [];
   if (clear) { it.since = {}; it.cp = {}; }
   else if (cover.length) {
@@ -453,13 +459,13 @@ function lxDiff_(a, b, names) {
     Object.keys(A.devices).concat(Object.keys(B.devices)).forEach(function (d) { ds[d] = 1; });
     Object.keys(ds).forEach(function (d) {
       var x = A.devices[d] || { lines: 0, qty: 0 }, y = B.devices[d] || { lines: 0, qty: 0 };
-      if (x.lines !== y.lines || x.qty !== y.qty) out.push(l + ' ' + d + ' ดัชนี ' + x.lines + '/' + x.qty + ' ชีต ' + y.lines + '/' + y.qty);
+      if (x.lines !== y.lines || x.qty !== y.qty || (x.sc || 0) !== (y.sc || 0)) out.push(l + ' ' + d + ' ดัชนี ' + x.lines + '/' + x.qty + ' ชีต ' + y.lines + '/' + y.qty);
     });
     var ks = {};
     Object.keys(A.items).concat(Object.keys(B.items)).forEach(function (k) { ks[k] = 1; });
     Object.keys(ks).forEach(function (k) {
       var x = A.items[k] || { qty: 0, since: {}, cp: {} }, y = B.items[k] || { qty: 0, since: {}, cp: {} };
-      if (x.qty !== y.qty || lxSameMap_(x.since, y.since) === false || lxSameMap_(x.cp, y.cp) === false) out.push(l + ' ' + k + ' ดัชนี ' + x.qty + ' ชีต ' + y.qty);
+      if (x.qty !== y.qty || lxSameMap_(x.since, y.since) === false || lxSameMap_(x.cp, y.cp) === false || lxSameMap_(x.sc || {}, y.sc || {}) === false) out.push(l + ' ' + k + ' ดัชนี ' + x.qty + ' ชีต ' + y.qty);
     });
   });
   return out;
@@ -1285,7 +1291,7 @@ function memberView_(m, D, staffNames) {
   var dev = (D && D.devices[m.Device_ID]) || { lines: 0, qty: 0, lastTime: '' };
   return {
     device: m.Device_ID, staff: m.Staff, name: staffNames[m.Staff] || '', role: m.Role, state: m.State, match: m.Match,
-    subBy: m.Sub_By, lines: dev.lines, qty: dev.qty, lastTime: dev.lastTime, stateAt: m.State_At
+    subBy: m.Sub_By, lines: dev.lines, qty: dev.qty, sc: dev.sc === undefined ? dev.qty : dev.sc, lastTime: dev.lastTime, stateAt: m.State_At
   };
 }
 
@@ -1312,8 +1318,12 @@ function apiLocInfo_(a, req) {
   var others = [], othersQty = 0;
   Object.keys(D.items).forEach(function (k) {
     var it = D.items[k];
+    // ยอดเครื่องอื่น = นับจากล้าง Location ครั้งล่าสุด (v2.3.6) — รายการล้างไม่ไปโผล่เป็นยอดติดลบของเครื่องที่กดล้าง
+    // [k, material, barcode, ยอดรวมเครื่องอื่น (ใช้รวมยอด เหมือนเดิม), ยอดเครื่องอื่นหลังล้าง (ใช้แสดงแยก "เครื่องอื่น")]
+    var sc = it.sc || it.byDevice;
     var q = r3_(it.qty - (it.byDevice[a.deviceId] || 0));
-    if (q !== 0 || Object.keys(it.byDevice).some(function (d) { return d !== a.deviceId; })) others.push([k, it.material, it.barcode, q]);
+    var qs = r3_(Object.keys(sc).reduce(function (t, d) { return d === a.deviceId ? t : t + sc[d]; }, 0));
+    if (q !== 0 || qs !== 0 || Object.keys(it.byDevice).some(function (d) { return d !== a.deviceId; })) others.push([k, it.material, it.barcode, q, qs]);
     othersQty += q;
   });
   var t = table_('Locations'), li = locIdx_(t, loc);

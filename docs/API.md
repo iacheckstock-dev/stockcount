@@ -157,7 +157,7 @@ sequenceDiagram
   "owner": { "device": "TC21-02", "staff": "EMP-X", "name": "…", "role": "OWNER", "state": "COUNTING", "lines": 2, "qty": 2, "lastTime": "…" },
   "me": { "device": "TC21-03", "role": "HELPER", "state": "COUNTING", "match": "", "qty": 3 },
   "members": [ /* รูปแบบเดียวกับ owner ทุกเครื่อง */ ],
-  "others": { "items": [["<material หรือ BC:barcode>", "<material>", "<barcode>", 2]], "qty": 2 },
+  "others": { "items": [["<material หรือ BC:barcode>", "<material>", "<barcode>", 2, 2]], "qty": 2 },
   "total": 5,
   "clr": 0,
   "edits": { "<material หรือ BC:barcode>": { "oe": 1, "by": "TC21-03", "at": "2026-11-11 10:21:00" } }
@@ -165,6 +165,8 @@ sequenceDiagram
 ```
 `clr` (v2.3.1) = Seq ของเครื่องนี้ตอนผู้ดูแลล้าง Location ครั้งล่าสุด — "ยอดของฉัน" ของผู้ช่วยนับเฉพาะรายการที่ Seq มากกว่านี้
 `edits` (v2.3.1) = SKU ที่มีการแก้: `oe` = ผู้ดูแลแก้ยอดรวมแล้ว (ผู้ช่วยแก้ของตัวเองไม่ได้) · `by`/`at` = การแก้ล่าสุด (เครื่องอื่นใช้เตือนก่อนแก้)
+`others.items[i][4]` (v2.3.6) = ยอดเครื่องอื่นนับหลังล้าง Location ครั้งล่าสุด (ใช้แสดงแยก "เครื่องอื่น") · `[3]` = ยอดเต็ม (ใช้รวมยอด) · `members[i].sc` = ยอดของเครื่องนั้นหลังล้าง
+
 `others` = ยอดต่อ SKU ของ**เครื่องอื่น**ตามที่เซิร์ฟเวอร์มี เครื่องรวมกับยอดในเครื่องตัวเองเป็นยอดรวมทุกเครื่อง (รวมรายการที่ยังไม่ได้ส่ง)
 `owner` = null แปลว่ายังไม่มีใครเปิด · `me` = null แปลว่าเครื่องนี้ยังไม่เคยร่วม
 

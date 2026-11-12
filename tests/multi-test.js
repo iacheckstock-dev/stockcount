@@ -598,5 +598,43 @@ test('หน้า Admin: ยอดเซิร์ฟเวอร์ต่อ Lo
   assert.ok(c && c.devLines !== undefined && c.srvLines !== undefined && c.match, JSON.stringify(c));
 });
 
+console.log('\nยอดแยกเครื่องหลังล้าง Location (v2.3.6 — UAT D3 -5)');
+{
+  const O = device('TC21-01', 'EMP-K', '2.3.6'), H = device('TC21-02', 'EMP-KH', '2.3.6');
+  [O, H].forEach(d => { d.seq = 6000 + d.seq; d.at = 9000; });
+  test('ผู้ช่วยนับ 5 → ส่งงาน · ผู้ดูแลล้างทั้ง Location แล้วนับ 1 → Admin: ผู้ช่วย 0 ผู้ดูแล 1 (ไม่ติดลบ) รวม 1 · บอกเวลาและเครื่องที่ล้าง', () => {
+    O.sync([O.scan('D3', BC1, MAT1, 1)], [O.ev('OPEN', 'D3')]);
+    H.sync([1, 2, 3, 4, 5].map(() => H.scan('D3', BC1, MAT1, 1)), [H.ev('JOIN', 'D3')]);
+    H.sync([], [H.ev('SUBMIT', 'D3', { lines: 5, qty: 5, fromSeq: H.seq - 4, upToSeq: H.seq })]);
+    O.sync([O.scan('D3', BC1, MAT1, -6, { type: 'RECOUNT_SET', basis: 6, reason: 'ล้าง Location นับใหม่ (เดิม 6)' })], [O.ev('EDIT', 'D3', { clear: true })]);
+    O.sync([O.scan('D3', BC1, MAT1, 1)]);
+    const T = run('apiDevicesState()').locTotals.D3;
+    assert.strictEqual(T.qty, 1);
+    assert.strictEqual(T.dev['TC21-02'].qty, 0, 'ผู้ช่วย ' + JSON.stringify(T.dev));
+    assert.strictEqual(T.dev['TC21-01'].qty, 1, 'ผู้ดูแล ' + JSON.stringify(T.dev));
+    assert.strictEqual(T.dev['TC21-01'].raw, -4, 'ยอดเต็มยังเก็บไว้ (รายการล้างอยู่ที่เครื่องผู้ดูแล)');
+    assert.strictEqual(T.clearedBy, 'TC21-01');
+    assert.ok(T.clearedAt, 'มีเวลาล้าง');
+  });
+  test('locInfo หลังล้าง: เครื่องอื่นของผู้ดูแล = 0 (ไม่ใช่ 5) แต่ยอดรวมยังถูก · สมาชิกบอกยอดหลังล้าง', () => {
+    const i = O.info('D3');
+    const x = i.others.items.find(v => v[0] === MAT1);
+    assert.strictEqual(x[4], 0, 'ยอดเครื่องอื่นหลังล้าง');
+    assert.strictEqual(i.others.qty + (-4), i.total, 'ยอดรวมแบบเดิม: เครื่องอื่น 5 + ผู้ดูแล -4 = 1');
+    assert.strictEqual(i.members.find(m => m.device === 'TC21-02').sc, 0);
+    const h = H.info('D3').others.items.find(v => v[0] === MAT1);
+    assert.strictEqual(h[4], 1, 'ผู้ช่วยเห็นยอดผู้ดูแลหลังล้าง 1 (ไม่ใช่ -4)');
+  });
+  test('ดัชนีหลังล้าง = สร้างใหม่จากชีต (sc ตรงกัน)', () => {
+    const a = run('apiDevicesState()').locTotals.D3;
+    run('rebuildCountIndex()');
+    const b = run('apiDevicesState()').locTotals.D3;
+    assert.strictEqual(JSON.stringify(a), JSON.stringify(b));
+  });
+}
+
+// DUMP_ADMIN=ไฟล์ → เก็บ apiDevicesState() ไว้ให้ tests/admin-ui.py ใช้แสดงหน้า Admin จริงในเบราว์เซอร์
+if (process.env.DUMP_ADMIN) require('fs').writeFileSync(process.env.DUMP_ADMIN, JSON.stringify(run('apiDevicesState()')));
+
 console.log('\nผล: ผ่าน ' + pass + ' / ไม่ผ่าน ' + fail);
 process.exit(fail ? 1 : 0);

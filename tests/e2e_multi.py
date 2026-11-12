@@ -3,7 +3,7 @@ E2E สองเครื่องนับ Location เดียวกัน (v
 python3 tests/e2e_multi.py
 นาย ค (TC21-02) = ผู้ดูแล D80 · นาย ก (TC21-03) = ผู้ช่วย
 """
-import json, urllib.parse, os, urllib.request
+import re, json, urllib.parse, os, urllib.request
 from playwright.sync_api import sync_playwright
 
 PORT = int(os.environ.get('PORT', 8787))
@@ -316,6 +316,13 @@ with sync_playwright() as p:
     C.wait_for_selector('#v-count.on')
     check('เซิร์ฟเวอร์รับแล้ว' in C.inner_text('#cardSub'), 'การ์ดหลังล้างบอกว่าเซิร์ฟเวอร์รับแล้ว: ' + C.inner_text('#cardSub').replace('\n', ' '))
     scan(C, BC1); synced(C)
+    C.wait_for_function("/ของฉัน 1/.test(document.querySelector('#locSku').textContent)", timeout=15000)
+    check(C.inner_text('#locTotal') == '1' and 'ของฉัน 1' in C.inner_text('#locSku'),
+          'หลังล้างแล้วยิง 1: รวม 1 · ของฉัน 1 (ไม่นับรายการล้างเป็นยอดติดลบของผู้ดูแล · v2.3.6): ' + C.inner_text('#locTotal') + ' / ' + C.inner_text('#locSku'))
+    C.click('#btnLoc'); C.wait_for_selector('#v-loc.on'); C.wait_for_timeout(800)
+    mt = C.inner_text('#locMembers')
+    check(not re.search(r'· -\d', mt), 'รายชื่อผู้ร่วมนับไม่มียอดติดลบหลังล้าง: ' + mt.replace('\n', ' '))
+    C.click('#btnLocBack')
     C.click('#btnClose'); t = modal(C, 20000)
     check('⚠' not in t, 'ล้างนับใหม่แล้ว กล่องปิดไม่เตือนธงเดิม: ' + t.replace('\n', ' ')[:80])
     no(C)

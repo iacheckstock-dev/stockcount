@@ -12,7 +12,7 @@ var SCHEMA_VERSION = 5;
  * เวอร์ชันของระบบ (ใช้เลขเดียวทั้งแอป TC21 และเซิร์ฟเวอร์ ตาม Semantic Versioning MAJOR.MINOR.PATCH)
  * ต้องตรงกับ APP_VERSION ใน app/app.js และ appVersion ใน app/config.json — ดู CHANGELOG.md
  */
-var SYSTEM_VERSION = '2.3.5';
+var SYSTEM_VERSION = '2.3.6';
 
 var SHEETS = {
   Config: ['Key', 'Value', 'Note'],
@@ -571,8 +571,10 @@ function locTotalsForAdmin_(project, locs) {
   var D = X.loc(names), out = {};
   Object.keys(D).forEach(function (l) {
     var dev = {};
-    Object.keys(D[l].devices).forEach(function (d) { dev[d] = { qty: D[l].devices[d].qty, lines: D[l].devices[d].lines }; });
-    out[l] = { qty: D[l].qty, lines: D[l].lines, sku: Object.keys(D[l].items).filter(function (k) { return D[l].items[k].qty !== 0; }).length, dev: dev };
+    // ยอดแยกเครื่อง = นับจากล้าง Location ครั้งล่าสุด (v2.3.6) · ยอดรวมใช้ยอดเต็ม (รายการล้างหักยอดเก่าไปแล้ว)
+    Object.keys(D[l].devices).forEach(function (d) { var x = D[l].devices[d]; dev[d] = { qty: x.sc === undefined ? x.qty : x.sc, raw: x.qty, lines: x.lines }; });
+    out[l] = { qty: D[l].qty, lines: D[l].lines, sku: Object.keys(D[l].items).filter(function (k) { return D[l].items[k].qty !== 0; }).length, dev: dev,
+      clearedAt: D[l].ca ? D[l].ca[1] : '', clearedBy: D[l].ca ? D[l].ca[0] : '' };
   });
   return out;
 }
