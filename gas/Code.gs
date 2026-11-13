@@ -12,7 +12,7 @@ var SCHEMA_VERSION = 5;
  * เวอร์ชันของระบบ (ใช้เลขเดียวทั้งแอป TC21 และเซิร์ฟเวอร์ ตาม Semantic Versioning MAJOR.MINOR.PATCH)
  * ต้องตรงกับ APP_VERSION ใน app/app.js และ appVersion ใน app/config.json — ดู CHANGELOG.md
  */
-var SYSTEM_VERSION = '2.3.8';
+var SYSTEM_VERSION = '2.4.0';
 
 var SHEETS = {
   Config: ['Key', 'Value', 'Note'],
@@ -44,7 +44,10 @@ var SHEETS = {
   Dash_Data: ['Key', 'Value', 'Updated_At'],
   Count_History: ['Project_ID', 'Count_Date', 'SAP_Qty', 'Net_Count', 'Diff_Qty', 'Diff_Value', 'Diff_Items', 'Edits',
     'Archive_Link', 'Checksum'],
-  Admin_Log: ['Time', 'By', 'Action', 'Target', 'Detail']
+  Admin_Log: ['Time', 'By', 'Action', 'Target', 'Detail'],
+  // ผลสรุปราย SKU ทุกครั้งที่กด "สรุปผลและบันทึก" (v2.4.0) — เก็บต่อท้าย ไม่เขียนทับ
+  Variance: ['Run', 'Time', 'Project_ID', 'SAP_File', 'Material', 'Name', 'Book_Qty', 'Book_Source', 'Device_Qty', 'Adjust_Qty',
+    'Final_Qty', 'Diff_Qty', 'Unit_Cost', 'Diff_Value', 'SAP_IT', 'SAP_QI', 'SAP_BL', 'Locations']
 };
 
 // คอลัมน์ที่ต้องเป็นข้อความ (กันเลข 0 นำหน้าหาย / 8.85E+12)
@@ -54,6 +57,7 @@ var TEXT_COLS = {
   Device_Master: ['Barcode', 'Material', 'Cust_Mat'],
   Count_Log: ['Log_ID', 'Device_ID', 'Staff_Code', 'Location', 'Barcode', 'Material', 'Ref_ID'],
   Locations: ['Location'],
+  Variance: ['Material'],
   Loc_Checks: ['Device_ID', 'Location'],
   Loc_Members: ['Location', 'Device_ID'],
   Quarantine: ['Device_ID', 'Log_ID'],
@@ -854,4 +858,155 @@ function apiImportDeviceFile(text, fileName) {
   } finally {
     releaseLock_(lock);
   }
+}
+
+
+// ---------- สรุปผลนับ / Dashboard (เฟส 3 · v2.4.0) ----------
+//
+// ลำดับที่ผู้ตรวจสอบทำงาน: ยอดรวมทั้งร้านเทียบ SAP (UR) → นับครบหรือยัง (Location ที่หาย) → ผลต่างราย SKU → ไล่ย้อนถึง Location / เครื่อง / ผู้นับ
+// ทุกครั้งกระทบยอดดัชนีกับ Count_Log ก่อน (ตัวเลขบน Dashboard ต้องมาจากดัชนีที่ตรงกับชีต)
+// ยอดเทียบ = Book_Qty ใน Barcode_Map (SAP UR ของไฟล์ที่โหลดล่าสุด · ไม่มี SAP = POS) · IT / QI / BL ไม่รวม แต่ติดป้ายไว้สอบถาม
+
+/** สินค้าตาม Master: Material → ข้อมูลยอดบัญชี (Barcode_Map มีหลายแถวต่อรหัส = หลายบาร์โค้ด ใช้แถวแรก) */
+function bookByMaterial_() {
+  var t = table_('Barcode_Map'), out = {};
+  t.rows.forEach(function (r) {
+    var x = rowObj_(t, r), m = String(x.Material || '');
+    if (!m || out[m]) return;
+    var n = function (v) { return Number(String(v === undefined ? '' : v).replace(/,/g, '')) || 0; };
+    out[m] = { name: String(x.Name || ''), book: n(x.Book_Qty), src: String(x.Book_Source || ''), cost: n(x.Unit_Cost),
+      it: n(x.SAP_IT), qi: n(x.SAP_QI), bl: n(x.SAP_BL) };
+  });
+  return out;
+}
+
+/** เลข Location ที่หายในแต่ละโซน: รวมทุกเครื่อง · เฉพาะช่วงเลขต่ำสุดถึงสูงสุดที่ใช้จริง (ป้ายที่พิมพ์เผื่อเกินเลขสูงสุดไม่นับ) */
+function missingLocations_(names) {
+  var zones = {};
+  names.forEach(function (l) {
+    var m = String(l).match(/^(.*?)(\d+)$/); if (!m) return;
+    var z = zones[m[1]] || (zones[m[1]] = { nums: {}, pad: 0 });
+    z.nums[Number(m[2])] = 1;
+    if (m[2].length > 1 && m[2].charAt(0) === '0') z.pad = Math.max(z.pad, m[2].length);
+  });
+  return Object.keys(zones).sort().map(function (zn) {
+    var z = zones[zn], nums = Object.keys(z.nums).map(Number).sort(function (a, b) { return a - b; });
+    var lo = nums[0], hi = nums[nums.length - 1], miss = [];
+    for (var i = lo; i <= hi; i++) if (!z.nums[i]) miss.push(zn + (z.pad ? ('0000000' + i).slice(-z.pad) : i));
+    return { zone: zn, from: zn + lo, to: zn + hi, used: nums.length, missing: miss };
+  }).filter(function (z) { return z.missing.length; });
+}
+
+function summary_(project, why) {
+  var X = logIdx_(project, { write: true });
+  var idx = X.verify(null, why);
+  X.save();
+  var cfg = readConfig_(), book = bookByMaterial_(), mats = {}, r3 = function (v) { return Math.round(v * 1000) / 1000; };
+  Object.keys(X.locs).forEach(function (l) {
+    var L = X.locs[l];
+    Object.keys(L.items).forEach(function (k) {
+      var it = L.items[k], m = mats[k] || (mats[k] = { key: k, dev: 0, locs: [] });
+      m.dev = r3(m.dev + it.qty);
+      if (it.qty !== 0 || Object.keys(it.byDevice).some(function (d) { return it.byDevice[d] !== 0; })) m.locs.push(l);
+    });
+  });
+  Object.keys(book).forEach(function (k) { var b = book[k]; if (!mats[k] && (b.book || b.it || b.qi || b.bl)) mats[k] = { key: k, dev: 0, locs: [] }; });
+  var T = { book: 0, dev: 0, adj: 0, final: 0, plusQty: 0, minusQty: 0, plusValue: 0, minusValue: 0, skus: 0, match: 0, over: 0, short: 0, unmapped: 0, unmappedQty: 0, special: 0 };
+  var skus = [], unmapped = [];
+  Object.keys(mats).forEach(function (k) {
+    var m = mats[k], b = book[k];
+    if (!b) {   // ยิงแล้วแต่ไม่มีใน Master (BC:บาร์โค้ด) — เทียบบัญชีไม่ได้ ต้องจับคู่ก่อน
+      if (m.dev !== 0) { unmapped.push([k.replace(/^BC:/, ''), m.dev, m.locs.join(' ')]); T.unmapped++; T.unmappedQty = r3(T.unmappedQty + m.dev); }
+      T.dev = r3(T.dev + m.dev);
+      return;
+    }
+    var adj = 0, fin = r3(m.dev + adj), diff = r3(fin - b.book), val = Math.round(diff * b.cost * 100) / 100;
+    T.skus++; T.book = r3(T.book + b.book); T.dev = r3(T.dev + m.dev); T.adj = r3(T.adj + adj);
+    if (diff === 0) T.match++; else if (diff > 0) { T.over++; T.plusQty = r3(T.plusQty + diff); T.plusValue += val; } else { T.short++; T.minusQty = r3(T.minusQty + diff); T.minusValue += val; }
+    if (b.it || b.qi || b.bl) T.special++;
+    // [Material, ชื่อ, บัญชี, เครื่อง, ปรับ, สุดท้าย, ต่าง, ต้นทุน, ต่างบาท, IT, QI, BL, จำนวน Location]
+    skus.push([k, b.name, b.book, m.dev, adj, fin, diff, b.cost, val, b.it, b.qi, b.bl, m.locs.length]);
+  });
+  T.final = r3(T.dev + T.adj);
+  T.plusValue = Math.round(T.plusValue * 100) / 100; T.minusValue = Math.round(T.minusValue * 100) / 100;
+  T.diff = r3(T.final - T.book - T.unmappedQty);   // เทียบเฉพาะสินค้าที่มีในบัญชี
+  T.diffValue = Math.round((T.plusValue + T.minusValue) * 100) / 100;
+  T.pct = T.book ? Math.round(T.diff / T.book * 10000) / 100 : null;
+  skus.sort(function (a, b) { return Math.abs(b[8]) - Math.abs(a[8]) || Math.abs(b[6]) - Math.abs(a[6]); });
+  // Location
+  var lt = table_('Locations'), names = {}, st = { total: 0, closed: 0, paused: 0, counting: 0, flagged: [], open: [] };
+  lt.rows.forEach(function (r) {
+    var L = rowObj_(lt, r); if (!L.Location) return;
+    names[L.Location] = 1; st.total++;
+    var s = String(L.Status);
+    if (/ปิดแล้ว/.test(s)) st.closed++; else { if (/พัก/.test(s)) st.paused++; else st.counting++; st.open.push([L.Location, s, String(L.Owner || '')]); }
+    if (L.Flag_Check) st.flagged.push([L.Location, String(L.Flag_Check)]);
+  });
+  Object.keys(X.locs).forEach(function (l) { names[l] = 1; });
+  var bookSrc = Object.keys(book).length ? book[Object.keys(book)[0]].src : '';
+  return { at: now_(), project: project, complete: st.total > 0 && st.closed === st.total && !st.flagged.length,
+    sap: { name: cfg.SAP_FILE_NAME || '', date: cfg.SAP_FILE_DATE || '', at: cfg.SAP_UPLOADED_AT || '' }, bookSource: bookSrc,
+    totals: T, locs: st, missing: missingLocations_(Object.keys(names)), skus: skus, unmapped: unmapped, indexDiffs: idx };
+}
+
+/** หน้า Admin: สรุปผลนับ (ดูอย่างเดียว) */
+function apiSummary() {
+  return withLock_(function () {
+    var project = readConfig_().PROJECT_ID;
+    if (!project) throw new Error('ยังไม่ได้เปิดรอบนับ');
+    return summary_(project, 'สรุปผลนับ (หน้า Admin)');
+  });
+}
+
+/** สรุปผลและบันทึก: เก็บผลราย SKU ลงชีต Variance (ต่อท้าย) + Dash_Data + Admin_Log — เป็นหลักฐานว่าตอนนั้นตัวเลขเป็นอย่างไร */
+function apiSummarySave() {
+  return withLock_(function () {
+    var project = readConfig_().PROJECT_ID;
+    if (!project) throw new Error('ยังไม่ได้เปิดรอบนับ');
+    var R = summary_(project, 'สรุปผลและบันทึก (หน้า Admin)'), T = R.totals;
+    var dash = readRaw_('Dash_Data'), run = 1;
+    dash.slice(1).forEach(function (r) { if (r[0] === 'SUMMARY_RUN') run = (Number(r[1]) || 0) + 1; });
+    var sapFile = R.sap.name + (R.sap.at ? ' (' + R.sap.at + ')' : '');
+    adminAct_('SUMMARY_SAVE', project, 'ครั้งที่ ' + run + ' · ' + (R.complete ? 'นับครบ' : 'ยังนับไม่ครบ') + ' · บัญชี ' + T.book + ' นับ ' + T.final + ' ต่าง ' + T.diff +
+      ' (' + (T.pct === null ? '-' : T.pct + '%') + ', ' + T.diffValue + ' บาท) · ' + R.skus.length + ' SKU · ไม่มีใน Master ' + T.unmapped + ' · ไฟล์ SAP ' + sapFile, function () {
+      var rows = R.skus.map(function (x) {
+        return [run, R.at, project, sapFile, x[0], x[1], x[2], R.bookSource, x[3], x[4], x[5], x[6], x[7], x[8], x[9], x[10], x[11], ''];
+      }).concat(R.unmapped.map(function (u) {
+        return [run, R.at, project, sapFile, 'BC:' + u[0], '(ไม่มีใน Master)', '', '', u[1], 0, u[1], '', '', '', '', '', '', u[2]];
+      }));
+      if (rows.length) appendRows_(SpreadsheetApp.getActive().getSheetByName('Variance'), rows);
+      writeTable_('Dash_Data', SHEETS.Dash_Data, [
+        ['SUMMARY_RUN', run, R.at], ['BOOK_QTY', T.book, R.at], ['FINAL_QTY', T.final, R.at], ['DIFF_QTY', T.diff, R.at],
+        ['DIFF_VALUE', T.diffValue, R.at], ['SKUS_OVER', T.over, R.at], ['SKUS_SHORT', T.short, R.at], ['UNMAPPED', T.unmapped, R.at],
+        ['LOCATIONS_CLOSED', R.locs.closed + '/' + R.locs.total, R.at], ['SAP_FILE', sapFile, R.at]]);
+    });
+    R.run = run;
+    return R;
+  });
+}
+
+/** ไล่ย้อน SKU: นับที่ Location ไหน เครื่องไหน ใครนับ เท่าไร */
+function apiSkuDetail(key) {
+  var project = readConfig_().PROJECT_ID;
+  var X = logIdx_(project, {}), mt = table_('Loc_Members'), names = staffNames_(), staff = {}, out = [];
+  mt.rows.forEach(function (r) { var m = rowObj_(mt, r); if (m.Project_ID === project) staff[m.Location + '|' + m.Device_ID] = normStaff_(m.Staff); });
+  var lt = table_('Locations'), status = {};
+  lt.rows.forEach(function (r) { var L = rowObj_(lt, r); status[L.Location] = String(L.Status || ''); });
+  var all = X.loc(X.meta.locs || []);
+  Object.keys(all).sort().forEach(function (l) {
+    var it = all[l].items[key]; if (!it) return;
+    // ยอดแยกเครื่อง = นับหลังล้าง Location ครั้งล่าสุด (รายการล้างไม่นับเป็นยอดติดลบของเครื่องที่กดล้าง · เหมือน v2.3.6)
+    var per = it.sc || it.byDevice, sum = 0;
+    Object.keys(per).forEach(function (d) {
+      if (per[d] === 0) return;
+      var s = staff[l + '|' + d] || '';
+      sum += per[d];
+      out.push([l, status[l] || '', d, s, names[s] || '', per[d]]);
+    });
+    // ยอดรวม Location ของ SKU นี้ไม่เท่าผลรวมแยกเครื่อง (ล้างตอนยังไม่เห็นยอดล่าสุดของเครื่องอื่น) → แถวส่วนต่างให้เห็น ไม่ซ่อน
+    var rest = Math.round((it.qty - sum) * 1000) / 1000;
+    if (rest !== 0) out.push([l, status[l] || '', '(ส่วนต่างจากการล้าง)', '', '', rest]);
+  });
+  var b = bookByMaterial_()[key] || null;
+  return { key: key, book: b, rows: out };
 }

@@ -710,8 +710,109 @@ console.log('\nบันทึก Admin_Log ต้องติดจริง ·
   });
 }
 
+console.log('\nสรุปผลนับ / Dashboard (v2.4.0)');
+{
+  const O = device('TC21-01', 'EMP-K', '2.4.0');
+  O.seq = 8000 + O.seq; O.at = 9800;
+  O.sync([O.scan('F1', BC1, MAT1, 2), O.scan('F1', BC2, MAT2, 1), O.scan('F3', '9999999999999', '', 4)], [O.ev('OPEN', 'F1')]);
+  const project = run('readConfig_().PROJECT_ID');
+  const CL = env.sheets.Count_Log, BM = env.sheets.Barcode_Map;
+  const sumLog = f => Math.round(CL.data.slice(1).filter(r => r[1] === project && f(r)).reduce((t, r) => t + Number(r[8]), 0) * 1000) / 1000;
+  const bh = BM.data[0], bookOf = m => { const r = BM.data.find(x => x[bh.indexOf('Material')] === m); return r ? Number(String(r[bh.indexOf('Book_Qty')]).replace(/,/g, '')) || 0 : 0; };
+  let R;
+  test('ยอดรวมทั้งร้าน = ผลรวม Count_Log ของรอบ · ยอดบัญชี = Book_Qty ต่อรหัส (ไม่นับซ้ำหลายบาร์โค้ด)', () => {
+    R = run('apiSummary()');
+    assert.strictEqual(R.totals.dev, sumLog(() => true));
+    const mats = {}; BM.data.slice(1).forEach(r => { const m = r[bh.indexOf('Material')]; if (m && !(m in mats)) mats[m] = Number(String(r[bh.indexOf('Book_Qty')]).replace(/,/g, '')) || 0; });
+    assert.strictEqual(R.totals.book, Math.round(Object.values(mats).reduce((t, v) => t + v, 0) * 1000) / 1000);
+    assert.strictEqual(R.totals.final, R.totals.dev + R.totals.adj);
+  });
+  test('ราย SKU: นับได้ = Count_Log ของรหัสนั้น · ต่าง = นับ − บัญชี · มูลค่า = ต่าง × ต้นทุน · เรียงตามมูลค่าผลต่าง', () => {
+    const x = R.skus.find(r => r[0] === MAT1);
+    assert.strictEqual(x[3], sumLog(r => r[7] === MAT1));
+    assert.strictEqual(x[2], bookOf(MAT1));
+    assert.strictEqual(x[6], Math.round((x[3] - x[2]) * 1000) / 1000);
+    assert.strictEqual(x[8], Math.round(x[6] * x[7] * 100) / 100);
+    for (let i = 1; i < R.skus.length; i++) assert.ok(Math.abs(R.skus[i - 1][8]) >= Math.abs(R.skus[i][8]), 'เรียงตามมูลค่า');
+  });
+  test('สินค้าไม่มีใน Master แยกออกมา ไม่ปนในผลต่าง', () => {
+    const u = R.unmapped.find(r => r[0] === '9999999999999');
+    assert.ok(u && u[1] === 4 && /F3/.test(u[2]), JSON.stringify(R.unmapped));
+    assert.ok(!R.skus.some(r => r[0] === 'BC:9999999999999'));
+  });
+  test('Location ที่หาย: รวมทุกเครื่องในโซน เฉพาะช่วงที่ใช้จริง (ตัวอย่างโซน A ของผู้ใช้) · เลขนำหน้า 0', () => {
+    const m = run('missingLocations_(_n)', { _n: ['A1', 'A5', 'A8', 'A10', 'A18', 'A20', 'A2', 'A4', 'A5', 'A6', 'A7', 'A9', 'A11', 'B01', 'B03', 'C1', 'C2', 'X'] });
+    const a = m.find(z => z.zone === 'A');
+    assert.deepStrictEqual(Array.from(a.missing), ['A3', 'A12', 'A13', 'A14', 'A15', 'A16', 'A17', 'A19']);
+    assert.deepStrictEqual(Array.from(m.find(z => z.zone === 'B').missing), ['B02']);
+    assert.ok(!m.some(z => z.zone === 'C'), 'โซนที่ไม่มีเลขหายไม่ขึ้น');
+    assert.ok(R.missing.some(z => z.zone === 'F' && z.missing.indexOf('F2') >= 0), 'F1, F3 → F2 หาย');
+  });
+  test('ไล่ย้อน SKU: Location / เครื่อง / ผู้นับ / ยอด รวมได้เท่ายอดนับ', () => {
+    const d = run('apiSkuDetail(_k)', { _k: MAT1 });
+    assert.strictEqual(Math.round(d.rows.reduce((t, r) => t + r[5], 0) * 1000) / 1000, R.skus.find(r => r[0] === MAT1)[3]);
+    const f1 = d.rows.find(r => r[0] === 'F1');
+    assert.ok(f1 && f1[2] === 'TC21-01' && f1[3] === 'EMP-K' && f1[5] === 2, JSON.stringify(f1));
+  });
+  test('ไล่ย้อนหลังล้าง Location: ไม่มียอดติดลบของเครื่องที่กดล้าง (D3 จากเคส v2.3.6)', () => {
+    const d = run('apiSkuDetail(_k)', { _k: MAT1 });
+    const d3 = d.rows.filter(r => r[0] === 'D3');
+    assert.ok(d3.length && d3.every(r => r[5] >= 0), JSON.stringify(d3));
+    assert.strictEqual(d3.reduce((t, r) => t + r[5], 0), 1);
+  });
+  test('แก้ชีตตรงก่อนสรุป → กระทบยอดเจอ (INDEX_FIX) และตัวเลขตามชีต', () => {
+    const row = CL.data.find(r => r[5] === 'F1' && r[7] === MAT2);
+    row[8] = '3';
+    const R2 = run('apiSummary()');
+    assert.ok(R2.indexDiffs.length > 0);
+    assert.strictEqual(R2.skus.find(r => r[0] === MAT2)[3], sumLog(r => r[7] === MAT2));
+    row[8] = '1'; run('apiSummary()');
+  });
+  test('สรุปผลและบันทึก: ชีต Variance ต่อท้าย (ครั้งที่ 1, 2) · Dash_Data · Admin_Log SUMMARY_SAVE', () => {
+    const V = env.sheets.Variance, n0 = V.data.length;
+    const a = run('apiSummarySave()');
+    assert.strictEqual(a.run, 1);
+    assert.strictEqual(V.data.length - n0, a.skus.length + a.unmapped.length);
+    const b = run('apiSummarySave()');
+    assert.strictEqual(b.run, 2);
+    assert.strictEqual(V.data.length - n0, 2 * (a.skus.length + a.unmapped.length));
+    assert.ok(env.sheets.Dash_Data.data.some(r => r[0] === 'SUMMARY_RUN' && String(r[1]) === '2'));
+    assert.ok(env.sheets.Admin_Log.data.some(r => r[2] === 'SUMMARY_SAVE' && /ครั้งที่ 2/.test(r[4])));
+  });
+  test('โหลด SAP ใหม่ระหว่างวันนับ (ยอด UR เปลี่ยน): ยอดเทียบเปลี่ยนตาม · Master ที่เครื่องใช้ไม่เปลี่ยน (ไม่ต้องอนุมัติใหม่)', () => {
+    const cfg0 = run('readConfig_()'), dm0 = JSON.stringify(env.sheets.Device_Master.data);
+    const rows = JSON.parse(JSON.stringify(sap));
+    const hi = rows.findIndex(r => r.indexOf('Qty-UR') >= 0), cM = rows[hi].indexOf('Material'), cU = rows[hi].indexOf('Qty-UR');
+    const r1 = rows.find((r, i) => i > hi && String(r[cM]).trim() === MAT1);
+    r1[cU] = String(Number(String(r1[cU]).replace(/,/g, '')) + 7);
+    const before = run('apiSummary()').skus.find(r => r[0] === MAT1)[2];
+    run('apiUpload("SAP", _s, { fileName: "sap-noon.xls", fileDate: "2026-11-04", d1Confirmed: true })', { _s: rows });
+    const after = run('apiSummary()');
+    assert.strictEqual(after.skus.find(r => r[0] === MAT1)[2], before + 7, 'ยอดบัญชีใหม่');
+    assert.strictEqual(after.sap.name, 'sap-noon.xls');
+    const cfg1 = run('readConfig_()');
+    assert.strictEqual(cfg1.MASTER_APPROVED_HASH, cfg0.MASTER_APPROVED_HASH);
+    assert.strictEqual(JSON.stringify(env.sheets.Device_Master.data), dm0, 'Device_Master ไม่ถูกเขียนใหม่');
+    assert.ok(run('apiGetState()').master.approved.current, 'Master ที่อนุมัติยังใช้ได้');
+    run('apiUpload("SAP", _sap, { fileName: "sap.xls", fileDate: "2026-11-04", d1Confirmed: true })');
+  });
+  test('บันทึก Admin_Log ไม่ติด → ไม่เขียน Variance (บันทึกก่อนทำ)', () => {
+    const V = env.sheets.Variance, n0 = V.data.length;
+    env.sheets.Admin_Log.dropWrites = true;
+    assert.throws(() => run('apiSummarySave()'), /Admin_Log/);
+    env.sheets.Admin_Log.dropWrites = false;
+    assert.strictEqual(V.data.length, n0);
+    run('apiAckLogWarn()');
+  });
+}
+
 // DUMP_ADMIN=ไฟล์ → เก็บ apiDevicesState() ไว้ให้ tests/admin-ui.py ใช้แสดงหน้า Admin จริงในเบราว์เซอร์
-if (process.env.DUMP_ADMIN) require('fs').writeFileSync(process.env.DUMP_ADMIN, JSON.stringify(run('apiDevicesState()')));
+if (process.env.DUMP_ADMIN) {
+  const st = run('apiDevicesState()');
+  st.SUMMARY = run('apiSummary()');
+  st.SKU_DETAIL = run('apiSkuDetail(_k)', { _k: MAT1 });
+  require('fs').writeFileSync(process.env.DUMP_ADMIN, JSON.stringify(st));
+}
 
 console.log('\nผล: ผ่าน ' + pass + ' / ไม่ผ่าน ' + fail);
 process.exit(fail ? 1 : 0);

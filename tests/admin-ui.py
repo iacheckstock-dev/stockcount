@@ -16,7 +16,7 @@ window.google = { script: { run: (function mk(ok, bad) {
   return new Proxy({}, { get: function (t, k) {
     if (k === 'withSuccessHandler') return function (f) { return mk(f, bad); };
     if (k === 'withFailureHandler') return function (f) { return mk(ok, f); };
-    return function () { CALLS.push([k].concat([].slice.call(arguments))); var r = k === 'apiReconcile' ? window.RECON : k === 'apiDevicesState' || k.indexOf('apiLoc') === 0 || k === 'apiPairCode' ? window.ST : {};
+    return function () { CALLS.push([k].concat([].slice.call(arguments))); var r = k === 'apiReconcile' ? window.RECON : k === 'apiSummary' || k === 'apiSummarySave' ? Object.assign({ run: 3 }, window.ST.SUMMARY) : k === 'apiSkuDetail' ? window.ST.SKU_DETAIL : k === 'apiDevicesState' || k.indexOf('apiLoc') === 0 || k === 'apiPairCode' ? window.ST : {};
       setTimeout(function () { ok && ok(r); }, 0); };
   } });
 })() } };
@@ -85,6 +85,27 @@ with sync_playwright() as p:
     check(pg.evaluate('CALLS')[0][0] == 'apiAckLogWarn', 'กดรับทราบ → apiAckLogWarn')
     pg.evaluate("ST.logWarn = null")
     check(pg.locator('text=กระทบยอดทั้งรอบ').count() >= 1, 'มีปุ่มกระทบยอดทั้งรอบในตาราง Location')
+    # สรุปผลนับ (v2.4.0)
+    pg.evaluate("CALLS.length = 0; document.querySelector('#nav button[data-t=summary]').click()"); pg.wait_for_timeout(200)
+    body = pg.inner_text('#sumBody')
+    check('ภาพรวมทั้งร้าน' in body and 'ความครบของการนับ' in body and 'ผลต่างราย SKU' in body, 'แท็บสรุปผลนับ: 3 ส่วน')
+    check(pg.evaluate('CALLS')[0][0] == 'apiSummary', 'เปิดแท็บ → apiSummary')
+    check('ยังนับไม่ครบ' in body, 'มี Location ยังไม่ปิด → ป้าย "ยังนับไม่ครบ"')
+    check('F2' in pg.inner_text('#sumBody'), 'เลข Location ที่หาย (F2) แสดงในตาราง')
+    n_diff = pg.locator('#skuTbl tr.click').count()
+    pg.click('#sumBody >> text=ไม่มีใน Master >> nth=-1'); pg.wait_for_timeout(100)
+    check('9999999999999' in pg.inner_text('#skuTbl'), 'กรอง "ไม่มีใน Master" → เห็นบาร์โค้ดที่ยิงแต่ไม่มีรหัส')
+    pg.click('#sumBody button:has-text("ทั้งหมด") >> nth=1'); pg.wait_for_timeout(100)
+    pg.fill('#sumQ', 'A112101UT0450XK'); pg.wait_for_timeout(100)
+    pg.locator('#skuTbl tr.click').first.click(); pg.wait_for_timeout(150)
+    sd = pg.inner_text('#skuDlg')
+    check(pg.is_visible('#skuDlg') and 'F1' in sd and 'TC21-01' in sd and 'รวม' in sd, 'แตะ SKU → เห็น Location / เครื่อง / ผู้นับ: ' + sd.replace('\n', ' ')[:100])
+    pg.click('#skuDlg .btn.sec'); pg.wait_for_timeout(50)
+    pg.click('text=สรุปผลและบันทึก'); pg.wait_for_timeout(50)
+    check(pg.is_visible('#askDlg'), 'สรุปผลและบันทึก → กล่องยืนยัน')
+    pg.click('#askOk'); pg.wait_for_timeout(100)
+    check(any(c[0] == 'apiSummarySave' for c in pg.evaluate('CALLS')), 'ยืนยัน → apiSummarySave')
+    pg.screenshot(path='/tmp/admin-summary.png', full_page=True)
     check(not dialogs, 'ไม่มี popup ของเบราว์เซอร์เลย: ' + json.dumps(dialogs, ensure_ascii=False))
     pg.evaluate("CALLS.length = 0; reconcile()"); pg.wait_for_timeout(100)
     rc = pg.inner_text('#recon')

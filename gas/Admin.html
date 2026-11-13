@@ -44,13 +44,18 @@
   #toast { position:fixed; bottom:16px; left:50%; transform:translateX(-50%); padding:10px 16px; border-radius:8px; background:#111; color:#fff; display:none; max-width:80%; z-index:10; }
   #toast.err { background:var(--bad); }
   .okline { color:#1a7f37; font-size:13px; margin:4px 0; }
-  #trDlg, #revDlg, #flagDlg, #askDlg { position:fixed; inset:0; background:rgba(0,0,0,.35); display:none; align-items:center; justify-content:center; z-index:8; }
-  #trDlg.on, #revDlg.on, #flagDlg.on, #askDlg.on { display:flex; }
+  #trDlg, #revDlg, #flagDlg, #askDlg, #skuDlg { position:fixed; inset:0; background:rgba(0,0,0,.35); display:none; align-items:center; justify-content:center; z-index:8; }
+  #trDlg.on, #revDlg.on, #flagDlg.on, #askDlg.on, #skuDlg.on { display:flex; }
+  .sumgrid { display:grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap:10px; margin:8px 0; }
+  .sumgrid > div { background:var(--soft); border-radius:8px; padding:8px 10px; }
+  .sumgrid .lb { color:var(--mut); font-size:12px; } .sumgrid .v { font-size:20px; font-weight:600; font-variant-numeric: tabular-nums; }
+  .neg { color:var(--bad); } .pos { color:var(--warn); }
+  #skuTbl tr.click { cursor:pointer; } #skuTbl tr.click:hover td { background:var(--soft); }
   #flagDlg textarea, #askDlg textarea { width:100%; box-sizing:border-box; min-height:70px; font:inherit; padding:8px; border:1px solid var(--line); border-radius:8px; }
   #flagDlg textarea.need, #askDlg textarea.need { border-color:var(--bad); }
   #flagNeed, #askNeed, #trNeed { color:var(--bad); font-size:13px; margin-top:4px; }
   #flagDlg .btn:disabled, #askDlg .btn:disabled { opacity:.4; cursor:not-allowed; }
-  #trDlg .box, #revDlg .box, #flagDlg .box, #askDlg .box { background:#fff; border-radius:10px; padding:18px 20px; width:560px; max-width:94vw; max-height:90vh; overflow:auto; }
+  #trDlg .box, #revDlg .box, #flagDlg .box, #askDlg .box, #skuDlg .box { background:#fff; border-radius:10px; padding:18px 20px; width:560px; max-width:94vw; max-height:90vh; overflow:auto; }
   #trDlg label.opt, #revDlg label.opt { display:block; border:1px solid var(--line); border-radius:8px; padding:8px 10px; margin:6px 0; cursor:pointer; }
   #trDlg label.opt:has(input:checked), #revDlg label.opt:has(input:checked) { border-color:#111; background:var(--soft); }
   #busy { position:fixed; inset:0; background:rgba(255,255,255,.6); display:none; align-items:center; justify-content:center; z-index:9; font-size:15px; }
@@ -78,6 +83,7 @@
   <button data-t="conflicts">ขัดแย้ง<span class="badge" id="confBadge" style="display:none"></span></button>
   <button data-t="compare">เทียบ SAP กับ POS</button>
   <button data-t="devices">เครื่อง TC21</button>
+  <button data-t="summary">สรุปผลนับ</button>
   <button data-t="log">บันทึก Admin</button>
 </nav>
 <main>
@@ -201,6 +207,17 @@
     <div class="scroll" style="max-height:300px"><table id="locTbl"></table></div>
   </section>
 
+  <!-- สรุปผลนับ (เฟส 3 · v2.4.0): ยอดรวมทั้งร้าน → ความครบ → ผลต่างราย SKU → ไล่ย้อน Location / เครื่อง / ผู้นับ -->
+  <section id="summary">
+    <div class="row">
+      <button class="btn sec" onclick="loadSummary()">รีเฟรช</button>
+      <button class="btn" onclick="saveSummary()" title="กระทบยอด แล้วเก็บผลราย SKU ลงชีต Variance เป็นหลักฐาน">สรุปผลและบันทึก</button>
+      <button class="btn sec" onclick="exportSummary()">ส่งออก .xlsx</button>
+      <span class="muted" id="sumInfo"></span>
+    </div>
+    <div id="sumBody"><div class="muted">กด "รีเฟรช" เพื่อคำนวณ</div></div>
+  </section>
+
   <!-- บันทึก -->
   <section id="log">
     <div class="scroll"><table id="logTbl"></table></div>
@@ -244,6 +261,12 @@
     <button class="btn sec" onclick="$('flagDlg').classList.remove('on')">ยกเลิก</button>
     <button class="btn" id="flagOk" onclick="doResolveFlag()" disabled>ปิดธง</button>
   </div>
+</div></div>
+<!-- ไล่ย้อน SKU (v2.4.0) -->
+<div id="skuDlg"><div class="box" style="max-width:720px;width:92%;max-height:86vh;overflow:auto">
+  <h3 style="margin-top:0" id="skuTitle"></h3>
+  <div id="skuBody"></div>
+  <div class="row" style="margin-top:12px;justify-content:flex-end"><button class="btn sec" onclick="$('skuDlg').classList.remove('on')">ปิด</button></div>
 </div></div>
 <!-- กล่องยืนยัน/ใส่เหตุผลกลางหน้า แทน confirm()/prompt() ของเบราว์เซอร์ (v2.3.6) -->
 <div id="askDlg"><div class="box">
@@ -292,6 +315,7 @@ document.querySelectorAll('#nav button').forEach(function (b) {
     document.querySelectorAll('main section').forEach(function (s) { s.classList.toggle('on', s.id === b.dataset.t); });
     if (b.dataset.t === 'compare' && !CMP) loadCompare();
     if (b.dataset.t === 'devices') loadDevices();
+    if (b.dataset.t === 'summary' && !SUM) loadSummary();
   };
 });
 
@@ -533,6 +557,115 @@ function exportCompare(exceptionsOnly) {
   var wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, exceptionsOnly ? 'SAP_exceptions' : 'SAP_vs_POS');
   XLSX.writeFile(wb, (S.round.projectId || 'stockcount') + (exceptionsOnly ? '_SAP_exceptions' : '_SAP_vs_POS') + '.xlsx');
+}
+
+// ---------- สรุปผลนับ (v2.4.0) ----------
+var SUM = null, SUMF = 'diff';
+function nf(v, d) { return v === null || v === undefined || v === '' ? '' : Number(v).toLocaleString('en-US', { minimumFractionDigits: d || 0, maximumFractionDigits: d === undefined ? 3 : d }); }
+function sgn(v, d) { var t = nf(v, d); return v > 0 ? '+' + t : t; }
+function cls(v) { return v < 0 ? 'neg' : v > 0 ? 'pos' : ''; }
+/** A3, A12–A17, A19 */
+function ranges(list, zone) {
+  var nums = list.map(function (x) { return x.slice(zone.length); }), out = [], i = 0;
+  while (i < nums.length) {
+    var j = i; while (j + 1 < nums.length && Number(nums[j + 1]) === Number(nums[j]) + 1) j++;
+    out.push(zone + nums[i] + (j > i ? '–' + zone + nums[j] : '')); i = j + 1;
+  }
+  return out.join(', ');
+}
+function loadSummary() { call('apiSummary', [], renderSummary, 'กำลังกระทบยอดและคำนวณผลนับ…'); }
+function saveSummary() {
+  ask({ title: 'สรุปผลและบันทึก', ok: 'บันทึก', body: '<div>กระทบยอดทั้งรอบ แล้วเก็บผลราย SKU ตอนนี้ลงชีต Variance (ต่อท้าย ไม่เขียนทับ) และบันทึกใน Admin_Log</div>' }, function () {
+    call('apiSummarySave', [], function (r) { renderSummary(r); toast('บันทึกผลครั้งที่ ' + r.run + ' แล้ว'); }, 'กำลังกระทบยอดและบันทึกผล…');
+  });
+}
+function renderSummary(R) {
+  SUM = R;
+  var T = R.totals, L = R.locs;
+  $('sumInfo').innerHTML = 'คำนวณเมื่อ ' + esc(R.at) + ' · ยอดบัญชี: ' + esc(R.bookSource === 'POS' ? 'POS (ยังไม่มีไฟล์ SAP)' : 'SAP UR') + ' ไฟล์ ' + esc(R.sap.name || '-') + (R.sap.at ? ' (โหลด ' + esc(R.sap.at) + ')' : '') +
+    ' · กระทบยอด: ' + (R.indexDiffs.length ? '<span class="pill warn">แก้ตามชีต ' + R.indexDiffs.length + ' จุด (INDEX_FIX)</span>' : '<span class="pill ok">ตรง</span>');
+  var h = '';
+  if (!R.complete) h += '<div class="card" style="border-color:var(--warn);background:var(--warnbg);margin:8px 0"><b>ยังนับไม่ครบ</b> · ปิดแล้ว ' + L.closed + '/' + L.total + ' Location' +
+    (L.flagged.length ? ' · ติดธง ' + L.flagged.length : '') + ' — ผล "ขาด" ตอนนี้อาจยังไม่จริง (สินค้าอาจอยู่ใน Location ที่ยังไม่ได้นับ)</div>';
+  // 1 ภาพรวม
+  h += '<div class="card"><h3>1. ภาพรวมทั้งร้าน</h3><div class="sumgrid">' +
+    '<div><div class="lb">ยอดบัญชี (' + (R.bookSource === 'POS' ? 'POS' : 'SAP UR') + ')</div><div class="v">' + nf(T.book) + '</div></div>' +
+    '<div><div class="lb">นับจากเครื่อง</div><div class="v">' + nf(T.dev) + '</div></div>' +
+    '<div><div class="lb">ปรับด้วยมือ</div><div class="v">' + sgn(T.adj) + '</div><div class="muted">ฟอร์มปรับยอด: v2.4.1</div></div>' +
+    '<div><div class="lb">ยอดสุดท้าย</div><div class="v">' + nf(T.final) + '</div>' + (T.unmappedQty ? '<div class="muted">รวมไม่มีใน Master ' + nf(T.unmappedQty) + '</div>' : '') + '</div>' +
+    '<div><div class="lb">ผลต่าง (ชิ้น)</div><div class="v ' + cls(T.diff) + '">' + sgn(T.diff) + '</div><div class="muted">' + (T.pct === null ? '' : sgn(T.pct, 2) + '% ของยอดบัญชี') + '</div></div>' +
+    '<div><div class="lb">ผลต่าง (บาท)</div><div class="v ' + cls(T.diffValue) + '">' + sgn(T.diffValue, 2) + '</div><div class="muted">เกิน ' + sgn(T.plusValue, 2) + ' · ขาด ' + nf(T.minusValue, 2) + '</div></div>' +
+    '</div><div>SKU ' + nf(T.skus) + ' · ตรง ' + nf(T.match) + ' · <span class="pos">เกิน ' + nf(T.over) + ' (' + sgn(T.plusQty) + ' ชิ้น)</span> · <span class="neg">ขาด ' + nf(T.short) + ' (' + nf(T.minusQty) + ' ชิ้น)</span>' +
+    ' · มี IT/QI/BL ' + nf(T.special) + (T.unmapped ? ' · <span class="neg">ไม่มีใน Master ' + T.unmapped + ' บาร์โค้ด</span>' : '') + '</div></div>';
+  // 2 ความครบ
+  h += '<div class="card" style="margin-top:12px"><h3>2. ความครบของการนับ</h3>' +
+    '<div>Location ปิดแล้ว <b>' + L.closed + '/' + L.total + '</b>' + (L.open.length ? ' · ยังไม่ปิด: ' + L.open.map(function (o) { return '<span class="pill warn">' + esc(o[0]) + ' ' + esc(o[1]) + '</span>'; }).join(' ') : '') + '</div>' +
+    (L.flagged.length ? '<div style="margin-top:4px">ติดธงต้องตรวจซ้ำ: ' + L.flagged.map(function (f) { return '<span class="pill bad" title="' + esc(f[1]) + '">' + esc(f[0]) + '</span>'; }).join(' ') + '</div>' : '') +
+    '<div style="margin-top:6px"><b>เลข Location ที่หาย</b> <span class="muted">(รวมทุกเครื่องในโซน · เฉพาะช่วงเลขที่ใช้จริง · เป็นคำเตือนให้ตรวจ ถ้าตั้งใจข้ามไม่ต้องทำอะไร)</span>' +
+    (R.missing.length ? '<table style="margin-top:4px">' + R.missing.map(function (z) {
+      return '<tr><td style="width:60px"><b>' + esc(z.zone) + '</b></td><td>' + esc(ranges(z.missing, z.zone)) + '</td><td class="muted" style="width:180px">ใช้ ' + esc(z.from) + '–' + esc(z.to) + ' (' + z.used + ' ป้าย)</td></tr>';
+    }).join('') + '</table>' : ' <span class="pill ok">ไม่มี</span>') + '</div></div>';
+  // 3 ราย SKU
+  var chips = [['diff', 'ที่ต่างทั้งหมด'], ['short', 'ขาด'], ['over', 'เกิน'], ['special', 'มี IT/QI/BL'], ['match', 'ตรง'], ['all', 'ทั้งหมด'], ['unmapped', 'ไม่มีใน Master']];
+  h += '<div class="card" style="margin-top:12px"><h3>3. ผลต่างราย SKU <span class="muted" style="font-weight:400">แตะแถวเพื่อดูว่านับที่ Location ไหน เครื่องไหน ใครนับ</span></h3><div class="row">' +
+    chips.map(function (c) { return '<button class="btn ' + (SUMF === c[0] ? '' : 'sec') + '" onclick="SUMF=\'' + c[0] + '\';renderSkus()">' + c[1] + '</button>'; }).join('') +
+    '<input type="search" id="sumQ" placeholder="ค้นหา Material / ชื่อ / บาร์โค้ด" oninput="renderSkus()" style="min-width:220px"></div>' +
+    '<div class="muted" id="skuInfo"></div><div class="scroll" style="max-height:520px"><table id="skuTbl"></table></div></div>';
+  $('sumBody').innerHTML = h;
+  renderSkus();
+}
+function sumRows() {
+  var q = (($('sumQ') || {}).value || '').trim().toLowerCase();
+  if (SUMF === 'unmapped') return SUM.unmapped.filter(function (u) { return !q || u[0].toLowerCase().indexOf(q) >= 0; });
+  return SUM.skus.filter(function (r) {
+    var ok = SUMF === 'all' || (SUMF === 'diff' && r[6] !== 0) || (SUMF === 'short' && r[6] < 0) || (SUMF === 'over' && r[6] > 0) ||
+      (SUMF === 'match' && r[6] === 0) || (SUMF === 'special' && (r[9] || r[10] || r[11]));
+    return ok && (!q || String(r[0]).toLowerCase().indexOf(q) >= 0 || String(r[1]).toLowerCase().indexOf(q) >= 0);
+  });
+}
+function renderSkus() {
+  var rows = sumRows(), MAX = 300, h;
+  if (SUMF === 'unmapped') {
+    h = '<tr><th>บาร์โค้ด</th><th class="n">นับได้</th><th>Location</th></tr>' + rows.map(function (u) { return '<tr><td class="mono">' + esc(u[0]) + '</td><td class="n">' + nf(u[1]) + '</td><td>' + esc(u[2]) + '</td></tr>'; }).join('');
+    $('skuInfo').textContent = rows.length + ' บาร์โค้ด — ยิงแล้วแต่ไม่มีใน Master เทียบยอดบัญชีไม่ได้ ต้องหารหัสสินค้าก่อน';
+  } else {
+    h = '<tr><th>Material</th><th>ชื่อ</th><th class="n">บัญชี</th><th class="n">นับ (เครื่อง)</th><th class="n">ปรับ</th><th class="n">สุดท้าย</th><th class="n">ต่าง</th><th class="n">ต่าง (บาท)</th><th class="n">Location</th><th>IT / QI / BL</th></tr>' +
+      rows.slice(0, MAX).map(function (r, i) {
+        var sp = [r[9] ? 'IT ' + nf(r[9]) : '', r[10] ? 'QI ' + nf(r[10]) : '', r[11] ? 'BL ' + nf(r[11]) : ''].filter(String).join(' · ');
+        return '<tr class="click" onclick="skuDetail(\'' + esc(r[0]).replace(/'/g, '') + '\')"><td class="mono">' + esc(r[0]) + '</td><td>' + esc(r[1]) + '</td><td class="n">' + nf(r[2]) + '</td><td class="n">' + nf(r[3]) + '</td><td class="n">' + (r[4] ? sgn(r[4]) : '') +
+          '</td><td class="n">' + nf(r[5]) + '</td><td class="n ' + cls(r[6]) + '"><b>' + sgn(r[6]) + '</b></td><td class="n ' + cls(r[8]) + '">' + sgn(r[8], 2) + '</td><td class="n">' + r[12] + '</td><td>' + (sp ? '<span class="pill info">' + esc(sp) + '</span>' : '') + '</td></tr>';
+      }).join('');
+    $('skuInfo').textContent = rows.length + ' SKU' + (rows.length > MAX ? ' — แสดง ' + MAX + ' แรก (เรียงตามมูลค่าผลต่าง) ค้นหาเพื่อดูตัวอื่น' : ' · เรียงตามมูลค่าผลต่าง');
+  }
+  $('skuTbl').innerHTML = h;
+}
+function skuDetail(key) {
+  call('apiSkuDetail', [key], function (d) {
+    var r = SUM.skus.filter(function (x) { return x[0] === key; })[0] || [];
+    $('skuTitle').textContent = key + (d.book ? ' · ' + d.book.name : '');
+    var tot = d.rows.reduce(function (t, x) { return t + x[5]; }, 0);
+    $('skuBody').innerHTML = '<div class="sumgrid"><div><div class="lb">บัญชี</div><div class="v">' + nf(r[2]) + '</div></div><div><div class="lb">นับ (เครื่อง)</div><div class="v">' + nf(r[3]) + '</div></div>' +
+      '<div><div class="lb">ต่าง</div><div class="v ' + cls(r[6]) + '">' + sgn(r[6]) + '</div></div><div><div class="lb">ต่าง (บาท)</div><div class="v ' + cls(r[8]) + '">' + sgn(r[8], 2) + '</div></div></div>' +
+      (d.book && (d.book.it || d.book.qi || d.book.bl) ? '<div class="pill info">IT ' + nf(d.book.it) + ' · QI ' + nf(d.book.qi) + ' · BL ' + nf(d.book.bl) + ' — ไม่รวมในยอดเทียบ สอบถามเป็นกรณี</div>' : '') +
+      '<table style="margin-top:8px"><tr><th>Location</th><th>สถานะ</th><th>เครื่อง</th><th>ผู้นับ</th><th class="n">ชิ้น</th></tr>' +
+      (d.rows.length ? d.rows.map(function (x) { return '<tr><td><b>' + esc(x[0]) + '</b></td><td>' + esc(x[1]) + '</td><td>' + esc(x[2]) + '</td><td>' + esc(x[4] || x[3]) + (x[4] ? ' <span class="muted">' + esc(x[3]) + '</span>' : '') + '</td><td class="n">' + nf(x[5]) + '</td></tr>'; }).join('') +
+        '<tr><td colspan="4"><b>รวม</b></td><td class="n"><b>' + nf(tot) + '</b></td></tr>' : '<tr><td colspan="5" class="muted">ไม่พบที่ Location ไหนเลย (นับได้ 0)</td></tr>') + '</table>';
+    $('skuDlg').classList.add('on');
+  }, 'กำลังโหลดรายละเอียด ' + key + '…');
+}
+function exportSummary() {
+  if (!SUM) { toast('กด "รีเฟรช" ก่อน', true); return; }
+  var T = SUM.totals, wb = XLSX.utils.book_new();
+  var ov = [['รอบ', SUM.project], ['คำนวณเมื่อ', SUM.at], ['ยอดบัญชีจาก', SUM.bookSource === 'POS' ? 'POS' : 'SAP UR'], ['ไฟล์ SAP', SUM.sap.name + ' ' + (SUM.sap.at || '')],
+    ['นับครบ', SUM.complete ? 'ใช่' : 'ยังไม่ครบ (' + SUM.locs.closed + '/' + SUM.locs.total + ')'], ['ยอดบัญชี', T.book], ['นับจากเครื่อง', T.dev], ['ปรับด้วยมือ', T.adj], ['ยอดสุดท้าย', T.final],
+    ['ผลต่าง (ชิ้น)', T.diff], ['ผลต่าง (%)', T.pct], ['ผลต่าง (บาท)', T.diffValue], ['เกิน (บาท)', T.plusValue], ['ขาด (บาท)', T.minusValue], ['SKU เกิน', T.over], ['SKU ขาด', T.short], ['ไม่มีใน Master', T.unmapped]];
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(ov), 'Summary');
+  var head = ['Material', 'Name', 'Book_Qty', 'Device_Qty', 'Adjust_Qty', 'Final_Qty', 'Diff_Qty', 'Unit_Cost', 'Diff_Value', 'SAP_IT', 'SAP_QI', 'SAP_BL', 'Locations'];
+  var ws = XLSX.utils.aoa_to_sheet([head].concat(SUM.skus));
+  ws['!cols'] = head.map(function (h, i) { return { wch: i < 2 ? 22 : 11 }; });
+  XLSX.utils.book_append_sheet(wb, ws, 'SKU');
+  if (SUM.unmapped.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Barcode', 'Qty', 'Locations']].concat(SUM.unmapped)), 'Not_in_Master');
+  XLSX.writeFile(wb, SUM.project + '_count_summary_' + SUM.at.replace(/[: ]/g, '').slice(0, 12) + '.xlsx');
 }
 
 // ---------- เครื่อง TC21 ----------

@@ -210,10 +210,24 @@
 | Up_To_Seq | Seq สูงสุดที่เหตุการณ์ครอบคลุม |
 | Note | รายละเอียด เช่น "ส่งงานอัตโนมัติ", "กลับมาช่วยอีกครั้ง", เหตุผลของหัวหน้าทีม |
 
-## สรุป (สงวนไว้สำหรับเฟส 3–4)
+## สรุปผลนับ (เฟส 3 · v2.4.0)
+
+### Variance — ผลสรุปราย SKU ทุกครั้งที่กด "สรุปผลและบันทึก" (เพิ่มอย่างเดียว) 🔒
+
+| คอลัมน์ | ความหมาย |
+|---|---|
+| Run · Time | ครั้งที่บันทึก (1, 2, …) · เวลา — ทุกครั้งต่อท้าย ดูย้อนได้ว่าผลต่างเปลี่ยนอย่างไร |
+| Project_ID · SAP_File | รอบ · ไฟล์ SAP ที่ใช้เทียบ (ชื่อ + เวลาโหลด) |
+| Material · Name | รหัสสินค้า (ยิงแต่ไม่มีใน Master = `BC:บาร์โค้ด`, Name = `(ไม่มีใน Master)`) |
+| Book_Qty · Book_Source | ยอดบัญชี = SAP Unrestricted (UR) ของไฟล์ล่าสุด · ไม่มี SAP = POS |
+| Device_Qty · Adjust_Qty · Final_Qty | นับจากเครื่อง · ปรับด้วยมือ (ฟอร์ม v2.4.1 · ตอนนี้ 0) · ยอดสุดท้าย |
+| Diff_Qty · Unit_Cost · Diff_Value | ต่าง = สุดท้าย − บัญชี · ต้นทุนต่อหน่วย · มูลค่าผลต่าง (บาท) |
+| SAP_IT · SAP_QI · SAP_BL | สต็อกระหว่างทาง / รอตรวจ / ถูกบล็อก — ไม่รวมในยอดเทียบ แสดงไว้สอบถามเป็นกรณี |
+| Locations | (เฉพาะแถวไม่มีใน Master) Location ที่พบ |
 
 ### Dash_Data
-`Key` · `Value` · `Updated_At` — ค่าที่คำนวณไว้สำหรับ Dashboard
+
+ตัวเลขภาพรวมของการบันทึกครั้งล่าสุด: `SUMMARY_RUN` `BOOK_QTY` `FINAL_QTY` `DIFF_QTY` `DIFF_VALUE` `SKUS_OVER` `SKUS_SHORT` `UNMAPPED` `LOCATIONS_CLOSED` `SAP_FILE`
 
 ### Count_History — สรุปรอบที่ปิดแล้ว 🔒
 `Project_ID` · `Count_Date` · `SAP_Qty` · `Net_Count` · `Diff_Qty` · `Diff_Value` · `Diff_Items` · `Edits` · `Archive_Link` · `Checksum`
