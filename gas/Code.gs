@@ -6,13 +6,13 @@
  * (API สำหรับ TC21 จะเพิ่มในเฟส 2 แยกต่างหาก และต้องใช้ device token)
  */
 
-var SCHEMA_VERSION = 6;   // 6 = v2.4.1 Variance.Barcode
+var SCHEMA_VERSION = 7;   // 6 = v2.4.1 Variance.Barcode · 7 = v2.4.2 ชีต Adjustments
 
 /**
  * เวอร์ชันของระบบ (ใช้เลขเดียวทั้งแอป TC21 และเซิร์ฟเวอร์ ตาม Semantic Versioning MAJOR.MINOR.PATCH)
  * ต้องตรงกับ APP_VERSION ใน app/app.js และ appVersion ใน app/config.json — ดู CHANGELOG.md
  */
-var SYSTEM_VERSION = '2.4.1';
+var SYSTEM_VERSION = '2.4.2';
 
 var SHEETS = {
   Config: ['Key', 'Value', 'Note'],
@@ -47,7 +47,10 @@ var SHEETS = {
   Admin_Log: ['Time', 'By', 'Action', 'Target', 'Detail'],
   // ผลสรุปราย SKU ทุกครั้งที่กด "สรุปผลและบันทึก" (v2.4.0) — เก็บต่อท้าย ไม่เขียนทับ
   Variance: ['Run', 'Time', 'Project_ID', 'SAP_File', 'Material', 'Name', 'Book_Qty', 'Book_Source', 'Device_Qty', 'Adjust_Qty',
-    'Final_Qty', 'Diff_Qty', 'Unit_Cost', 'Diff_Value', 'SAP_IT', 'SAP_QI', 'SAP_BL', 'Locations', 'Barcode']
+    'Final_Qty', 'Diff_Qty', 'Unit_Cost', 'Diff_Value', 'SAP_IT', 'SAP_QI', 'SAP_BL', 'Locations', 'Barcode'],
+  // บรรทัดปรับยอดด้วยมือ (v2.4.2) — เขียนผ่านฟอร์มในหน้า Admin เท่านั้น เพิ่มอย่างเดียว คีย์ผิด = บรรทัดกลับรายการ (Ref_ID)
+  Adjustments: ['Adj_ID', 'Time', 'Project_ID', 'Material', 'Name', 'Qty', 'Reason', 'Note', 'Location', 'Staff_Code', 'By', 'Ref_ID',
+    'Book_Qty', 'Final_Before', 'Final_After']
 };
 
 // คอลัมน์ที่ต้องเป็นข้อความ (กันเลข 0 นำหน้าหาย / 8.85E+12)
@@ -58,6 +61,7 @@ var TEXT_COLS = {
   Count_Log: ['Log_ID', 'Device_ID', 'Staff_Code', 'Location', 'Barcode', 'Material', 'Ref_ID'],
   Locations: ['Location'],
   Variance: ['Material', 'Barcode'],
+  Adjustments: ['Adj_ID', 'Material', 'Location', 'Staff_Code', 'Ref_ID'],
   Loc_Checks: ['Device_ID', 'Location'],
   Loc_Members: ['Location', 'Device_ID'],
   Quarantine: ['Device_ID', 'Log_ID'],
@@ -963,7 +967,14 @@ function summary_(project, why) {
     });
   });
   Object.keys(book).forEach(function (k) { var b = book[k]; if (!mats[k] && (b.book || b.it || b.qi || b.bl)) mats[k] = { key: k, dev: 0, locs: [] }; });
-  var T = { book: 0, dev: 0, adj: 0, final: 0, plusQty: 0, minusQty: 0, plusValue: 0, minusValue: 0, skus: 0, match: 0, over: 0, short: 0, unmapped: 0, unmappedQty: 0, special: 0 };
+  // ปรับยอดด้วยมือ (v2.4.2): ยอดสุดท้าย = นับจากเครื่อง + ผลรวมบรรทัดใน Adjustments (รวมบรรทัดกลับรายการ) · Count_Log ไม่ถูกแตะ
+  var A = adjRead_(project), adjBy = {};
+  A.lines.forEach(function (a) {
+    var x = adjBy[a.material] || (adjBy[a.material] = { qty: 0, lines: 0 });
+    x.qty = r3(x.qty + a.qty); x.lines++;
+    if (!mats[a.material] && book[a.material]) mats[a.material] = { key: a.material, dev: 0, locs: [] };
+  });
+  var T = { adjToBook: 0, adjLines: 0, adjByReason: [], book: 0, dev: 0, adj: 0, final: 0, plusQty: 0, minusQty: 0, plusValue: 0, minusValue: 0, skus: 0, match: 0, over: 0, short: 0, unmapped: 0, unmappedQty: 0, special: 0 };
   var skus = [], unmapped = [];
   Object.keys(mats).forEach(function (k) {
     var m = mats[k], b = book[k];
@@ -973,15 +984,20 @@ function summary_(project, why) {
       T.dev = r3(T.dev + m.dev);
       return;
     }
-    var adj = 0, fin = r3(m.dev + adj), diff = r3(fin - b.book), val = Math.round(diff * b.cost * 100) / 100;
+    var aj = adjBy[k] || { qty: 0, lines: 0 }, adj = aj.qty, fin = r3(m.dev + adj), diff = r3(fin - b.book), val = Math.round(diff * b.cost * 100) / 100;
+    var toBook = aj.lines > 0 && adj !== 0 && diff === 0;   // ป้าย "ปรับเท่ายอดบัญชีพอดี" — ไม่กัน แต่ให้ผู้ตรวจทานเห็น
+    if (toBook) T.adjToBook++;
     T.skus++; T.book = r3(T.book + b.book); T.dev = r3(T.dev + m.dev); T.adj = r3(T.adj + adj);
     if (diff === 0) T.match++; else if (diff > 0) { T.over++; T.plusQty = r3(T.plusQty + diff); T.plusValue += val; } else { T.short++; T.minusQty = r3(T.minusQty + diff); T.minusValue += val; }
     if (b.it || b.qi || b.bl) T.special++;
     m.locs.sort(function (a, b) { return natCmp_(a[0], b[0]); });
-    // [Material, ชื่อ, บัญชี, เครื่อง, ปรับ, สุดท้าย, ต่าง, ต้นทุน, ต่างบาท, IT, QI, BL, จำนวน Location, [[Location, ชิ้น]] (v2.4.1), [บาร์โค้ด] (v2.4.1)]
-    skus.push([k, b.name, b.book, m.dev, adj, fin, diff, b.cost, val, b.it, b.qi, b.bl, m.locs.length, m.locs, b.bcs]);
+    // [Material, ชื่อ, บัญชี, เครื่อง, ปรับ, สุดท้าย, ต่าง, ต้นทุน, ต่างบาท, IT, QI, BL, จำนวน Location, [[Location, ชิ้น]] (v2.4.1), [บาร์โค้ด] (v2.4.1),
+    //  จำนวนบรรทัดปรับ (v2.4.2), ปรับเท่ายอดบัญชีพอดี (v2.4.2)]
+    skus.push([k, b.name, b.book, m.dev, adj, fin, diff, b.cost, val, b.it, b.qi, b.bl, m.locs.length, m.locs, b.bcs, aj.lines, toBook]);
   });
   T.final = r3(T.dev + T.adj);
+  T.adjLines = A.lines.length;
+  T.adjByReason = A.byReason(function (m) { return (book[m] || {}).cost || 0; });
   T.plusValue = Math.round(T.plusValue * 100) / 100; T.minusValue = Math.round(T.minusValue * 100) / 100;
   T.diff = r3(T.final - T.book - T.unmappedQty);   // เทียบเฉพาะสินค้าที่มีในบัญชี
   T.diffValue = Math.round((T.plusValue + T.minusValue) * 100) / 100;
@@ -1002,7 +1018,8 @@ function summary_(project, why) {
   readRaw_('Dash_Data').slice(1).forEach(function (r) { if (r[0] === 'SUMMARY_RUN') last = { run: Number(r[1]) || 0, at: r[2] }; });
   return { at: now_(), project: project, lastSave: last, complete: st.total > 0 && st.closed === st.total && !st.flagged.length,
     sap: { name: cfg.SAP_FILE_NAME || '', date: cfg.SAP_FILE_DATE || '', at: cfg.SAP_UPLOADED_AT || '' }, bookSource: bookSrc,
-    totals: T, locs: st, missing: missingLocations_(Object.keys(names)), skus: skus, unmapped: unmapped, indexDiffs: idx };
+    totals: T, locs: st, missing: missingLocations_(Object.keys(names)), skus: skus, unmapped: unmapped, indexDiffs: idx,
+    adjustments: A.view(book), staff: activeStaff_(), reasons: ADJ_REASONS };
 }
 
 /** หน้า Admin: สรุปผลนับ (ดูอย่างเดียว) */
@@ -1071,5 +1088,132 @@ function apiSkuDetail(key) {
     if (rest !== 0) out.push([l, status[l] || '', '(ส่วนต่างจากการล้าง)', '', '', rest]);
   });
   var b = bookByMaterial_()[key] || null;
-  return { key: key, book: b, rows: out };
+  var adj = adjRead_(project).view().filter(function (x) { return x[2] === key; });   // บรรทัดปรับยอดของ SKU นี้ (v2.4.2)
+  return { key: key, book: b, rows: out, adjustments: adj };
+}
+
+
+// ---------- ปรับยอดด้วยมือ (เฟส 3 · v2.4.2) ----------
+//
+// ยอดสุดท้าย = นับจากเครื่อง (Count_Log) + บรรทัดปรับยอด (Adjustments) · ไม่มีผู้อนุมัติ จุดควบคุมคือร่องรอยครบ:
+// บังคับเหตุผล + ผู้คีย์ (รหัสผู้ตรวจสอบ) · ตรวจรหัสสินค้ากับ Master · บันทึก Admin_Log ก่อนทำ · ไม่ลบไม่เขียนทับ
+// คีย์ผิด = บรรทัดกลับรายการ (Ref_ID อ้างบรรทัดเดิม) แล้วคีย์ใหม่ · Count_Log ไม่ถูกแตะ
+
+var ADJ_REASONS = [['RECOUNT', 'นับทวนกับพนักงานหน้าร้าน'], ['TRANSIT', 'สินค้าโอนระหว่างทาง'], ['OTHER', 'อื่น ๆ']];
+var ADJ_REVERSAL = 'กลับรายการ';
+
+function activeStaff_() {
+  return readRaw_('Staff').slice(1).filter(function (r) { return r[0] && String(r[3]).toUpperCase() !== 'N'; })
+    .map(function (r) { return [normStaff_(r[0]), String(r[1] || '')]; });
+}
+
+/** บรรทัดปรับยอดของรอบ + ตัวช่วยสรุป */
+function adjRead_(project) {
+  var H = SHEETS.Adjustments, c = function (n) { return H.indexOf(n); }, rows = readRaw_('Adjustments').slice(1);
+  var lines = [], byId = {}, reversed = {};
+  rows.forEach(function (r) {
+    if (!r[c('Adj_ID')] || r[c('Project_ID')] !== project) return;
+    var a = { id: r[c('Adj_ID')], time: r[c('Time')], material: r[c('Material')], name: r[c('Name')],
+      qty: Number(String(r[c('Qty')]).replace(/,/g, '')) || 0, reason: r[c('Reason')], note: r[c('Note')], loc: r[c('Location')],
+      staff: r[c('Staff_Code')], by: r[c('By')], ref: r[c('Ref_ID')], book: r[c('Book_Qty')], before: r[c('Final_Before')], after: r[c('Final_After')] };
+    lines.push(a); byId[a.id] = a;
+    if (a.ref) reversed[a.ref] = a.id;
+  });
+  return {
+    lines: lines, byId: byId, reversed: reversed,
+    /** ยอดปรับรวมตามเหตุผล: บรรทัดกลับรายการหักออกจากเหตุผลของบรรทัดเดิม · [[เหตุผล, บรรทัด, ชิ้น, บาท]] */
+    byReason: function (costOf) {
+      var g = {}, order = ADJ_REASONS.map(function (x) { return x[1]; });
+      lines.forEach(function (a) {
+        var reason = a.ref && byId[a.ref] ? byId[a.ref].reason : a.reason;
+        var x = g[reason] || (g[reason] = [reason, 0, 0, 0]);
+        if (!a.ref) x[1]++;
+        x[2] = Math.round((x[2] + a.qty) * 1000) / 1000;
+        x[3] = Math.round((x[3] + a.qty * costOf(a.material)) * 100) / 100;
+      });
+      return Object.keys(g).sort(function (a, b) { return order.indexOf(a) - order.indexOf(b); }).map(function (k) { return g[k]; });
+    },
+    /** สำหรับหน้า Admin: [Adj_ID, เวลา, Material, ชื่อ, ชิ้น, เหตุผล, หมายเหตุ, Location, ผู้คีย์, อีเมล, อ้างบรรทัด, ถูกกลับโดย, บัญชี, ก่อน, หลัง] */
+    view: function () {
+      return lines.map(function (a) {
+        return [a.id, a.time, a.material, a.name, a.qty, a.reason, a.note, a.loc, a.staff, a.by, a.ref, reversed[a.id] || '', a.book, a.before, a.after];
+      });
+    }
+  };
+}
+
+/** ยอดนับจากเครื่อง (ทุก Location) + ยอดปรับปัจจุบันของรหัสหนึ่ง */
+function adjCurrent_(project, material) {
+  var X = logIdx_(project), all = X.loc(X.meta.locs || []), dev = 0, adj = 0;
+  Object.keys(all).forEach(function (l) { var it = all[l].items[material]; if (it) dev += it.qty; });
+  adjRead_(project).lines.forEach(function (a) { if (a.material === material) adj += a.qty; });
+  return { dev: r3_(dev), adj: r3_(adj), final: r3_(dev + adj), locs: Object.keys(all) };
+}
+
+function adjNextId_() {
+  var n = 0;
+  readRaw_('Adjustments').slice(1).forEach(function (r) { var m = String(r[0]).match(/^ADJ-(\d+)$/); if (m) n = Math.max(n, Number(m[1])); });
+  return 'ADJ-' + ('0000' + (n + 1)).slice(-4);
+}
+
+/**
+ * บันทึกบรรทัดปรับยอด · o = { material (หรือบาร์โค้ด), qty (+/−), reason (RECOUNT/TRANSIT/OTHER), note, location, staff }
+ * คืนผลสรุปใหม่ทั้งหน้า + adjDone
+ */
+function apiAdjust(o) {
+  return withLock_(function () {
+    var project = readConfig_().PROJECT_ID;
+    if (!project) throw new Error('ยังไม่ได้เปิดรอบนับ');
+    o = o || {};
+    var book = bookByMaterial_(), q = String(o.material || '').trim(), mat = '';
+    if (book[q]) mat = q; else if (book[q.toUpperCase()]) mat = q.toUpperCase();
+    else { var t = table_('Barcode_Map'); t.rows.forEach(function (r) { if (!mat && r[t.idx.Barcode] === q) mat = r[t.idx.Material]; }); }
+    if (!mat) throw new Error('ไม่พบรหัสสินค้า "' + q + '" ใน Master — ปรับยอดได้เฉพาะสินค้าที่มีในบัญชี');
+    var qty = Number(String(o.qty === undefined ? '' : o.qty).replace(/,/g, ''));
+    if (!isFinite(qty) || qty === 0) throw new Error('จำนวนต้องเป็นตัวเลขที่ไม่ใช่ 0 (เพิ่ม = บวก · ลด = ลบ)');
+    if (Math.abs(qty) > 100000) throw new Error('จำนวนเกิน 100,000 ชิ้น — ตรวจตัวเลขอีกครั้ง');
+    qty = Math.round(qty * 1000) / 1000;
+    var rs = ADJ_REASONS.filter(function (x) { return x[0] === o.reason; })[0];
+    if (!rs) throw new Error('เลือกเหตุผล');
+    var note = String(o.note || '').trim();
+    if (o.reason === 'OTHER' && !note) throw new Error('เหตุผล "อื่น ๆ" ต้องเขียนหมายเหตุอธิบาย');
+    var staff = normStaff_(o.staff), st = activeStaff_().filter(function (x) { return x[0] === staff; })[0];
+    if (!st) throw new Error('เลือกรหัสผู้ตรวจสอบที่คีย์');
+    var cur = adjCurrent_(project, mat), loc = o.location ? normLoc_(o.location) : '';
+    if (loc && cur.locs.indexOf(loc) < 0 && locIdx_(table_('Locations'), loc) < 0) throw new Error('ไม่มี Location "' + loc + '" ในรอบนี้ (เว้นว่างได้)');
+    var b = book[mat], id = adjNextId_(), after = r3_(cur.final + qty);
+    adminAct_('ADJUST', mat, id + ' · ' + (qty > 0 ? '+' : '') + qty + ' · ' + rs[1] + (note ? ' (' + note + ')' : '') + (loc ? ' · ' + loc : '') +
+      ' · ผู้คีย์ ' + staff + ' · ยอดสุดท้าย ' + cur.final + ' → ' + after + ' · บัญชี ' + b.book + (after === b.book ? ' · ปรับเท่ายอดบัญชีพอดี' : ''), function () {
+      appendRows_(SpreadsheetApp.getActive().getSheetByName('Adjustments'),
+        [[id, now_(), project, mat, b.name, qty, rs[1], note, loc, staff, who_(), '', b.book, cur.final, after]]);
+    });
+    var R = summary_(project, 'ปรับยอด (หน้า Admin)');
+    R.adjDone = { id: id, material: mat, name: b.name, qty: qty, before: cur.final, after: after, book: b.book };
+    return R;
+  });
+}
+
+/** กลับรายการ: บรรทัดใหม่จำนวนตรงข้าม อ้าง Ref_ID · บรรทัดเดิมคงอยู่ · กลับซ้ำ / กลับบรรทัดกลับรายการ ไม่ได้ */
+function apiAdjustReverse(id, staff, why) {
+  return withLock_(function () {
+    var project = readConfig_().PROJECT_ID;
+    if (!project) throw new Error('ยังไม่ได้เปิดรอบนับ');
+    why = String(why || '').trim();
+    if (!why) throw new Error('ต้องใส่เหตุผลที่กลับรายการ');
+    staff = normStaff_(staff);
+    if (!activeStaff_().some(function (x) { return x[0] === staff; })) throw new Error('เลือกรหัสผู้ตรวจสอบที่คีย์');
+    var A = adjRead_(project), a = A.byId[id];
+    if (!a) throw new Error('ไม่พบบรรทัด ' + id + ' ในรอบนี้');
+    if (a.ref) throw new Error(id + ' เป็นบรรทัดกลับรายการ กลับซ้ำไม่ได้ — ถ้าต้องการยอดเดิม ให้คีย์บรรทัดใหม่');
+    if (A.reversed[id]) throw new Error(id + ' ถูกกลับรายการแล้วโดย ' + A.reversed[id]);
+    var cur = adjCurrent_(project, a.material), nid = adjNextId_(), after = r3_(cur.final - a.qty), b = bookByMaterial_()[a.material] || { book: '' };
+    adminAct_('ADJUST_REVERSE', a.material, nid + ' กลับรายการ ' + id + ' (' + (a.qty > 0 ? '+' : '') + a.qty + ' ' + a.reason + ') · เหตุผล: ' + why +
+      ' · ผู้คีย์ ' + staff + ' · ยอดสุดท้าย ' + cur.final + ' → ' + after, function () {
+      appendRows_(SpreadsheetApp.getActive().getSheetByName('Adjustments'),
+        [[nid, now_(), project, a.material, a.name, -a.qty, ADJ_REVERSAL, why, a.loc, staff, who_(), id, b.book, cur.final, after]]);
+    });
+    var R = summary_(project, 'กลับรายการปรับยอด (หน้า Admin)');
+    R.adjDone = { id: nid, material: a.material, name: a.name, qty: -a.qty, before: cur.final, after: after, book: b.book, reversed: id };
+    return R;
+  });
 }

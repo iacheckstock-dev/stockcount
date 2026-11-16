@@ -179,7 +179,8 @@ sequenceDiagram
 
 ## sku (v2.4.1)
 คำขอ: `{ q }` = บาร์โค้ด หรือรหัสสินค้า (ตัวเล็กได้)
-คำตอบ: `{ ok, q, key, mapped, material, name, barcodes: [..], book, dev, diff, it, qi, bl, locs: [[Location, ชิ้น, สถานะ]], at }`
+คำตอบ: `{ ok, q, key, mapped, material, name, barcodes: [..], book, dev, adj, final, diff, it, qi, bl, locs: [[Location, ชิ้น, สถานะ]], locStr, at }`
+- (v2.4.2) `adj` ยอดปรับด้วยมือ (ชีต Adjustments) · `final = dev + adj` · `diff = final − book` · `locStr` = `"C3=2, D6=1"`
 - `dev` = ยอดนับทุกเครื่องที่เซิร์ฟเวอร์มี (ดัชนี · ไม่ถือล็อก) · `locs` เรียงแบบคน ไม่รวม Location ที่ยอด SKU นี้เป็น 0
 - ไม่มีใน Master: `mapped = false`, `key = "BC:<บาร์โค้ด>"`, `book` / `diff` = `null` (ยังเห็น Location ที่ยิง)
 - ไม่ส่งต้นทุน / มูลค่า · `q` ว่าง → `BAD_REQUEST`

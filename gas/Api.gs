@@ -1483,9 +1483,13 @@ function apiSku_(a, req) {
     locs.push([l, r3_(it.qty), status[l] || '']);
   });
   locs.sort(function (x, y) { return natCmp_(x[0], y[0]); });
+  // v2.4.2: ยอดปรับด้วยมือ (หน้า Admin) รวมในยอดสุดท้าย · ต่าง = สุดท้าย − บัญชี (เหมือนแท็บสรุปผลนับ)
+  var adj = 0;
+  if (b) adjRead_(project).lines.forEach(function (x) { if (x.material === key) adj = r3_(adj + x.qty); });
+  var fin = r3_(dev + adj);
   return { ok: true, q: q, key: key, mapped: !!b, material: b ? key : '', name: b ? b.name : '', barcodes: b ? b.bcs : [q],
-    book: b ? b.book : null, dev: dev, diff: b ? r3_(dev - b.book) : null, it: b ? b.it : 0, qi: b ? b.qi : 0, bl: b ? b.bl : 0,
-    locs: locs, at: now_() };
+    book: b ? b.book : null, dev: dev, adj: adj, final: fin, diff: b ? r3_(fin - b.book) : null, it: b ? b.it : 0, qi: b ? b.qi : 0, bl: b ? b.bl : 0,
+    locs: locs, locStr: locStr_(locs), at: now_() };
 }
 
 // ---------- ผลตรวจความพร้อมเครื่อง ----------

@@ -181,3 +181,4 @@ table.perf td.bad { color: #b42318; font-weight: 700; }
 .skugrid .neg { color: #b42318; } .skugrid .pos { color: #9a5b00; } .skugrid .zero { color: #1f7a3a; }
 .skunote { font-size: 13px; background: #f9eeda; color: #6b4000; border-radius: 8px; padding: 6px 8px; margin: 6px 0; }
 .items.skul li .q { font-size: 24px; }
+.skulocs { background: #fff; border: 1px solid #e3e1dc; border-radius: 10px; padding: 8px 10px; font-size: 19px; font-weight: 600; line-height: 1.5; word-break: break-word; }

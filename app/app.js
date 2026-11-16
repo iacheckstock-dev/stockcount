@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2.4.1';
+  var APP_VERSION = '2.4.2';
   var QTY_CONFIRM = 150;      // จำนวนที่ป้อนเองเกินนี้ต้องยืนยันอีกครั้ง
   var QTY_MAX_DIGITS = 5;     // ยาวกว่านี้ = น่าจะยิงบาร์โค้ดเข้าช่องจำนวน
   var INFO_EVERY = 15000;     // ถามสถานะผู้ช่วย/ผู้ดูแลระหว่างนับร่วมกัน
@@ -1172,33 +1172,37 @@
     if (!q) { toast('ยิงบาร์โค้ด หรือพิมพ์รหัสสินค้า', true); return; }
     var my = ++skuSeq;
     $('skuQ').value = ''; $('skuQ').blur();
-    $('skuRes').innerHTML = '<p class="muted">กำลังค้นหา ' + esc(q) + '…</p>';
+    // v2.4.2 (UAT G8-9): กล่องกลางจอระหว่างค้นหา · สำเร็จ = ปิดเองแล้วแสดงผล · ไม่สำเร็จ = แจ้งในกล่อง (กดตกลง หรือยิงใหม่ได้เลย)
+    busy('กำลังค้นหา', q);
     return api('sku', { q: q }, 15000).then(function (r) {
       if (my !== skuSeq) return;
-      SOUND.ok(); renderSkuRes(r);
+      busyOff(); SOUND.ok(); renderSkuRes(r);
     }, function (e) {
       if (my !== skuSeq) return;
       SOUND.bad();
       var off = e && (e.code === 'NETWORK' || e.code === 'TIMEOUT');
-      $('skuRes').innerHTML = '<div class="skunote">' + (off ? 'ค้นหาไม่ได้ — ต้องต่อ Wi-Fi (' + esc(e.message) + ')' : esc((e && e.message) || 'ค้นหาไม่สำเร็จ')) + '</div>';
+      $('skuRes').innerHTML = '<p class="muted">ค้นหา ' + esc(q) + ' ไม่สำเร็จ</p>';
+      result(false, 'ค้นหาไม่ได้', off ? 'ต้องต่อ Wi-Fi — ' + ((e && e.message) || '') : ((e && e.message) || 'เซิร์ฟเวอร์ตอบไม่ได้'), { scanCloses: true });
     });
   }
   function renderSkuRes(r) {
     var sg = function (v) { return v > 0 ? '+' + fmt(v) : fmt(v); };
     var dc = r.diff === null ? '' : r.diff < 0 ? 'neg' : r.diff > 0 ? 'pos' : 'zero';
+    var adj = Number(r.adj) || 0;
     var p = pending().filter(function (e) { return e.material === r.material || e.barcode === r.q || (r.barcodes || []).indexOf(e.barcode) >= 0; }).length;
     var sp = [r.it ? 'IT ' + fmt(r.it) : '', r.qi ? 'QI ' + fmt(r.qi) : '', r.bl ? 'BL ' + fmt(r.bl) : ''].filter(String).join(' · ');
     var h = '<div class="skuhead"><div class="n">' + esc(r.mapped ? r.name || r.material : 'ไม่มีใน Master') + '</div>' +
       '<div class="c">' + esc(r.mapped ? r.material : '') + (r.barcodes && r.barcodes.length ? ' · ' + esc(r.barcodes.join(' ')) : '') + '</div></div>' +
       '<div class="skugrid"><div><div class="lb">บัญชี</div><div class="v">' + (r.book === null ? '–' : fmt(r.book)) + '</div></div>' +
-      '<div><div class="lb">นับได้</div><div class="v">' + fmt(r.dev) + '</div></div>' +
+      '<div><div class="lb">' + (adj ? 'สุดท้าย' : 'นับได้') + '</div><div class="v">' + fmt(adj ? r.final : r.dev) + '</div></div>' +
       '<div><div class="lb">ต่าง</div><div class="v ' + dc + '">' + (r.diff === null ? '–' : sg(r.diff)) + '</div></div></div>';
+    if (adj) h += '<div class="skunote">นับจากเครื่อง ' + fmt(r.dev) + ' · ปรับด้วยมือ ' + sg(adj) + ' (หน้า Admin) = สุดท้าย ' + fmt(r.final) + '</div>';
     if (!r.mapped) h += '<div class="skunote">บาร์โค้ดนี้ไม่มีใน Master — ไม่มียอดบัญชีให้เทียบ แจ้งหัวหน้าทีมหารหัสสินค้า</div>';
     if (sp) h += '<div class="skunote">SAP มี ' + esc(sp) + ' (ไม่รวมในยอดเทียบ) — สอบถามเป็นกรณี</div>';
     if (p) h += '<div class="skunote">เครื่องนี้มี ' + p + ' รายการของ SKU นี้ที่ยังค้างส่ง — ยังไม่รวมในยอดนับ</div>';
-    h += r.locs.length ? '<ul class="items skul">' + r.locs.map(function (l) {
-      return '<li><div><div class="n">' + esc(l[0]) + '</div><div class="c">' + esc(l[2] || '') + '</div></div><div class="q">' + fmt(l[1]) + '</div></li>';
-    }).join('') + '</ul>' : '<p class="muted">ยังไม่พบที่ Location ไหน (นับได้ 0)</p>';
+    // v2.4.2 (UAT G8-8): Location แบบกระชับบรรทัดเดียว เหมือนรายงาน "C3=2, D6=1, …"
+    h += r.locs.length ? '<div class="skulocs"><span class="muted">นับได้ที่ ' + r.locs.length + ' Location</span><br>' + esc(r.locs.map(function (l) { return l[0] + '=' + fmt(l[1]); }).join(', ')) + '</div>'
+      : '<p class="muted">ยังไม่พบที่ Location ไหน (นับได้ 0)</p>';
     h += '<p class="muted">ยอดจากเซิร์ฟเวอร์เมื่อ ' + esc(String(r.at).slice(11, 19)) + ' · รวมทุกเครื่องที่ส่งถึงแล้ว</p>';
     $('skuRes').innerHTML = h;
   }

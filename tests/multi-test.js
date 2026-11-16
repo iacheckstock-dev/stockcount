@@ -900,7 +900,7 @@ console.log('\nรายงาน v2.4.1: บาร์โค้ด · Location=�
     const back = run('apiReconcile()').audit;
     assert.ok(back.blank === 0 && back.noTime === 0 && back.dupIds === 0 && back.devices.find(d => d.dev === 'TC21-01').missing === bd('TC21-01').missing);
   });
-  test('อัปเกรดจาก v2.4.0: ชีต Variance ที่มีข้อมูลแล้ว ได้คอลัมน์ Barcode ต่อท้าย (ข้อมูลเดิมไม่ย้าย) · SCHEMA_VERSION = 6', () => {
+  test('อัปเกรดจาก v2.4.0: ชีต Variance ที่มีข้อมูลแล้ว ได้คอลัมน์ Barcode ต่อท้าย (ข้อมูลเดิมไม่ย้าย) · SCHEMA_VERSION ล่าสุด', () => {
     const e2 = createEnv(); e2.run('setupSheets()');
     const V = e2.sheets.Variance; V.data[0] = V.data[0].slice(0, 18);
     const old = ['1', 't', 'p', 'f', 'M1', 'n', '1', 'SAP', '1', '0', '1', '0', '1', '0', '0', '0', '0', 'A1'];
@@ -908,7 +908,7 @@ console.log('\nรายงาน v2.4.1: บาร์โค้ด · Location=�
     e2.run('setConfig_({ SCHEMA_VERSION: 5 })'); e2.run('ensureSetup_()');
     assert.strictEqual(V.data[0][18], 'Barcode');
     assert.strictEqual(JSON.stringify(V.data[1].slice(0, 18)), JSON.stringify(old));
-    assert.strictEqual(String(e2.run('readConfig_().SCHEMA_VERSION')), '6');
+    assert.strictEqual(String(e2.run('readConfig_().SCHEMA_VERSION')), String(e2.run('SCHEMA_VERSION')));
   });
   test('Seq ที่อยู่ใน Quarantine ไม่นับเป็น Seq ขาด', () => {
     const Q = env.sheets.Quarantine, base = run('countLogAudit_(_p)', { _p: project }).devices.find(d => d.dev === 'TC21-05');
@@ -919,6 +919,105 @@ console.log('\nรายงาน v2.4.1: บาร์โค้ด · Location=�
     const after = run('countLogAudit_(_p)', { _p: project }).devices.find(d => d.dev === 'TC21-05');
     assert.strictEqual(after.missing, base.missing - 1);
     Q.data.pop();
+  });
+}
+
+console.log('\nปรับยอดด้วยมือ (v2.4.2)');
+{
+  const O = device('TC21-01', 'EMP-K', '2.4.2');
+  const project = run('readConfig_().PROJECT_ID');
+  const AJ = env.sheets.Adjustments, CL = env.sheets.Count_Log, AL = env.sheets.Admin_Log;
+  const sku = (R, m) => R.skus.find(r => r[0] === m);
+  const adj = o => run('apiAdjust(_o)', { _o: Object.assign({ material: MAT1, qty: 2, reason: 'RECOUNT', note: '', location: '', staff: 'EMP-K' }, o) });
+  let R0, R1;
+  test('ปรับ +2 (นับทวนกับพนักงานหน้าร้าน): ยอดสุดท้าย = เครื่อง + ปรับ · ต่างเปลี่ยนตาม · Count_Log ไม่เปลี่ยน · ชีต Adjustments 1 บรรทัด', () => {
+    R0 = run('apiSummary()');
+    const cl0 = JSON.stringify(CL.data), n0 = AJ.data.length;
+    R1 = adj({ qty: 2, location: 'f1' });
+    const a = sku(R0, MAT1), b = sku(R1, MAT1);
+    assert.strictEqual(b[3], a[3], 'ยอดเครื่องไม่เปลี่ยน');
+    assert.strictEqual(b[4], a[4] + 2); assert.strictEqual(b[5], a[5] + 2); assert.strictEqual(b[6], a[6] + 2);
+    assert.strictEqual(R1.totals.adj, R0.totals.adj + 2); assert.strictEqual(R1.totals.final, R0.totals.final + 2);
+    assert.strictEqual(JSON.stringify(CL.data), cl0, 'Count_Log ไม่ถูกแตะ');
+    assert.strictEqual(AJ.data.length, n0 + 1);
+    const h = AJ.data[0], row = AJ.data[AJ.data.length - 1], g = k => row[h.indexOf(k)];
+    assert.ok(/^ADJ-\d{4}$/.test(g('Adj_ID')) && g('Material') === MAT1 && Number(g('Qty')) === 2 && g('Reason') === 'นับทวนกับพนักงานหน้าร้าน' && g('Location') === 'F1' && g('Staff_Code') === 'EMP-K' && g('By'), JSON.stringify(row));
+    assert.strictEqual(Number(g('Final_Before')), a[5]); assert.strictEqual(Number(g('Final_After')), a[5] + 2);
+    assert.ok(R1.adjDone && R1.adjDone.after === a[5] + 2 && b[15] === 1);
+  });
+  test('บันทึก Admin_Log (ADJUST) ก่อนเขียน · Admin_Log ไม่ติด → ไม่มีบรรทัดปรับ', () => {
+    assert.ok(AL.data.some(r => r[2] === 'ADJUST' && r[3] === MAT1 && /\+2 · นับทวน/.test(r[4]) && /ผู้คีย์ EMP-K/.test(r[4])));
+    const n0 = AJ.data.length;
+    AL.dropWrites = true;
+    assert.throws(() => adj({ qty: 1 }), /Admin_Log/);
+    AL.dropWrites = false; run('apiAckLogWarn()');
+    assert.strictEqual(AJ.data.length, n0);
+  });
+  test('ตรวจข้อมูลก่อนบันทึก: รหัสไม่มีใน Master · จำนวน 0 / ไม่ใช่ตัวเลข · ไม่เลือกเหตุผล · "อื่น ๆ" ไม่มีหมายเหตุ · ไม่มีผู้คีย์ · Location ไม่มีในรอบ', () => {
+    const n0 = AJ.data.length;
+    assert.throws(() => adj({ material: 'NOPE123' }), /ไม่พบรหัสสินค้า/);
+    assert.throws(() => adj({ material: '9999999999999' }), /ไม่พบรหัสสินค้า/);
+    assert.throws(() => adj({ qty: 0 }), /ไม่ใช่ 0/);
+    assert.throws(() => adj({ qty: 'abc' }), /ตัวเลข/);
+    assert.throws(() => adj({ reason: '' }), /เลือกเหตุผล/);
+    assert.throws(() => adj({ reason: 'OTHER', note: '  ' }), /อื่น ๆ/);
+    assert.throws(() => adj({ staff: '' }), /ผู้ตรวจสอบ/);
+    assert.throws(() => adj({ staff: 'EMP-NOBODY' }), /ผู้ตรวจสอบ/);
+    assert.throws(() => adj({ location: 'ZZ999' }), /ไม่มี Location/);
+    assert.strictEqual(AJ.data.length, n0, 'ไม่มีบรรทัดถูกเขียน');
+  });
+  test('คีย์ด้วยบาร์โค้ดได้ · ลดยอด (−) ได้ · สินค้าโอนระหว่างทาง', () => {
+    const before = sku(run('apiSummary()'), MAT2)[5];
+    const R = adj({ material: BC2, qty: -1, reason: 'TRANSIT', staff: 'emp-kh' });
+    assert.strictEqual(sku(R, MAT2)[5], before - 1);
+    assert.ok(R.adjustments.some(x => x[2] === MAT2 && x[4] === -1 && x[5] === 'สินค้าโอนระหว่างทาง' && x[8] === 'EMP-KH'));
+  });
+  test('กลับรายการ: บรรทัดใหม่จำนวนตรงข้าม อ้าง Ref_ID · บรรทัดเดิมยังอยู่ · ยอดกลับเป็นเดิม · กลับซ้ำไม่ได้ · กลับบรรทัดกลับรายการไม่ได้ · ต้องมีเหตุผล', () => {
+    const first = R1.adjDone.id, n0 = AJ.data.length;
+    assert.throws(() => run('apiAdjustReverse(_i, "EMP-K", " ")', { _i: first }), /เหตุผล/);
+    const R = run('apiAdjustReverse(_i, "EMP-K", "คีย์ผิด ต้องเป็น +3")', { _i: first });
+    assert.strictEqual(AJ.data.length, n0 + 1);
+    const h = AJ.data[0], row = AJ.data[AJ.data.length - 1];
+    assert.ok(row[h.indexOf('Ref_ID')] === first && Number(row[h.indexOf('Qty')]) === -2 && row[h.indexOf('Reason')] === 'กลับรายการ', JSON.stringify(row));
+    assert.ok(AJ.data.some(r => r[0] === first), 'บรรทัดเดิมไม่ถูกลบ');
+    assert.strictEqual(sku(R, MAT1)[4], sku(R0, MAT1)[4], 'ยอดปรับกลับเป็นเดิม');
+    assert.ok(R.adjustments.find(x => x[0] === first)[11] === row[0], 'บรรทัดเดิมรู้ว่าถูกกลับโดยบรรทัดไหน');
+    assert.throws(() => run('apiAdjustReverse(_i, "EMP-K", "ซ้ำ")', { _i: first }), /ถูกกลับรายการแล้ว/);
+    assert.throws(() => run('apiAdjustReverse(_i, "EMP-K", "ซ้ำ")', { _i: row[0] }), /กลับซ้ำไม่ได้/);
+    assert.ok(AL.data.some(r => r[2] === 'ADJUST_REVERSE' && r[4].indexOf(first) >= 0 && /คีย์ผิด/.test(r[4])));
+  });
+  test('ยอดปรับรวมตามเหตุผล (กลับรายการหักออกจากเหตุผลเดิม) · บาท = ชิ้น × ต้นทุน', () => {
+    const R = run('apiSummary()'), g = Object.fromEntries(R.totals.adjByReason.map(x => [x[0], x]));
+    assert.strictEqual(g['นับทวนกับพนักงานหน้าร้าน'][2], 0, '+2 แล้วกลับ −2 = 0');
+    assert.strictEqual(g['นับทวนกับพนักงานหน้าร้าน'][1], 1, 'นับเฉพาะบรรทัดที่ไม่ใช่กลับรายการ');
+    assert.strictEqual(g['สินค้าโอนระหว่างทาง'][2], -1);
+    assert.strictEqual(g['สินค้าโอนระหว่างทาง'][3], Math.round(-1 * sku(R, MAT2)[7] * 100) / 100);
+    assert.strictEqual(R.totals.adjLines, 3);
+  });
+  test('ป้าย "ปรับเท่ายอดบัญชีพอดี" ขึ้นเมื่อปรับแล้วต่าง = 0 · นับจำนวนแยก · ไม่กันการบันทึก', () => {
+    const x = sku(run('apiSummary()'), MAT1);
+    const R = adj({ qty: -x[6], reason: 'OTHER', note: 'ทดสอบปรับให้เท่าบัญชี' });
+    const y = sku(R, MAT1);
+    assert.ok(y[6] === 0 && y[16] === true && R.totals.adjToBook >= 1, JSON.stringify(y.slice(0, 7)));
+    assert.ok(AL.data.some(r => r[2] === 'ADJUST' && /ปรับเท่ายอดบัญชีพอดี/.test(r[4])));
+  });
+  test('บันทึกผลลงชีต Variance: Adjust_Qty / Final_Qty รวมยอดปรับ', () => {
+    const R = run('apiSummarySave()'), V = env.sheets.Variance, vh = V.data[0];
+    const row = V.data.filter(r => String(r[0]) === String(R.run) && r[vh.indexOf('Material')] === MAT1)[0];
+    assert.strictEqual(Number(row[vh.indexOf('Adjust_Qty')]), sku(R, MAT1)[4]);
+    assert.strictEqual(Number(row[vh.indexOf('Final_Qty')]), sku(R, MAT1)[5]);
+  });
+  test('ไล่ย้อน SKU มีบรรทัดปรับยอดของ SKU นั้น · เครื่องค้นหา SKU เห็นยอดปรับ และ ต่าง = สุดท้าย − บัญชี', () => {
+    const d = run('apiSkuDetail(_k)', { _k: MAT1 });
+    assert.ok(d.adjustments.length === 3 && d.adjustments.every(x => x[2] === MAT1));
+    const r = O.call('sku', { q: BC1 }), x = sku(run('apiSummary()'), MAT1);
+    assert.ok(r.adj === x[4] && r.final === x[5] && r.diff === x[6] && r.dev === x[3], JSON.stringify({ adj: r.adj, final: r.final, diff: r.diff }));
+    assert.ok(/=/.test(r.locStr) && r.locStr === run('locStr_(_l)', { _l: x[13] }));
+  });
+  test('รายชื่อผู้คีย์ = ผู้ตรวจสอบที่ใช้งาน (Active ≠ N) · เหตุผลที่เลือกได้ 3 แบบ', () => {
+    const R = run('apiSummary()');
+    assert.ok(R.staff.some(s => s[0] === 'EMP-K' && s[1] === 'นาย ก'));
+    assert.strictEqual(JSON.stringify(R.reasons.map(x => x[0])), JSON.stringify(['RECOUNT', 'TRANSIT', 'OTHER']));
   });
 }
 
