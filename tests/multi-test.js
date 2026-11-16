@@ -806,6 +806,122 @@ console.log('\nสรุปผลนับ / Dashboard (v2.4.0)');
   });
 }
 
+console.log('\nรายงาน v2.4.1: บาร์โค้ด · Location=จำนวน · บันทึกซ้ำ · ค้นหา SKU บนเครื่อง · ตรวจโครงชีต');
+{
+  const O = device('TC21-01', 'EMP-K', '2.4.1');
+  O.seq = 9000 + O.seq; O.at = 9900;
+  O.sync([O.scan('F10', BC1, MAT1, 3), O.scan('F2', BC1, MAT1, 1)], [O.ev('OPEN', 'F10')]);
+  const project = run('readConfig_().PROJECT_ID');
+  const CL = env.sheets.Count_Log, BM = env.sheets.Barcode_Map, bh = BM.data[0];
+  const sumAt = (m, l) => Math.round(CL.data.slice(1).filter(r => r[1] === project && r[7] === m && r[5] === l).reduce((t, r) => t + Number(r[8]), 0) * 1000) / 1000;
+  let R;
+  test('ราย SKU มี [[Location, ชิ้น]] เรียงแบบคน (F2 ก่อน F10) · ผลรวม = นับได้ · ชิ้นต่อ Location = Count_Log', () => {
+    R = run('apiSummary()');
+    const x = R.skus.find(r => r[0] === MAT1), locs = x[13];
+    const names = locs.map(l => l[0]);
+    assert.ok(names.indexOf('F2') >= 0 && names.indexOf('F2') < names.indexOf('F10'), JSON.stringify(names));
+    assert.strictEqual(Math.round(locs.reduce((t, l) => t + l[1], 0) * 1000) / 1000, x[3]);
+    locs.forEach(l => assert.strictEqual(l[1], sumAt(MAT1, l[0]), l[0]));
+    assert.strictEqual(x[12], locs.length);
+    assert.strictEqual(run('locStr_(_l)', { _l: [['C3', 2], ['D6', 1]] }), 'C3=2, D6=1');
+  });
+  test('ราย SKU มีบาร์โค้ดทุกตัวของรหัส (จาก Barcode_Map)', () => {
+    const want = BM.data.slice(1).filter(r => r[bh.indexOf('Material')] === MAT1).map(r => r[bh.indexOf('Barcode')]);
+    assert.deepStrictEqual(Array.from(R.skus.find(r => r[0] === MAT1)[14]).sort(), Array.from(new Set(want)).sort());
+  });
+  test('ไม่มีใน Master: Location แสดงเป็น F3=4', () => {
+    assert.ok(/F3=4/.test(R.unmapped.find(r => r[0] === '9999999999999')[2]));
+  });
+  test('Variance มีคอลัมน์ Barcode · Locations = "F2=1, F10=3, …" · บันทึกครั้งถัดไปโดยผลไม่เปลี่ยน → same = true', () => {
+    const V = env.sheets.Variance, vh = V.data[0];
+    assert.ok(vh.indexOf('Barcode') >= 0);
+    const a = run('apiSummarySave()');
+    assert.ok(a.saved === a.skus.length + a.unmapped.length && a.lastSave.run === a.run);
+    const row = V.data.filter(r => String(r[0]) === String(a.run) && r[vh.indexOf('Material')] === MAT1)[0];
+    assert.strictEqual(row[vh.indexOf('Locations')], run('locStr_(_l)', { _l: R.skus.find(r => r[0] === MAT1)[13] }));
+    assert.ok(row[vh.indexOf('Barcode')].indexOf(BC1) >= 0);
+    const b = run('apiSummarySave()');
+    assert.ok(b.same && b.run === a.run + 1 && b.prevAt === a.at, JSON.stringify({ same: b.same, prevAt: b.prevAt }));
+    O.sync([O.scan('F10', BC1, MAT1, 1)]);
+    const c = run('apiSummarySave()');
+    assert.ok(!c.same, 'ยิงเพิ่มแล้วผลเปลี่ยน');
+    assert.strictEqual(run('apiSummary()').lastSave.run, c.run);
+  });
+  test('เครื่องค้นหา SKU ด้วยบาร์โค้ด: ยอดบัญชี · นับ · ต่าง · Location=ชิ้น · ไม่มีต้นทุน/มูลค่า', () => {
+    const r = O.call('sku', { q: BC1 }), x = run('apiSummary()').skus.find(s => s[0] === MAT1);
+    assert.ok(r.ok && r.key === MAT1 && r.mapped, JSON.stringify(r));
+    assert.strictEqual(r.book, x[2]); assert.strictEqual(r.dev, x[3]); assert.strictEqual(r.diff, x[6]);
+    assert.strictEqual(JSON.stringify(r.locs.map(l => [l[0], l[1]])), JSON.stringify(x[13].map(l => [l[0], l[1]])));
+    assert.ok(r.locs.every(l => typeof l[2] === 'string'), 'มีสถานะ Location');
+    assert.ok(!('cost' in r) && !JSON.stringify(r).match(/Unit_Cost|value/i), 'ไม่ส่งต้นทุน');
+  });
+  test('ค้นหาด้วยรหัสสินค้า (พิมพ์ตัวเล็กได้) ได้ผลเดียวกัน · บาร์โค้ดที่ไม่มีใน Master เห็น Location แต่ไม่มียอดบัญชี · ว่าง = แจ้งให้ยิง', () => {
+    const a = O.call('sku', { q: BC1 }), b = O.call('sku', { q: MAT1.toLowerCase() });
+    assert.strictEqual(b.key, a.key); assert.strictEqual(b.dev, a.dev);
+    const u = O.call('sku', { q: '9999999999999' });
+    assert.ok(u.ok && !u.mapped && u.book === null && u.diff === null && u.locs.some(l => l[0] === 'F3' && l[1] === 4), JSON.stringify(u));
+    const e = O.call('sku', { q: '  ' });
+    assert.ok(!e.ok && /ยิงบาร์โค้ด/.test(e.message || e.error || JSON.stringify(e)), JSON.stringify(e));
+  });
+  test('เครื่องที่ไม่ได้จับคู่ค้นหาไม่ได้', () => {
+    const r = env.post({ action: 'sku', deviceId: 'TC21-01', token: 'wrong', q: BC1 });
+    assert.ok(!r.ok);
+  });
+  test('กระทบยอดทั้งรอบ ตรวจโครงชีต: ปกติ = ครบ · แถวว่าง / เวลาหาย / Log_ID ซ้ำ / Seq ขาด ถูกพบพร้อมเลขแถว (ไม่แก้ชีต)', () => {
+    let r = run('apiReconcile()');
+    const B = r.audit, bd = d => B.devices.find(x => x.dev === d);
+    // ชุดทดสอบนี้ข้ามเลข Seq โดยตั้งใจ (O.seq = 9000 + …) จึงเทียบกับค่าก่อนแก้ ไม่ใช่ ok
+    assert.ok(B && B.blank === 0 && B.noTime === 0 && B.dupIds === 0, JSON.stringify(B));
+    assert.strictEqual(B.rows, CL.data.length - 1);
+    const n = CL.data.length;
+    const row = CL.data.find(x => x[2] === 'TC21-01' && x[1] === project && x[5] === 'F10');
+    const saveT = [row[13], row[14]];
+    row[13] = ''; row[14] = '';
+    const W = CL.data[0].length;
+    CL.data.splice(n - 1, 0, new Array(W).fill(''));              // แถวว่างกลางชีต
+    const dupe = CL.data[n].slice(); CL.data.push(dupe);          // Log_ID ซ้ำ
+    const snap = JSON.stringify(CL.data);
+    r = run('apiReconcile()');
+    const A = r.audit;
+    assert.ok(!r.ok && !A.ok);
+    assert.strictEqual(A.blank, 1); assert.strictEqual(JSON.stringify(A.blankRows), JSON.stringify([n]));
+    assert.ok(A.noTime === 1 && A.noTimeRows.indexOf(CL.data.indexOf(row) + 1) >= 0, JSON.stringify(A.noTimeRows));
+    assert.strictEqual(A.dupIds, 1);
+    assert.ok(A.devices.find(x => x.dev === dupe[2]).dup === bd(dupe[2]).dup + 1, 'Seq ซ้ำ');
+    assert.strictEqual(JSON.stringify(CL.data), snap, 'กระทบยอดไม่แก้ชีต');
+    assert.ok(env.sheets.Admin_Log.data.some(x => x[2] === 'RECONCILE' && /แถวว่าง 1 · เวลาหาย 1 · Log_ID ซ้ำ 1/.test(x[4])));
+    CL.data.pop(); CL.data.splice(n - 1, 1); row[13] = saveT[0]; row[14] = saveT[1];
+    // Seq ขาด: ลบแถวที่มีเลขถัดไปต่อกันของ TC21-01 ออกชั่วคราว
+    const i = CL.data.findIndex(x => x[2] === 'TC21-01' && x[1] === project && Number(x[3]) > 1 && CL.data.some(y => y[2] === 'TC21-01' && y[1] === project && Number(y[3]) === Number(x[3]) + 1));
+    const gone = CL.data.splice(i, 1)[0];
+    r = run('apiReconcile()');
+    assert.strictEqual(r.audit.devices.find(d => d.dev === 'TC21-01').missing, bd('TC21-01').missing + 1);
+    CL.data.splice(i, 0, gone);
+    const back = run('apiReconcile()').audit;
+    assert.ok(back.blank === 0 && back.noTime === 0 && back.dupIds === 0 && back.devices.find(d => d.dev === 'TC21-01').missing === bd('TC21-01').missing);
+  });
+  test('อัปเกรดจาก v2.4.0: ชีต Variance ที่มีข้อมูลแล้ว ได้คอลัมน์ Barcode ต่อท้าย (ข้อมูลเดิมไม่ย้าย) · SCHEMA_VERSION = 6', () => {
+    const e2 = createEnv(); e2.run('setupSheets()');
+    const V = e2.sheets.Variance; V.data[0] = V.data[0].slice(0, 18);
+    const old = ['1', 't', 'p', 'f', 'M1', 'n', '1', 'SAP', '1', '0', '1', '0', '1', '0', '0', '0', '0', 'A1'];
+    V.data.push(old.slice());
+    e2.run('setConfig_({ SCHEMA_VERSION: 5 })'); e2.run('ensureSetup_()');
+    assert.strictEqual(V.data[0][18], 'Barcode');
+    assert.strictEqual(JSON.stringify(V.data[1].slice(0, 18)), JSON.stringify(old));
+    assert.strictEqual(String(e2.run('readConfig_().SCHEMA_VERSION')), '6');
+  });
+  test('Seq ที่อยู่ใน Quarantine ไม่นับเป็น Seq ขาด', () => {
+    const Q = env.sheets.Quarantine, base = run('countLogAudit_(_p)', { _p: project }).devices.find(d => d.dev === 'TC21-05');
+    const lo = base.min, hi = base.max;
+    let gap = 0; for (let q = lo + 1; q < hi && !gap; q++) if (!CL.data.some(r => r[2] === 'TC21-05' && r[1] === project && Number(r[3]) === q)) gap = q;
+    assert.ok(gap, 'ต้องมีช่องว่างให้ทดสอบ');
+    Q.data.push(['2026-11-04 10:00:00', 'TC21-05', 'TC21-05-' + String(gap).padStart(6, '0'), '2026Q3', '{}', 'รอบไม่ตรง']);
+    const after = run('countLogAudit_(_p)', { _p: project }).devices.find(d => d.dev === 'TC21-05');
+    assert.strictEqual(after.missing, base.missing - 1);
+    Q.data.pop();
+  });
+}
+
 // DUMP_ADMIN=ไฟล์ → เก็บ apiDevicesState() ไว้ให้ tests/admin-ui.py ใช้แสดงหน้า Admin จริงในเบราว์เซอร์
 if (process.env.DUMP_ADMIN) {
   const st = run('apiDevicesState()');

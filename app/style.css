@@ -169,3 +169,15 @@ table.perf td.bad { color: #b42318; font-weight: 700; }
 .resicon.ok { background: #1f9d55; }
 .resicon.bad { background: #d92d20; }
 #resOk { margin-top: 14px; width: 100%; }
+
+/* ค้นหา SKU (v2.4.1) */
+.skuq { display: flex; gap: 6px; }
+.skuq .inp { flex: 1; min-width: 0; margin: 0; }
+.skuq .btn { width: auto; flex: 0 0 auto; margin: 0; padding-left: 18px; padding-right: 18px; }
+.skuhead { margin: 10px 0 4px; } .skuhead .n { font-size: 17px; font-weight: 700; } .skuhead .c { font-size: 13px; color: #555; word-break: break-all; }
+.skugrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 8px 0; }
+.skugrid > div { background: #fff; border: 1px solid #e3e1dc; border-radius: 10px; padding: 6px 8px; text-align: center; }
+.skugrid .lb { font-size: 12px; color: #666; } .skugrid .v { font-size: 26px; font-weight: 700; line-height: 1.2; }
+.skugrid .neg { color: #b42318; } .skugrid .pos { color: #9a5b00; } .skugrid .zero { color: #1f7a3a; }
+.skunote { font-size: 13px; background: #f9eeda; color: #6b4000; border-radius: 8px; padding: 6px 8px; margin: 6px 0; }
+.items.skul li .q { font-size: 24px; }

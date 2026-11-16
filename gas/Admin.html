@@ -44,8 +44,8 @@
   #toast { position:fixed; bottom:16px; left:50%; transform:translateX(-50%); padding:10px 16px; border-radius:8px; background:#111; color:#fff; display:none; max-width:80%; z-index:10; }
   #toast.err { background:var(--bad); }
   .okline { color:#1a7f37; font-size:13px; margin:4px 0; }
-  #trDlg, #revDlg, #flagDlg, #askDlg, #skuDlg { position:fixed; inset:0; background:rgba(0,0,0,.35); display:none; align-items:center; justify-content:center; z-index:8; }
-  #trDlg.on, #revDlg.on, #flagDlg.on, #askDlg.on, #skuDlg.on { display:flex; }
+  #trDlg, #revDlg, #flagDlg, #askDlg, #skuDlg, #walkDlg { position:fixed; inset:0; background:rgba(0,0,0,.35); display:none; align-items:center; justify-content:center; z-index:8; }
+  #trDlg.on, #revDlg.on, #flagDlg.on, #askDlg.on, #skuDlg.on, #walkDlg.on { display:flex; }
   .sumgrid { display:grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap:10px; margin:8px 0; }
   .sumgrid > div { background:var(--soft); border-radius:8px; padding:8px 10px; }
   .sumgrid .lb { color:var(--mut); font-size:12px; } .sumgrid .v { font-size:20px; font-weight:600; font-variant-numeric: tabular-nums; }
@@ -55,7 +55,7 @@
   #flagDlg textarea.need, #askDlg textarea.need { border-color:var(--bad); }
   #flagNeed, #askNeed, #trNeed { color:var(--bad); font-size:13px; margin-top:4px; }
   #flagDlg .btn:disabled, #askDlg .btn:disabled { opacity:.4; cursor:not-allowed; }
-  #trDlg .box, #revDlg .box, #flagDlg .box, #askDlg .box, #skuDlg .box { background:#fff; border-radius:10px; padding:18px 20px; width:560px; max-width:94vw; max-height:90vh; overflow:auto; }
+  #trDlg .box, #revDlg .box, #flagDlg .box, #askDlg .box, #skuDlg .box, #walkDlg .box { background:#fff; border-radius:10px; padding:18px 20px; width:560px; max-width:94vw; max-height:90vh; overflow:auto; }
   #trDlg label.opt, #revDlg label.opt { display:block; border:1px solid var(--line); border-radius:8px; padding:8px 10px; margin:6px 0; cursor:pointer; }
   #trDlg label.opt:has(input:checked), #revDlg label.opt:has(input:checked) { border-color:#111; background:var(--soft); }
   #busy { position:fixed; inset:0; background:rgba(255,255,255,.6); display:none; align-items:center; justify-content:center; z-index:9; font-size:15px; }
@@ -67,6 +67,27 @@
   .chips button.on { background:#111; color:#fff; border-color:#111; }
   .conf { border:1px solid var(--line); border-radius:8px; padding:10px 12px; margin-bottom:10px; }
   .conf label { display:block; margin:3px 0; }
+  td.locs { font-size:12px; max-width:320px; }
+  /* ใบเดินตรวจ (v2.4.1): ดูตัวอย่างบนจอ แล้วพิมพ์เฉพาะส่วนนี้ */
+  #walk { position:fixed; inset:0; background:#fff; z-index:20; overflow:auto; display:none; }
+  #walk.on { display:block; }
+  #walk .bar { position:sticky; top:0; background:var(--soft); border-bottom:1px solid var(--line); padding:8px 16px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  #walkDoc { padding:12px 16px; font-size:12px; }
+  #walkDoc h2 { font-size:16px; margin:0 0 4px; }
+  #walkDoc table { font-size:11px; }
+  #walkDoc th, #walkDoc td { border:1px solid #999; padding:3px 5px; }
+  #walkDoc td.w { width:70px; } #walkDoc td.nt { width:110px; }
+  #walkDoc .grp { break-inside:avoid; page-break-inside:avoid; margin-top:10px; }
+  #walkDoc .grp h3 { font-size:13px; margin:0 0 3px; }
+  #walkDoc .sign { margin-top:18px; display:flex; gap:40px; font-size:12px; }
+  @media print {
+    body > *:not(#walk) { display:none !important; }
+    #walk { position:static; overflow:visible; display:block !important; }
+    #walk .bar { display:none; }
+    #walkDoc { padding:0; }
+    #walkDoc th { position:static; background:#eee; }
+    @page { size:A4; margin:10mm; }
+  }
 </style>
 </head>
 <body>
@@ -213,6 +234,7 @@
       <button class="btn sec" onclick="loadSummary()">รีเฟรช</button>
       <button class="btn" onclick="saveSummary()" title="กระทบยอด แล้วเก็บผลราย SKU ลงชีต Variance เป็นหลักฐาน">สรุปผลและบันทึก</button>
       <button class="btn sec" onclick="exportSummary()">ส่งออก .xlsx</button>
+      <button class="btn sec" onclick="walkOpen()" title="ใบสำหรับเดินตรวจตามจุด พร้อมช่องเขียนยอดนับทวน">พิมพ์ใบเดินตรวจ</button>
       <span class="muted" id="sumInfo"></span>
     </div>
     <div id="sumBody"><div class="muted">กด "รีเฟรช" เพื่อคำนวณ</div></div>
@@ -268,6 +290,30 @@
   <div id="skuBody"></div>
   <div class="row" style="margin-top:12px;justify-content:flex-end"><button class="btn sec" onclick="$('skuDlg').classList.remove('on')">ปิด</button></div>
 </div></div>
+<!-- ใบเดินตรวจ (v2.4.1) -->
+<div id="walkDlg" class="dlg"><div class="box">
+  <h3 style="margin-top:0">พิมพ์ใบเดินตรวจ</h3>
+  <div class="conf"><b>เรียงตาม</b>
+    <label><input type="radio" name="wkSort" value="sku" checked> SKU — ใบละรหัส มี Location=ชิ้น (แบบไฟล์ระบบเดิม) · รวม SKU ที่นับได้ 0</label>
+    <label><input type="radio" name="wkSort" value="loc"> Location — เดินทีละจุด A → Z · แต่ละจุดมี SKU ที่ต่างและจำนวนที่นับได้ตรงนั้น</label>
+  </div>
+  <div class="conf"><b>เลือกเฉพาะ</b>
+    <label><input type="radio" name="wkF" value="diff" checked> ที่ต่างทั้งหมด</label>
+    <label><input type="radio" name="wkF" value="short"> ขาด</label>
+    <label><input type="radio" name="wkF" value="over"> เกิน</label>
+    <label><input type="radio" name="wkF" value="all"> ทั้งหมด (รวมที่ตรง)</label>
+    <div class="row">ต่างตั้งแต่ <input type="text" id="wkMin" style="width:110px" placeholder="0" inputmode="decimal"> บาทขึ้นไป <span class="muted">(เว้นว่าง = ทุกมูลค่า · ดูทั้งขาดและเกิน)</span></div>
+    <label><input type="checkbox" id="wkUn" checked> รวมบาร์โค้ดที่ไม่มีใน Master</label>
+  </div>
+  <div class="muted">ใบพิมพ์ไม่มีต้นทุนและมูลค่า (บาท) — ใช้มูลค่าเป็นเกณฑ์เลือกเท่านั้น</div>
+  <div class="row" style="margin-top:12px;justify-content:flex-end">
+    <button class="btn sec" onclick="$('walkDlg').classList.remove('on')">ยกเลิก</button>
+    <button class="btn" onclick="walkBuild()">ดูตัวอย่าง</button>
+  </div>
+</div></div>
+<div id="walk"><div class="bar"><b>ตัวอย่างใบเดินตรวจ</b><span class="muted" id="walkInfo"></span><span style="flex:1"></span>
+  <button class="btn" onclick="window.print()">พิมพ์</button><button class="btn sec" onclick="$('walk').classList.remove('on')">ปิด</button></div>
+  <div id="walkDoc"></div></div>
 <!-- กล่องยืนยัน/ใส่เหตุผลกลางหน้า แทน confirm()/prompt() ของเบราว์เซอร์ (v2.3.6) -->
 <div id="askDlg"><div class="box">
   <h3 style="margin-top:0" id="askTitle"></h3>
@@ -278,7 +324,7 @@
     <div id="askNeed">ต้องใส่เหตุผลก่อน</div>
   </div>
   <div class="row" style="margin-top:12px;justify-content:flex-end">
-    <button class="btn sec" onclick="askClose()">ยกเลิก</button>
+    <button class="btn sec" id="askCancel" onclick="askClose()">ยกเลิก</button>
     <button class="btn" id="askOk" onclick="askDo()">ตกลง</button>
   </div>
 </div></div>
@@ -339,10 +385,26 @@ function reconcile() {
         return (c.flag ? '<span class="pill warn">' : bad) + esc(c.loc) + ' ปิด ' + n0(c.close) + ' · ชีต ' + n0(c.sheet) + '</span>' + (c.flag ? ' <span class="muted">(มีธงต้องตรวจซ้ำอยู่แล้ว)</span>' : ' <span class="muted">ยอดเปลี่ยนหลังปิดโดยไม่มีธง — ตรวจ Count_Log</span>');
       }).join('<br>') : ok + 'ตรงทุก Location ที่ปิดแล้ว</span>') + '</div>' +
       (r.missing.length ? '<div>' + bad + 'มีรายการแต่ไม่มีในชีต Locations</span> ' + esc(r.missing.join(', ')) + '</div>' : '') +
+      auditHtml(r.audit, bad, ok, n0) +
       '<div class="muted">บันทึกผลใน Admin_Log (RECONCILE)</div></div>';
     $('recon').innerHTML = h;
     loadDevices();
   }, 'กำลังกระทบยอด… อ่าน Count_Log ทั้งชีต อาจใช้เวลาครู่หนึ่ง');
+}
+/** ตรวจโครงชีต Count_Log (v2.4.1): แถวว่าง · เวลาหาย · Log_ID ซ้ำ · Seq ครบต่อเครื่อง — ระบบไม่แก้ชีต แจ้งให้รู้เท่านั้น */
+function auditHtml(A, bad, ok, n0) {
+  if (!A) return '';
+  var rowsTxt = function (list, n) { return list.length ? ' <span class="muted">เช่น แถว ' + esc(list.join(', ')) + (n > list.length ? ' …' : '') + '</span>' : ''; };
+  var seq = A.devices.map(function (d) {
+    var good = !d.missing && !d.dup;
+    return (good ? ok : bad) + esc(d.dev) + ' Seq ' + d.min + '–' + d.max + (good ? ' ครบ' : (d.missing ? ' ขาด ' + n0(d.missing) + ' (' + esc(d.missingList.join(', ')) + (d.missing > d.missingList.length ? ' …' : '') + ')' : '') + (d.dup ? ' ซ้ำ ' + d.dup : '')) + '</span>';
+  }).join(' ');
+  return '<div style="margin-top:4px"><b>โครงชีต Count_Log</b> <span class="muted">(แถว 2–' + A.lastRow + ' · ' + n0(A.rows) + ' รายการ)</span>' +
+    '<div>แถวว่าง / ไม่มี Log_ID: ' + (A.blank ? bad + n0(A.blank) + ' แถว</span>' + rowsTxt(A.blankRows, A.blank) : ok + 'ไม่มี</span>') + '</div>' +
+    '<div>เวลาหาย (Scan_Time / Received_Time): ' + (A.noTime ? bad + n0(A.noTime) + ' รายการ</span> <span class="muted">(Scan ว่าง ' + n0(A.noScan) + ' · Received ว่าง ' + n0(A.noRecv) + ')</span>' + rowsTxt(A.noTimeRows, A.noTime) : ok + 'ครบ</span>') + '</div>' +
+    '<div>Log_ID ซ้ำ: ' + (A.dupIds ? bad + n0(A.dupIds) + '</span> <span class="muted">' + esc(A.dupRows.join(' · ')) + '</span>' : ok + 'ไม่มี</span>') + '</div>' +
+    '<div>Seq ต่อเครื่อง: ' + (seq || '<span class="muted">ยังไม่มีรายการ</span>') + '</div>' +
+    (A.ok ? '' : '<div class="muted">ระบบไม่แก้ชีตให้ (หลักฐานต้องคงตามจริง) — ดูประวัติการแก้ไขของแถวที่ระบุ: คลิกขวา → Show edit history</div>') + '</div>';
 }
 function setState(s) { S = s; CMP = null; render(s); showLogWarn(s.logWarn); if ($('compare').classList.contains('on')) loadCompare(); }
 
@@ -573,10 +635,21 @@ function ranges(list, zone) {
   }
   return out.join(', ');
 }
+/** [[Location, ชิ้น]] → "C3=2, D6=1" (เหมือนฝั่งเซิร์ฟเวอร์ locStr_) */
+function locStr(list) { return (list || []).map(function (x) { return x[0] + '=' + nf(x[1]); }).join(', '); }
 function loadSummary() { call('apiSummary', [], renderSummary, 'กำลังกระทบยอดและคำนวณผลนับ…'); }
 function saveSummary() {
   ask({ title: 'สรุปผลและบันทึก', ok: 'บันทึก', body: '<div>กระทบยอดทั้งรอบ แล้วเก็บผลราย SKU ตอนนี้ลงชีต Variance (ต่อท้าย ไม่เขียนทับ) และบันทึกใน Admin_Log</div>' }, function () {
-    call('apiSummarySave', [], function (r) { renderSummary(r); toast('บันทึกผลครั้งที่ ' + r.run + ' แล้ว'); }, 'กำลังกระทบยอดและบันทึกผล…');
+    call('apiSummarySave', [], function (r) {
+      renderSummary(r);
+      // v2.4.1: กล่องผลกลางจอแทน toast — บอกครั้งที่ / จำนวนแถว / เวลา · เตือนถ้าตัวเลขเหมือนครั้งก่อน
+      var nU = r.unmapped.length;
+      ask({ title: '✓ บันทึกผลครั้งที่ ' + r.run + ' แล้ว', ok: 'ปิด', noCancel: true,
+        body: '<div class="kv"><div>เวลา</div><div>' + esc(r.at) + '</div><div>ชีต Variance</div><div>เพิ่ม ' + nf(r.saved) + ' แถว (SKU ' + nf(r.skus.length) + (nU ? ' + ไม่มีใน Master ' + nU : '') + ') · Run = ' + r.run + '</div>' +
+          '<div>Admin_Log</div><div>SUMMARY_SAVE ครั้งที่ ' + r.run + '</div><div>ผลต่าง</div><div>' + sgn(r.totals.diff) + ' ชิ้น · ' + sgn(r.totals.diffValue, 2) + ' บาท</div></div>' +
+          (r.same ? '<div class="card" style="margin-top:10px;border-color:var(--warn);background:var(--warnbg)"><b>ตัวเลขเหมือนครั้งที่ ' + (r.run - 1) + '</b> (' + esc(r.prevAt) + ') ทุก SKU — ' +
+            'ไม่ต้องกดบันทึกซ้ำ ถ้าไม่มีการนับหรือโหลดไฟล์ SAP เพิ่ม</div>' : '') }, function () {});
+    }, 'กำลังกระทบยอดและบันทึกผล…');
   });
 }
 function renderSummary(R) {
@@ -591,12 +664,12 @@ function renderSummary(R) {
   h += '<div class="card"><h3>1. ภาพรวมทั้งร้าน</h3><div class="sumgrid">' +
     '<div><div class="lb">ยอดบัญชี (' + (R.bookSource === 'POS' ? 'POS' : 'SAP UR') + ')</div><div class="v">' + nf(T.book) + '</div></div>' +
     '<div><div class="lb">นับจากเครื่อง</div><div class="v">' + nf(T.dev) + '</div></div>' +
-    '<div><div class="lb">ปรับด้วยมือ</div><div class="v">' + sgn(T.adj) + '</div><div class="muted">ฟอร์มปรับยอด: v2.4.1</div></div>' +
-    '<div><div class="lb">ยอดสุดท้าย</div><div class="v">' + nf(T.final) + '</div>' + (T.unmappedQty ? '<div class="muted">รวมไม่มีใน Master ' + nf(T.unmappedQty) + '</div>' : '') + '</div>' +
+    '<div><div class="lb">ปรับด้วยมือ</div><div class="v">' + sgn(T.adj) + '</div><div class="muted">ฟอร์มปรับยอด: v2.4.2</div></div>' +
+    '<div><div class="lb">ยอดสุดท้าย</div><div class="v">' + nf(T.final) + '</div>' + (T.unmappedQty ? '<div class="muted">รวมไม่มีใน Master ' + nf(T.unmappedQty) + ' ชิ้น</div>' : '') + '</div>' +
     '<div><div class="lb">ผลต่าง (ชิ้น)</div><div class="v ' + cls(T.diff) + '">' + sgn(T.diff) + '</div><div class="muted">' + (T.pct === null ? '' : sgn(T.pct, 2) + '% ของยอดบัญชี') + '</div></div>' +
     '<div><div class="lb">ผลต่าง (บาท)</div><div class="v ' + cls(T.diffValue) + '">' + sgn(T.diffValue, 2) + '</div><div class="muted">เกิน ' + sgn(T.plusValue, 2) + ' · ขาด ' + nf(T.minusValue, 2) + '</div></div>' +
     '</div><div>SKU ' + nf(T.skus) + ' · ตรง ' + nf(T.match) + ' · <span class="pos">เกิน ' + nf(T.over) + ' (' + sgn(T.plusQty) + ' ชิ้น)</span> · <span class="neg">ขาด ' + nf(T.short) + ' (' + nf(T.minusQty) + ' ชิ้น)</span>' +
-    ' · มี IT/QI/BL ' + nf(T.special) + (T.unmapped ? ' · <span class="neg">ไม่มีใน Master ' + T.unmapped + ' บาร์โค้ด</span>' : '') + '</div></div>';
+    ' · มี IT/QI/BL ' + nf(T.special) + (T.unmapped ? ' · <span class="neg">ไม่มีใน Master ' + T.unmapped + ' บาร์โค้ด (' + nf(T.unmappedQty) + ' ชิ้น)</span>' : '') + '</div></div>';
   // 2 ความครบ
   h += '<div class="card" style="margin-top:12px"><h3>2. ความครบของการนับ</h3>' +
     '<div>Location ปิดแล้ว <b>' + L.closed + '/' + L.total + '</b>' + (L.open.length ? ' · ยังไม่ปิด: ' + L.open.map(function (o) { return '<span class="pill warn">' + esc(o[0]) + ' ' + esc(o[1]) + '</span>'; }).join(' ') : '') + '</div>' +
@@ -620,20 +693,23 @@ function sumRows() {
   return SUM.skus.filter(function (r) {
     var ok = SUMF === 'all' || (SUMF === 'diff' && r[6] !== 0) || (SUMF === 'short' && r[6] < 0) || (SUMF === 'over' && r[6] > 0) ||
       (SUMF === 'match' && r[6] === 0) || (SUMF === 'special' && (r[9] || r[10] || r[11]));
-    return ok && (!q || String(r[0]).toLowerCase().indexOf(q) >= 0 || String(r[1]).toLowerCase().indexOf(q) >= 0);
+    return ok && (!q || String(r[0]).toLowerCase().indexOf(q) >= 0 || String(r[1]).toLowerCase().indexOf(q) >= 0 || (r[14] || []).some(function (b) { return b.indexOf(q) >= 0; }));
   });
 }
 function renderSkus() {
   var rows = sumRows(), MAX = 300, h;
   if (SUMF === 'unmapped') {
-    h = '<tr><th>บาร์โค้ด</th><th class="n">นับได้</th><th>Location</th></tr>' + rows.map(function (u) { return '<tr><td class="mono">' + esc(u[0]) + '</td><td class="n">' + nf(u[1]) + '</td><td>' + esc(u[2]) + '</td></tr>'; }).join('');
+    h = '<tr><th>บาร์โค้ด</th><th class="n">นับได้ (ชิ้น)</th><th>Location=ชิ้น</th></tr>' + rows.map(function (u) { return '<tr><td class="mono">' + esc(u[0]) + '</td><td class="n">' + nf(u[1]) + '</td><td>' + esc(u[2]) + '</td></tr>'; }).join('');
     $('skuInfo').textContent = rows.length + ' บาร์โค้ด — ยิงแล้วแต่ไม่มีใน Master เทียบยอดบัญชีไม่ได้ ต้องหารหัสสินค้าก่อน';
   } else {
-    h = '<tr><th>Material</th><th>ชื่อ</th><th class="n">บัญชี</th><th class="n">นับ (เครื่อง)</th><th class="n">ปรับ</th><th class="n">สุดท้าย</th><th class="n">ต่าง</th><th class="n">ต่าง (บาท)</th><th class="n">Location</th><th>IT / QI / BL</th></tr>' +
+    // v2.4.1: เรียงคอลัมน์แบบไฟล์ระบบเดิม · บาร์โค้ด · Location=ชิ้น
+    h = '<tr><th>Material</th><th>บาร์โค้ด</th><th>ชื่อ</th><th class="n">นับ (เครื่อง)</th><th class="n">ปรับ</th><th class="n">สุดท้าย</th><th class="n">บัญชี</th><th class="n">ต่าง</th><th class="n">ต่าง (บาท)</th><th>Location=ชิ้น</th><th>IT / QI / BL</th></tr>' +
       rows.slice(0, MAX).map(function (r, i) {
         var sp = [r[9] ? 'IT ' + nf(r[9]) : '', r[10] ? 'QI ' + nf(r[10]) : '', r[11] ? 'BL ' + nf(r[11]) : ''].filter(String).join(' · ');
-        return '<tr class="click" onclick="skuDetail(\'' + esc(r[0]).replace(/'/g, '') + '\')"><td class="mono">' + esc(r[0]) + '</td><td>' + esc(r[1]) + '</td><td class="n">' + nf(r[2]) + '</td><td class="n">' + nf(r[3]) + '</td><td class="n">' + (r[4] ? sgn(r[4]) : '') +
-          '</td><td class="n">' + nf(r[5]) + '</td><td class="n ' + cls(r[6]) + '"><b>' + sgn(r[6]) + '</b></td><td class="n ' + cls(r[8]) + '">' + sgn(r[8], 2) + '</td><td class="n">' + r[12] + '</td><td>' + (sp ? '<span class="pill info">' + esc(sp) + '</span>' : '') + '</td></tr>';
+        var bc = r[14] || [];
+        return '<tr class="click" onclick="skuDetail(\'' + esc(r[0]).replace(/'/g, '') + '\')"><td class="mono">' + esc(r[0]) + '</td><td class="mono">' + esc(bc[0] || '') + (bc.length > 1 ? ' <span class="muted" title="' + esc(bc.join(' ')) + '">+' + (bc.length - 1) + '</span>' : '') +
+          '</td><td>' + esc(r[1]) + '</td><td class="n">' + nf(r[3]) + '</td><td class="n">' + (r[4] ? sgn(r[4]) : '') +
+          '</td><td class="n">' + nf(r[5]) + '</td><td class="n">' + nf(r[2]) + '</td><td class="n ' + cls(r[6]) + '"><b>' + sgn(r[6]) + '</b></td><td class="n ' + cls(r[8]) + '">' + sgn(r[8], 2) + '</td><td class="locs">' + esc(locStr(r[13])) + '</td><td>' + (sp ? '<span class="pill info">' + esc(sp) + '</span>' : '') + '</td></tr>';
       }).join('');
     $('skuInfo').textContent = rows.length + ' SKU' + (rows.length > MAX ? ' — แสดง ' + MAX + ' แรก (เรียงตามมูลค่าผลต่าง) ค้นหาเพื่อดูตัวอื่น' : ' · เรียงตามมูลค่าผลต่าง');
   }
@@ -656,16 +732,84 @@ function skuDetail(key) {
 function exportSummary() {
   if (!SUM) { toast('กด "รีเฟรช" ก่อน', true); return; }
   var T = SUM.totals, wb = XLSX.utils.book_new();
-  var ov = [['รอบ', SUM.project], ['คำนวณเมื่อ', SUM.at], ['ยอดบัญชีจาก', SUM.bookSource === 'POS' ? 'POS' : 'SAP UR'], ['ไฟล์ SAP', SUM.sap.name + ' ' + (SUM.sap.at || '')],
-    ['นับครบ', SUM.complete ? 'ใช่' : 'ยังไม่ครบ (' + SUM.locs.closed + '/' + SUM.locs.total + ')'], ['ยอดบัญชี', T.book], ['นับจากเครื่อง', T.dev], ['ปรับด้วยมือ', T.adj], ['ยอดสุดท้าย', T.final],
-    ['ผลต่าง (ชิ้น)', T.diff], ['ผลต่าง (%)', T.pct], ['ผลต่าง (บาท)', T.diffValue], ['เกิน (บาท)', T.plusValue], ['ขาด (บาท)', T.minusValue], ['SKU เกิน', T.over], ['SKU ขาด', T.short], ['ไม่มีใน Master', T.unmapped]];
+  var ov = [['รอบ', SUM.project], ['คำนวณเมื่อ', SUM.at], ['ผลบันทึกล่าสุด', SUM.lastSave ? 'ครั้งที่ ' + SUM.lastSave.run + ' (' + SUM.lastSave.at + ')' : '-'],
+    ['ยอดบัญชีจาก', SUM.bookSource === 'POS' ? 'POS' : 'SAP UR'], ['ไฟล์ SAP', SUM.sap.name + ' ' + (SUM.sap.at || '')],
+    ['นับครบ', SUM.complete ? 'ใช่' : 'ยังไม่ครบ (' + SUM.locs.closed + '/' + SUM.locs.total + ')'], ['ยอดบัญชี (ชิ้น)', T.book], ['นับจากเครื่อง (ชิ้น)', T.dev], ['ปรับด้วยมือ (ชิ้น)', T.adj], ['ยอดสุดท้าย (ชิ้น)', T.final],
+    ['ผลต่าง (ชิ้น)', T.diff], ['ผลต่าง (%)', T.pct], ['ผลต่าง (บาท)', T.diffValue], ['เกิน (บาท)', T.plusValue], ['ขาด (บาท)', T.minusValue], ['SKU เกิน', T.over], ['SKU ขาด', T.short],
+    ['ไม่มีใน Master (บาร์โค้ด)', T.unmapped], ['ไม่มีใน Master (ชิ้น)', T.unmappedQty]];
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(ov), 'Summary');
-  var head = ['Material', 'Name', 'Book_Qty', 'Device_Qty', 'Adjust_Qty', 'Final_Qty', 'Diff_Qty', 'Unit_Cost', 'Diff_Value', 'SAP_IT', 'SAP_QI', 'SAP_BL', 'Locations'];
-  var ws = XLSX.utils.aoa_to_sheet([head].concat(SUM.skus));
-  ws['!cols'] = head.map(function (h, i) { return { wch: i < 2 ? 22 : 11 }; });
+  // v2.4.1: เรียงคอลัมน์แบบไฟล์ระบบเดิม + บาร์โค้ด + Location=ชิ้น
+  var head = ['Material', 'Barcode', 'Name', 'Device_Qty', 'Adjust_Qty', 'Final_Qty', 'Book_Qty', 'Diff_Qty', 'Unit_Cost', 'Diff_Value', 'SAP_IT', 'SAP_QI', 'SAP_BL', 'Location_Count', 'All_Location'];
+  var rows = SUM.skus.map(function (r) { return [r[0], (r[14] || []).join(' '), r[1], r[3], r[4], r[5], r[2], r[6], r[7], r[8], r[9], r[10], r[11], r[12], locStr(r[13])]; });
+  var ws = XLSX.utils.aoa_to_sheet([head].concat(rows));
+  ws['!cols'] = head.map(function (h, i) { return { wch: i === 2 ? 30 : i === 14 ? 50 : i < 2 ? 18 : 10 }; });
+  for (var i = 1; i <= rows.length; i++) ['A', 'B'].forEach(function (c) { var cell = ws[c + (i + 1)]; if (cell) { cell.t = 's'; cell.z = '@'; } });
   XLSX.utils.book_append_sheet(wb, ws, 'SKU');
-  if (SUM.unmapped.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Barcode', 'Qty', 'Locations']].concat(SUM.unmapped)), 'Not_in_Master');
+  if (SUM.unmapped.length) {
+    var un = [['Barcode', 'Qty', 'All_Location']].concat(SUM.unmapped.map(function (u) { return [u[0], u[1], u[2]]; })).concat([['รวม ' + SUM.unmapped.length + ' บาร์โค้ด', T.unmappedQty, '']]);
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(un), 'Not_in_Master');
+  }
   XLSX.writeFile(wb, SUM.project + '_count_summary_' + SUM.at.replace(/[: ]/g, '').slice(0, 12) + '.xlsx');
+}
+
+// ---------- ใบเดินตรวจ (v2.4.1) ----------
+function walkOpen() {
+  if (!SUM) { toast('กด "รีเฟรช" ก่อน', true); return; }
+  $('walkDlg').classList.add('on');
+}
+function radio(name) { var x = document.querySelector('input[name=' + name + ']:checked'); return x ? x.value : ''; }
+function walkBuild() {
+  var by = radio('wkSort'), f = radio('wkF'), min = Number(String($('wkMin').value).replace(/,/g, '')) || 0, withUn = $('wkUn').checked;
+  var fl = { diff: 'ที่ต่างทั้งหมด', short: 'ขาด', over: 'เกิน', all: 'ทั้งหมด' }[f];
+  var rows = SUM.skus.filter(function (r) {
+    var ok = f === 'all' || (f === 'diff' && r[6] !== 0) || (f === 'short' && r[6] < 0) || (f === 'over' && r[6] > 0);
+    return ok && (!min || Math.abs(r[8]) >= min);
+  });
+  var un = withUn ? SUM.unmapped : [];
+  var L = SUM.lastSave, same = L && L.at === SUM.at;
+  var head = '<h2>ใบเดินตรวจ — รอบ ' + esc(SUM.project) + '</h2><div>เรียงตาม ' + (by === 'sku' ? 'SKU (มูลค่าผลต่างมากก่อน)' : 'Location') + ' · เลือก: ' + fl + (min ? ' · ต่างตั้งแต่ ' + nf(min, 0) + ' บาท' : '') +
+    ' · ' + nf(rows.length) + ' SKU' + (un.length ? ' + ไม่มีใน Master ' + un.length + ' บาร์โค้ด' : '') + '</div>' +
+    '<div>ตัวเลข ณ ' + esc(SUM.at) + ' · ยอดบัญชี ' + (SUM.bookSource === 'POS' ? 'POS' : 'SAP UR ' + esc(SUM.sap.name || '')) + ' · ' +
+    (same ? '<b>ผลบันทึกครั้งที่ ' + L.run + '</b> (ชีต Variance Run = ' + L.run + ')' : 'ยังไม่ได้บันทึกตัวเลขชุดนี้' + (L ? ' (บันทึกล่าสุด ครั้งที่ ' + L.run + ' เมื่อ ' + esc(L.at) + ')' : '')) +
+    ' · พิมพ์เมื่อ ' + esc(new Date().toLocaleString('th-TH')) + '</div>' + (SUM.complete ? '' : '<div><b>ยังนับไม่ครบ</b> (ปิดแล้ว ' + SUM.locs.closed + '/' + SUM.locs.total + ' Location)</div>');
+  var blank = '<td class="w"></td><td class="nt"></td>', h = '';
+  if (by === 'sku') {
+    h += '<table style="margin-top:8px"><tr><th>#</th><th>Material</th><th>บาร์โค้ด</th><th>ชื่อ</th><th class="n">บัญชี</th><th class="n">นับ</th><th class="n">ต่าง</th><th>Location=ชิ้น</th><th>นับทวนได้</th><th>หมายเหตุ / เหตุผล</th></tr>' +
+      rows.map(function (r, i) {
+        return '<tr><td>' + (i + 1) + '</td><td class="mono">' + esc(r[0]) + '</td><td class="mono">' + esc((r[14] || []).join(' ')) + '</td><td>' + esc(r[1]) + '</td><td class="n">' + nf(r[2]) + '</td><td class="n">' + nf(r[5]) +
+          '</td><td class="n"><b>' + sgn(r[6]) + '</b></td><td>' + (r[13] && r[13].length ? esc(locStr(r[13])) : '<i>ไม่พบที่ไหน</i>') + '</td>' + blank + '</tr>';
+      }).join('') + '</table>';
+  } else {
+    var g = {}, zero = [];
+    rows.forEach(function (r) {
+      if (!r[13] || !r[13].length) { zero.push(r); return; }
+      r[13].forEach(function (x) { (g[x[0]] || (g[x[0]] = [])).push({ r: r, q: x[1] }); });
+    });
+    un.forEach(function (u) { (u[3] || []).forEach(function (x) { (g[x[0]] || (g[x[0]] = [])).push({ u: u, q: x[1] }); }); });
+    Object.keys(g).sort(natCmp).forEach(function (l) {
+      h += '<div class="grp"><h3>' + esc(l) + ' <span class="muted">(' + g[l].length + ' รายการ)</span></h3><table><tr><th>Material</th><th>บาร์โค้ด</th><th>ชื่อ</th><th class="n">นับที่นี่</th><th class="n">บัญชีทั้งร้าน</th><th class="n">นับทั้งร้าน</th><th class="n">ต่าง</th><th>นับทวนได้</th><th>หมายเหตุ / เหตุผล</th></tr>' +
+        g[l].map(function (x) {
+          if (x.u) return '<tr><td><i>ไม่มีใน Master</i></td><td class="mono">' + esc(x.u[0]) + '</td><td></td><td class="n"><b>' + nf(x.q) + '</b></td><td></td><td class="n">' + nf(x.u[1]) + '</td><td></td>' + blank + '</tr>';
+          var r = x.r;
+          return '<tr><td class="mono">' + esc(r[0]) + '</td><td class="mono">' + esc((r[14] || [])[0] || '') + '</td><td>' + esc(r[1]) + '</td><td class="n"><b>' + nf(x.q) + '</b></td><td class="n">' + nf(r[2]) + '</td><td class="n">' + nf(r[5]) + '</td><td class="n">' + sgn(r[6]) + '</td>' + blank + '</tr>';
+        }).join('') + '</table></div>';
+    });
+    if (zero.length) h += '<div class="grp"><h3>SKU ที่นับได้ 0 — ไม่พบที่ Location ไหน (' + zero.length + ')</h3><table><tr><th>Material</th><th>บาร์โค้ด</th><th>ชื่อ</th><th class="n">บัญชี</th><th>พบที่</th><th>นับทวนได้</th><th>หมายเหตุ / เหตุผล</th></tr>' +
+      zero.map(function (r) { return '<tr><td class="mono">' + esc(r[0]) + '</td><td class="mono">' + esc((r[14] || []).join(' ')) + '</td><td>' + esc(r[1]) + '</td><td class="n">' + nf(r[2]) + '</td><td class="nt"></td>' + blank + '</tr>'; }).join('') + '</table></div>';
+  }
+  if (by === 'sku' && un.length) h += '<div class="grp"><h3>ยิงแล้วแต่ไม่มีใน Master (' + un.length + ' บาร์โค้ด)</h3><table><tr><th>บาร์โค้ด</th><th class="n">นับ</th><th>Location=ชิ้น</th><th>รหัสสินค้าที่ถูกต้อง</th><th>หมายเหตุ</th></tr>' +
+    un.map(function (u) { return '<tr><td class="mono">' + esc(u[0]) + '</td><td class="n">' + nf(u[1]) + '</td><td>' + esc(u[2]) + '</td>' + blank + '</tr>'; }).join('') + '</table></div>';
+  h += '<div class="sign"><div>ผู้ตรวจสอบ ____________________</div><div>พนักงานร้าน ____________________</div><div>วันที่ ____________</div></div>';
+  $('walkDoc').innerHTML = head + h;
+  $('walkInfo').textContent = rows.length + ' SKU · ตรวจหน้าตาแล้วกด "พิมพ์" (A4)';
+  $('walkDlg').classList.remove('on');
+  $('walk').classList.add('on');
+}
+/** เรียง Location แบบคน (A2 ก่อน A10) — เหมือน natCmp_ ฝั่งเซิร์ฟเวอร์ */
+function natCmp(a, b) {
+  var x = String(a).toUpperCase().match(/^(.*?)(\d*)$/), y = String(b).toUpperCase().match(/^(.*?)(\d*)$/);
+  if (x[1] !== y[1]) return x[1] < y[1] ? -1 : 1;
+  return (x[2] === '' ? -1 : Number(x[2])) - (y[2] === '' ? -1 : Number(y[2]));
 }
 
 // ---------- เครื่อง TC21 ----------
@@ -821,6 +965,7 @@ function ask(opt, done) {
   ASK = { opt: opt, done: done };
   $('askTitle').textContent = opt.title; $('askBody').innerHTML = opt.body || '';
   $('askOk').textContent = opt.ok || 'ตกลง';
+  $('askCancel').style.display = opt.noCancel ? 'none' : '';   // กล่องแจ้งผล (v2.4.1): ปุ่มเดียว
   $('askWhyBox').style.display = opt.why ? 'block' : 'none';
   $('askWhy').value = ''; $('askWhy').placeholder = opt.why || '';
   askCheck();

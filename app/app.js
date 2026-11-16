@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2.4.0';
+  var APP_VERSION = '2.4.1';
   var QTY_CONFIRM = 150;      // จำนวนที่ป้อนเองเกินนี้ต้องยืนยันอีกครั้ง
   var QTY_MAX_DIGITS = 5;     // ยาวกว่านี้ = น่าจะยิงบาร์โค้ดเข้าช่องจำนวน
   var INFO_EVERY = 15000;     // ถามสถานะผู้ช่วย/ผู้ดูแลระหว่างนับร่วมกัน
@@ -630,6 +630,9 @@
   // ---------- หน้าจอ ----------
   function show(v) {
     if (S.revoked && v !== 'setup' && v !== 'revoked') v = 'revoked';
+    // v2.4.1: เข้าหน้าตั้งค่าใหม่ทุกครั้ง ล้างข้อความเก่า (เดิมขึ้น "จับคู่สำเร็จ" ค้างหลังยกเลิกการจับคู่)
+    if (v === 'setup' && S.view !== 'setup') setupMsg('', true);
+    if (v === 'sku' && S.view !== 'sku') S.skuBack = S.view;
     S.view = v;
     document.querySelectorAll('.view').forEach(function (el) { el.classList.toggle('on', el.id === 'v-' + v); });
     window.scrollTo(0, 0);
@@ -640,6 +643,7 @@
     renderBanner();
     if (v === 'locs') { S.locsFilter = null; renderLocs(); loadMyLocs(); }   // เข้าหน้านี้ทุกครั้งเริ่มที่ "ต้องทำต่อ" (ถ้ามี)
     if (v === 'manual') { $('manQ').value = ''; renderManual(); setTimeout(function () { $('manQ').focus(); }, 50); }
+    if (v === 'sku') { $('skuQ').value = ''; $('skuQ').blur(); }   // ไม่โฟกัสช่อง: คีย์บอร์ดไม่เด้งบังจอ ยิงได้เลย
     renderTop();
   }
 
@@ -787,6 +791,10 @@
     if (S.revoked) { SOUND.bad(); toast('เครื่องนี้ถูกยกเลิก ยิงไม่ได้ — กด "จับคู่ใหม่ (เก็บข้อมูลเดิม)"', true); return; }
     if (/^EMP:/.test(up)) return setStaff(up.slice(4));
     if (/^DEV:/.test(up)) { toast('นี่คือสติกเกอร์เครื่อง ' + up.slice(4)); return; }
+    if (S.view === 'sku') {   // หน้าค้นหา SKU: การยิงคือการค้นหา ไม่บันทึกยอด
+      if (/^LOC:/.test(up)) { SOUND.warn(); toast('อยู่หน้าค้นหา SKU — กด "กลับ" ก่อนยิงป้าย Location', true); return; }
+      return skuLookup(code);
+    }
     if (S.view === 'ready' || !isReady()) {
       SOUND.bad();
       toast(isReady() ? 'กด "เริ่มนับ" ก่อน' : 'ตรวจความพร้อมยังไม่ผ่าน — แก้ข้อ ✗ ก่อน' + (S.dwOk ? '' : ' (ยิงบัตรผู้ตรวจสอบ EMP:)'), true);
@@ -1142,7 +1150,7 @@
     var ok = isReady(), paired = !!S.cfg.token && !S.revoked;
     document.querySelectorAll('#menu button[data-m=locs], #menu button[data-m=typeloc]').forEach(function (b) { b.classList.toggle('hidden', !ok || !paired); });
     // ยังไม่จับคู่: เหลือแค่ สถานะ / Export
-    document.querySelectorAll('#menu button[data-m=ready]').forEach(function (b) { b.classList.toggle('hidden', !paired); });
+    document.querySelectorAll('#menu button[data-m=ready], #menu button[data-m=sku]').forEach(function (b) { b.classList.toggle('hidden', !paired); });
     $('menu').classList.toggle('hidden');
   };
   document.addEventListener('click', function () { $('menu').classList.add('hidden'); });
@@ -1153,7 +1161,54 @@
     else if (b.dataset.m === 'typeloc') typeLocation();
     else if (b.dataset.m === 'locs') show('locs');
     else if (b.dataset.m === 'ready') { show('ready'); runChecks(false); }
+    else if (b.dataset.m === 'sku') show('sku');
   });
+
+  // ---------- ค้นหา SKU (v2.4.1) ----------
+  // ยิงบาร์โค้ด / พิมพ์รหัส → ยอดบัญชี · นับ (ทุกเครื่องที่ส่งถึงเซิร์ฟเวอร์แล้ว) · ต่าง · Location=ชิ้น · ไม่บันทึกอะไร
+  var skuSeq = 0;
+  function skuLookup(q) {
+    q = String(q || '').trim();
+    if (!q) { toast('ยิงบาร์โค้ด หรือพิมพ์รหัสสินค้า', true); return; }
+    var my = ++skuSeq;
+    $('skuQ').value = ''; $('skuQ').blur();
+    $('skuRes').innerHTML = '<p class="muted">กำลังค้นหา ' + esc(q) + '…</p>';
+    return api('sku', { q: q }, 15000).then(function (r) {
+      if (my !== skuSeq) return;
+      SOUND.ok(); renderSkuRes(r);
+    }, function (e) {
+      if (my !== skuSeq) return;
+      SOUND.bad();
+      var off = e && (e.code === 'NETWORK' || e.code === 'TIMEOUT');
+      $('skuRes').innerHTML = '<div class="skunote">' + (off ? 'ค้นหาไม่ได้ — ต้องต่อ Wi-Fi (' + esc(e.message) + ')' : esc((e && e.message) || 'ค้นหาไม่สำเร็จ')) + '</div>';
+    });
+  }
+  function renderSkuRes(r) {
+    var sg = function (v) { return v > 0 ? '+' + fmt(v) : fmt(v); };
+    var dc = r.diff === null ? '' : r.diff < 0 ? 'neg' : r.diff > 0 ? 'pos' : 'zero';
+    var p = pending().filter(function (e) { return e.material === r.material || e.barcode === r.q || (r.barcodes || []).indexOf(e.barcode) >= 0; }).length;
+    var sp = [r.it ? 'IT ' + fmt(r.it) : '', r.qi ? 'QI ' + fmt(r.qi) : '', r.bl ? 'BL ' + fmt(r.bl) : ''].filter(String).join(' · ');
+    var h = '<div class="skuhead"><div class="n">' + esc(r.mapped ? r.name || r.material : 'ไม่มีใน Master') + '</div>' +
+      '<div class="c">' + esc(r.mapped ? r.material : '') + (r.barcodes && r.barcodes.length ? ' · ' + esc(r.barcodes.join(' ')) : '') + '</div></div>' +
+      '<div class="skugrid"><div><div class="lb">บัญชี</div><div class="v">' + (r.book === null ? '–' : fmt(r.book)) + '</div></div>' +
+      '<div><div class="lb">นับได้</div><div class="v">' + fmt(r.dev) + '</div></div>' +
+      '<div><div class="lb">ต่าง</div><div class="v ' + dc + '">' + (r.diff === null ? '–' : sg(r.diff)) + '</div></div></div>';
+    if (!r.mapped) h += '<div class="skunote">บาร์โค้ดนี้ไม่มีใน Master — ไม่มียอดบัญชีให้เทียบ แจ้งหัวหน้าทีมหารหัสสินค้า</div>';
+    if (sp) h += '<div class="skunote">SAP มี ' + esc(sp) + ' (ไม่รวมในยอดเทียบ) — สอบถามเป็นกรณี</div>';
+    if (p) h += '<div class="skunote">เครื่องนี้มี ' + p + ' รายการของ SKU นี้ที่ยังค้างส่ง — ยังไม่รวมในยอดนับ</div>';
+    h += r.locs.length ? '<ul class="items skul">' + r.locs.map(function (l) {
+      return '<li><div><div class="n">' + esc(l[0]) + '</div><div class="c">' + esc(l[2] || '') + '</div></div><div class="q">' + fmt(l[1]) + '</div></li>';
+    }).join('') + '</ul>' : '<p class="muted">ยังไม่พบที่ Location ไหน (นับได้ 0)</p>';
+    h += '<p class="muted">ยอดจากเซิร์ฟเวอร์เมื่อ ' + esc(String(r.at).slice(11, 19)) + ' · รวมทุกเครื่องที่ส่งถึงแล้ว</p>';
+    $('skuRes').innerHTML = h;
+  }
+  $('btnSkuGo').onclick = function () { skuLookup($('skuQ').value); };
+  $('skuQ').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); skuLookup(this.value); } });
+  $('btnSkuBack').onclick = function () {
+    var b = S.skuBack && S.skuBack !== 'sku' && S.skuBack !== 'setup' ? S.skuBack : 'ready';
+    if ((b === 'count' || b === 'loc' || b === 'locs' || b === 'manual') && !isReady()) b = 'ready';
+    show(b);
+  };
   function knownLocs() {
     var k = {};
     S.entries.forEach(function (e) { if (e.location) k[e.location] = true; });
@@ -1643,6 +1698,7 @@
     S.roles = {}; S.locChecks = {}; S.info = {}; S.myLocs = {}; S.loc = null; S.staff = null;
     // v2.3.8: ล้างผลตรวจความพร้อมด้วย — เดิมข้อ DataWedge ผ่านจากค่าเก่า ทำให้จับคู่ใหม่แล้วเริ่มนับได้โดยยังไม่ยิงบัตร
     S.dwOk = false; S.readiness = null;
+    setupMsg('', true);   // v2.4.1: ไม่ให้ "จับคู่สำเร็จ" ของครั้งก่อนค้างบนหน้าตั้งค่า
     return Promise.all([DB.set('cfg', S.cfg), DB.set('readiness', null), saveState()]);
   }
 
@@ -1666,6 +1722,9 @@
 
   // ---------- ตั้งค่า / จับคู่ ----------
   function setupMsg(t, ok) { var m = $('setupMsg'); m.textContent = t; m.className = 'msg ' + (ok ? 'ok' : 'err'); }
+  // v2.4.1: ช่องรหัสจับคู่ — ปุ่ม → บนคีย์บอร์ดตัวเลข = กดจับคู่ · คีย์บอร์ดขึ้นแล้วเลื่อนปุ่มจับคู่ให้เห็น
+  $('setCode').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); this.blur(); $('btnPair').click(); } });
+  $('setCode').addEventListener('focus', function () { setTimeout(function () { $('btnPair').scrollIntoView({ block: 'center' }); }, 350); });
   $('setDevice').addEventListener('keydown', function (e) {
     if (e.key === 'Enter') { e.preventDefault(); this.value = this.value.trim().toUpperCase().replace(/^DEV:/, ''); $('setCode').focus(); }
   });

@@ -31,6 +31,7 @@
   <button data-m="status">สถานะ / Export</button>
   <button data-m="locs">Location ที่นับแล้ว</button>
   <button data-m="typeloc">พิมพ์ชื่อ Location</button>
+  <button data-m="sku">ค้นหา SKU</button>
   <button data-m="ready">ตรวจความพร้อมใหม่</button>
 </div>
 <div id="banner" class="hidden"></div>
@@ -42,7 +43,7 @@
   <label>รหัสเครื่อง (ยิงสติกเกอร์ DEV: ได้)</label>
   <input id="setDevice" class="inp" placeholder="TC21-01" autocomplete="off" autocapitalize="characters">
   <label>รหัสจับคู่ 6 หลัก</label>
-  <input id="setCode" class="inp" inputmode="numeric" maxlength="6" autocomplete="off">
+  <input id="setCode" class="inp" inputmode="numeric" maxlength="6" autocomplete="off" enterkeyhint="go">
   <details><summary>ที่อยู่เซิร์ฟเวอร์</summary>
     <input id="setApi" class="inp small" placeholder="https://script.google.com/macros/s/.../exec">
   </details>
@@ -142,6 +143,15 @@
     <button class="btn sec" id="btnLocsBack">กลับหน้านับ</button>
     <button class="btn sec" id="btnLocsType">พิมพ์ชื่อ Location</button>
   </div>
+</section>
+
+<!-- ค้นหา SKU (v2.4.1): ยอดบัญชี · นับ · ต่าง · นับได้ที่ Location ไหน (ใช้ตอนเดินตรวจทวน) -->
+<section id="v-sku" class="view">
+  <h2>ค้นหา SKU</h2>
+  <div class="skuq"><input id="skuQ" class="inp" placeholder="บาร์โค้ด / รหัสสินค้า" autocomplete="off" autocapitalize="characters" enterkeyhint="search">
+    <button class="btn" id="btnSkuGo">ค้นหา</button></div>
+  <div id="skuRes"><p class="muted">ยิงบาร์โค้ดสินค้าได้เลย ไม่ต้องแตะช่องค้นหา · ต้องต่อ Wi-Fi</p></div>
+  <button class="btn sec" id="btnSkuBack">กลับ</button>
 </section>
 
 <!-- ป้อนเอง -->

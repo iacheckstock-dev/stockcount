@@ -30,6 +30,7 @@ URL ลงท้าย `/exec` ตั้งไว้ใน `app/config.json` (`a
 | `sync` | ใช่ | ส่งรายการนับและเหตุการณ์ Location ทุก 2–3 วินาทีเมื่อมีของค้าง | Count_Log, Quarantine, Locations, Loc_Members, Loc_Checks, Devices |
 | `locInfo` | ใช่ | เปิด Location / ดูยอดรวม / ก่อนแก้ยอดหรือปิด | Loc_Members (ย้ายข้อมูลครั้งแรก) |
 | `myLocs` | ใช่ | หน้า Location ที่นับแล้ว / หลังจับคู่ใหม่ | — |
+| `sku` | ใช่ | ⋮ → ค้นหา SKU (v2.4.1) | — |
 | `check` | ใช่ | ส่งผลตรวจความพร้อม | Device_Checks, Devices |
 | `hello` | ใช่ | รายงานตัวทุก 1 นาที (v2.2.2) | CacheService เท่านั้น (ไม่เขียนชีต) |
 | `unpair` | ใช่ | ผู้ใช้กด "ยกเลิกการจับคู่เครื่องนี้" (v2.2.2) | Devices (ล้าง token), Admin_Log |
@@ -175,6 +176,13 @@ sequenceDiagram
 - (v2.3.7) `mineSc` ยอดของเครื่องนี้หลังล้าง Location ครั้งล่าสุด · `closedTime` / `closeTotal` เวลาและยอดตอนปิด (ยังไม่ปิด = `""` / `null`) · `helpers` / `helpersDone` จำนวนผู้ช่วย / ที่ส่งงานแล้ว · `at` เวลาเซิร์ฟเวอร์ (แอปเก็บไว้แสดง "ยอดจากเซิร์ฟเวอร์เมื่อ" ตอนออฟไลน์)
 - `locs` = Location ที่เครื่องนี้เคยร่วมในรอบนี้ (ใช้คืนบทบาทหลังจับคู่ใหม่)
 - `names` = ชื่อ Location ทั้งรอบ (ใช้เตือนเมื่อพิมพ์ชื่อที่ไม่เคยมี)
+
+## sku (v2.4.1)
+คำขอ: `{ q }` = บาร์โค้ด หรือรหัสสินค้า (ตัวเล็กได้)
+คำตอบ: `{ ok, q, key, mapped, material, name, barcodes: [..], book, dev, diff, it, qi, bl, locs: [[Location, ชิ้น, สถานะ]], at }`
+- `dev` = ยอดนับทุกเครื่องที่เซิร์ฟเวอร์มี (ดัชนี · ไม่ถือล็อก) · `locs` เรียงแบบคน ไม่รวม Location ที่ยอด SKU นี้เป็น 0
+- ไม่มีใน Master: `mapped = false`, `key = "BC:<บาร์โค้ด>"`, `book` / `diff` = `null` (ยังเห็น Location ที่ยิง)
+- ไม่ส่งต้นทุน / มูลค่า · `q` ว่าง → `BAD_REQUEST`
 
 ## check
 คำขอ: `{ staff, items: [{ title, result: "OK"|"WARN"|"FAIL", detail }] }` → คำตอบ `{ ok, pass }` (ไม่มี FAIL = ผ่าน)

@@ -16,7 +16,7 @@ window.google = { script: { run: (function mk(ok, bad) {
   return new Proxy({}, { get: function (t, k) {
     if (k === 'withSuccessHandler') return function (f) { return mk(f, bad); };
     if (k === 'withFailureHandler') return function (f) { return mk(ok, f); };
-    return function () { CALLS.push([k].concat([].slice.call(arguments))); var r = k === 'apiReconcile' ? window.RECON : k === 'apiSummary' || k === 'apiSummarySave' ? Object.assign({ run: 3 }, window.ST.SUMMARY) : k === 'apiSkuDetail' ? window.ST.SKU_DETAIL : k === 'apiDevicesState' || k.indexOf('apiLoc') === 0 || k === 'apiPairCode' ? window.ST : {};
+    return function () { CALLS.push([k].concat([].slice.call(arguments))); var r = k === 'apiReconcile' ? window.RECON : k === 'apiSummary' ? window.ST.SUMMARY : k === 'apiSummarySave' ? Object.assign({}, window.ST.SUMMARY, { run: 3, saved: 9, same: !!window.SAME, prevAt: '2026-11-16 10:58:15', lastSave: { run: 3, at: window.ST.SUMMARY.at } }) : k === 'apiSkuDetail' ? window.ST.SKU_DETAIL : k === 'apiDevicesState' || k.indexOf('apiLoc') === 0 || k === 'apiPairCode' ? window.ST : {};
       setTimeout(function () { ok && ok(r); }, 0); };
   } });
 })() } };
@@ -76,7 +76,9 @@ with sync_playwright() as p:
     check(pg.evaluate('CALLS')[0][0] == 'apiApprove', 'กดอนุมัติ → เรียก apiApprove')
     # กระทบยอดทั้งรอบ + คำเตือนบันทึก Admin_Log ไม่สำเร็จ (v2.3.8)
     pg.evaluate("""window.RECON = { at: '2026-11-12 16:30:00', ok: false, locs: 20, closed: 15, qty: 1234, lines: 900,
-      indexDiffs: ['T9 TC21-01 ดัชนี 38/38 ชีต 38/37'], closeDiffs: [{ loc: 'T9', close: 39, sheet: 38, flag: '' }, { loc: 'D6', close: 30, sheet: 32, flag: 'มีรายการหลังปิด' }], missing: [] };
+      indexDiffs: ['T9 TC21-01 ดัชนี 38/38 ชีต 38/37'], closeDiffs: [{ loc: 'T9', close: 39, sheet: 38, flag: '' }, { loc: 'D6', close: 30, sheet: 32, flag: 'มีรายการหลังปิด' }], missing: [],
+      audit: { lastRow: 4009, rows: 3495, blank: 513, blankRows: [2416, 2417], noTime: 3223, noScan: 3223, noRecv: 3223, noTimeRows: [100, 2214], dupIds: 0, dupRows: [],
+        devices: [{ dev: 'TC21-01', min: 1, max: 2374, count: 2374, missing: 0, missingList: [], dup: 0 }, { dev: 'TC21-02', min: 1, max: 1121, count: 1120, missing: 1, missingList: [700], dup: 0 }], seqOk: false, ok: false } };
       var orig = google.script.run; """)
     pg.evaluate("CALLS.length = 0; ST.logWarn = { n: 2, last: '2026-11-12 15:10:00', what: 'LOC_SUBMIT_FOR D6 TC21-02', why: 'บันทึก Admin_Log ไม่สำเร็จ' }; renderDevices(ST)")
     w = pg.inner_text('#logWarn')
@@ -101,15 +103,53 @@ with sync_playwright() as p:
     sd = pg.inner_text('#skuDlg')
     check(pg.is_visible('#skuDlg') and 'F1' in sd and 'TC21-01' in sd and 'รวม' in sd, 'แตะ SKU → เห็น Location / เครื่อง / ผู้นับ: ' + sd.replace('\n', ' ')[:100])
     pg.click('#skuDlg .btn.sec'); pg.wait_for_timeout(50)
+    # v2.4.1: ตาราง SKU มีบาร์โค้ด + Location=ชิ้น
+    pg.fill('#sumQ', ''); pg.wait_for_timeout(50)
+    hdr = pg.inner_text('#skuTbl tr >> nth=0')
+    check(hdr.split('\t')[:4] == ['Material', 'บาร์โค้ด', 'ชื่อ', 'นับ (เครื่อง)'] and 'Location=ชิ้น' in hdr, 'หัวตาราง SKU เรียงแบบไฟล์เดิม: ' + hdr.replace('\t', ' | '))
+    pg.fill('#sumQ', '8858684826179'); pg.wait_for_timeout(50)
+    r1 = pg.inner_text('#skuTbl tr.click >> nth=0')
+    check('A112101UT0450XK' in r1 and '8858684826179' in r1 and re.search(r'F1=\d', r1) and 'F2=1, F10=' in r1, 'ค้นด้วยบาร์โค้ดได้ · Location เรียง F2 ก่อน F10: ' + r1.replace('\t', ' | ')[:160])
+    pg.fill('#sumQ', ''); pg.wait_for_timeout(50)
     pg.click('text=สรุปผลและบันทึก'); pg.wait_for_timeout(50)
-    check(pg.is_visible('#askDlg'), 'สรุปผลและบันทึก → กล่องยืนยัน')
-    pg.click('#askOk'); pg.wait_for_timeout(100)
+    check(pg.is_visible('#askDlg') and pg.is_visible('#askCancel'), 'สรุปผลและบันทึก → กล่องยืนยัน (มีปุ่มยกเลิก)')
+    pg.click('#askOk'); pg.wait_for_timeout(150)
     check(any(c[0] == 'apiSummarySave' for c in pg.evaluate('CALLS')), 'ยืนยัน → apiSummarySave')
+    box = pg.inner_text('#askDlg')
+    check(pg.is_visible('#askDlg') and 'บันทึกผลครั้งที่ 3 แล้ว' in box and 'เพิ่ม 9 แถว' in box and not pg.is_visible('#askCancel') and 'ตัวเลขเหมือน' not in box,
+          'หลังบันทึก → กล่องผลกลางจอ ปุ่มเดียว (ไม่ใช่ toast): ' + box.replace('\n', ' ')[:120])
+    check(not pg.is_visible('#toast'), 'ไม่มี toast ล่างจอ')
+    pg.click('#askOk'); pg.wait_for_timeout(50)
+    pg.evaluate('window.SAME = true'); pg.click('text=สรุปผลและบันทึก'); pg.wait_for_timeout(50); pg.click('#askOk'); pg.wait_for_timeout(150)
+    box = pg.inner_text('#askDlg')
+    check('ตัวเลขเหมือนครั้งที่ 2' in box and '10:58:15' in box, 'บันทึกโดยผลไม่เปลี่ยน → เตือนในกล่อง: ' + box.replace('\n', ' ')[-120:])
+    pg.click('#askOk'); pg.wait_for_timeout(50)
     pg.screenshot(path='/tmp/admin-summary.png', full_page=True)
+    # ใบเดินตรวจ
+    pg.click('text=พิมพ์ใบเดินตรวจ'); pg.wait_for_timeout(50)
+    check(pg.is_visible('#walkDlg'), 'พิมพ์ใบเดินตรวจ → กล่องเลือกแบบ')
+    pg.click('#walkDlg >> text=ดูตัวอย่าง'); pg.wait_for_timeout(100)
+    wd = pg.inner_text('#walkDoc')
+    check(pg.is_visible('#walk') and 'ใบเดินตรวจ' in wd and 'นับทวนได้' in wd and 'Location=ชิ้น' in wd and 'ผลบันทึกครั้งที่ 3' in wd and 'ไม่มีใน Master' in wd and 'ผู้ตรวจสอบ' in wd,
+          'แบบ SKU: มีช่องนับทวน · Location=ชิ้น · อ้างอิงครั้งที่บันทึก · บาร์โค้ดไม่มีใน Master · ช่องลงชื่อ')
+    check('บาท' not in wd.replace('ต่างตั้งแต่', ''), 'ใบพิมพ์ไม่มีมูลค่า (บาท)')
+    pg.pdf(path='/tmp/walk-sku.pdf', format='A4')
+    pg.click('#walk >> text=ปิด'); pg.click('text=พิมพ์ใบเดินตรวจ'); pg.check('input[name=wkSort][value=loc]'); pg.fill('#wkMin', '100')
+    pg.click('#walkDlg >> text=ดูตัวอย่าง'); pg.wait_for_timeout(100)
+    wd = pg.inner_text('#walkDoc'); heads = pg.eval_on_selector_all('#walkDoc .grp h3', 'e => e.map(x => x.textContent.split(" ")[0])')
+    fs = [h for h in heads if h.startswith('F')]
+    check('เรียงตาม Location' in wd and 'ต่างตั้งแต่ 100 บาท' in wd and 'นับที่นี่' in wd and fs == sorted(fs, key=lambda x: int(re.sub(r'\D', '', x) or 0)), 'แบบ Location: จัดกลุ่มทีละจุด เรียงแบบคน: ' + ' '.join(heads[:12]))
+    pg.emulate_media(media='print')
+    check(pg.is_visible('#walkDoc') and not pg.is_visible('#nav') and not pg.is_visible('#walk .bar'), 'ตอนพิมพ์: เห็นเฉพาะใบเดินตรวจ')
+    pg.pdf(path='/tmp/walk-loc.pdf', format='A4')
+    pg.emulate_media(media='screen'); pg.click('#walk >> text=ปิด')
     check(not dialogs, 'ไม่มี popup ของเบราว์เซอร์เลย: ' + json.dumps(dialogs, ensure_ascii=False))
     pg.evaluate("CALLS.length = 0; reconcile()"); pg.wait_for_timeout(100)
     rc = pg.inner_text('#recon')
     check('พบจุดต่าง' in rc and 'T9 ปิด 39' in rc and 'มีธงต้องตรวจซ้ำอยู่แล้ว' in rc, 'ผลกระทบยอดแสดงจุดต่าง แยกที่มีธงแล้ว: ' + rc.replace('\n', ' ')[:120])
+    check('แถวว่าง / ไม่มี Log_ID: 513 แถว' in rc and 'เช่น แถว 2416, 2417' in rc and 'เวลาหาย (Scan_Time / Received_Time): 3,223 รายการ' in rc and 'TC21-01 Seq 1–2374 ครบ' in rc and 'TC21-02 Seq 1–1121 ขาด 1 (700)' in rc,
+          'ผลกระทบยอดแสดงโครงชีต Count_Log: ' + rc[rc.find('โครงชีต'):].replace('\n', ' ')[:200])
+    pg.screenshot(path='/tmp/admin-recon.png', full_page=False)
     pg.evaluate("renderDevices(window.ST)")
     pg.screenshot(path='/tmp/admin-ui.png', full_page=True)
     b.close()

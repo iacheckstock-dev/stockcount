@@ -47,6 +47,7 @@ function doPost__(e, t0) {
       case 'locStatus': out = apiLocStatus_(auth_(req), req); break;
       case 'locInfo': out = apiLocInfo_(auth_(req), req); break;
       case 'myLocs': out = apiMyLocs_(auth_(req)); break;
+      case 'sku': out = apiSku_(auth_(req), req); break;
       case 'check': out = apiCheck_(auth_(req), req); break;
       case 'hello': out = apiHello_(auth_(req), req); break;
       case 'unpair': out = apiUnpair_(auth_(req), req); break;
@@ -1457,6 +1458,36 @@ function adminTransfer_(loc, toDevice, reason) {
   });
 }
 
+// ---------- ค้นหา SKU จากเครื่อง (v2.4.1) ----------
+
+/**
+ * ยิงบาร์โค้ด / พิมพ์รหัสสินค้า → ยอดบัญชี · ยอดนับ (ทุกเครื่อง) · ต่าง · นับได้ที่ Location ไหนกี่ชิ้น
+ * ใช้ตอนเดินตรวจทวนกับพนักงานหน้าร้าน ไม่ต้องกลับมาที่เครื่อง Center · อ่านอย่างเดียว ไม่ถือล็อก
+ * ไม่ส่งต้นทุน / มูลค่าไปที่เครื่อง (เหมือนเดิม)
+ */
+function apiSku_(a, req) {
+  var project = readConfig_().PROJECT_ID;
+  var q = String(req.q || '').trim().replace(/^BC:/i, '');
+  if (!q) throw apiError_('BAD_REQUEST', 'ยิงบาร์โค้ดหรือพิมพ์รหัสสินค้า');
+  var book = bookByMaterial_(), key = '', t = table_('Barcode_Map'), bi = t.idx.Barcode, mi = t.idx.Material;
+  for (var i = 0; i < t.rows.length && !key; i++) if (t.rows[i][bi] === q) key = t.rows[i][mi];
+  if (!key && book[q]) key = q;
+  if (!key && book[q.toUpperCase()]) key = q.toUpperCase();
+  if (!key) key = 'BC:' + q;   // ไม่มีใน Master: ดูได้ว่ายิงไปที่ไหนบ้าง แต่ไม่มียอดบัญชี
+  var b = book[key] || null, X = logIdx_(project), all = X.loc(X.meta.locs || []), lt = table_('Locations'), status = {}, dev = 0, locs = [];
+  lt.rows.forEach(function (r) { var L = rowObj_(lt, r); status[L.Location] = String(L.Status || ''); });
+  Object.keys(all).forEach(function (l) {
+    var it = all[l].items[key];
+    if (!it || it.qty === 0) return;
+    dev = r3_(dev + it.qty);
+    locs.push([l, r3_(it.qty), status[l] || '']);
+  });
+  locs.sort(function (x, y) { return natCmp_(x[0], y[0]); });
+  return { ok: true, q: q, key: key, mapped: !!b, material: b ? key : '', name: b ? b.name : '', barcodes: b ? b.bcs : [q],
+    book: b ? b.book : null, dev: dev, diff: b ? r3_(dev - b.book) : null, it: b ? b.it : 0, qi: b ? b.qi : 0, bl: b ? b.bl : 0,
+    locs: locs, at: now_() };
+}
+
 // ---------- ผลตรวจความพร้อมเครื่อง ----------
 
 function apiCheck_(a, req) {
@@ -1469,60 +1500,7 @@ function apiCheck_(a, req) {
   return { ok: true, pass: pass };
 }
 
-// ---------- ทดสอบแรงงาน (ขั้น C) — เรียกจากหน้า Apps Script เท่านั้น ไม่มีปุ่มในหน้า Admin ----------
-//
-// loadTestSeed(): เติมแถวปลอมลง Count_Log ให้ใกล้ข้อมูลเต็มรอบ แล้ววัดเวลาจาก TC21 จริง (หน้าสถานะ)
-//   เครื่อง LOADTEST-1..4 · Location ZZ1..ZZ300 · Source = LOADTEST · ใช้บาร์โค้ดจริงจาก Device_Master
-//   ระหว่างมีแถวปลอม ยอดเทียบ SAP ในหน้า Admin จะไม่ถูกต้อง — ใช้เฉพาะรอบทดสอบ
-// loadTestClear(): ลบแถว Source = LOADTEST ออกทั้งหมด (แถวจริงไม่ถูกแตะ)
-
-var LOADTEST_SRC = 'LOADTEST';
-
-function loadTestSeed(rows) {
-  rows = Math.min(Number(rows) || 11000, 20000);
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(30000)) throw new Error('มีเครื่องกำลังส่งข้อมูลอยู่ ลองใหม่อีกครั้ง');
-  try {
-    var cfg = readConfig_(), project = cfg.PROJECT_ID;
-    if (!project) throw new Error('ยังไม่ได้เปิดรอบ');
-    var items = readRaw_('Device_Master').slice(1).filter(function (r) { return r[0] && r[1]; }).slice(0, 500);
-    if (!items.length) throw new Error('ยังไม่มี Device_Master (อนุมัติ Master ก่อน)');
-    var sh = SpreadsheetApp.getActive().getSheetByName('Count_Log');
-    var seq = {}, out = [], now = now_();
-    sh.getRange(2, 1, Math.max(sh.getLastRow() - 1, 1), 4).getDisplayValues().forEach(function (r) {
-      if (String(r[2]).indexOf('LOADTEST-') === 0) seq[r[2]] = Math.max(seq[r[2]] || 0, Number(r[3]) || 0);
-    });
-    for (var i = 0; i < rows; i++) {
-      var dev = 'LOADTEST-' + (1 + i % 4), s = seq[dev] = (seq[dev] || 0) + 1;
-      var it = items[i % items.length];
-      out.push([dev + '-' + ('000000' + s).slice(-6), project, dev, s, 'LOADTEST', 'ZZ' + (1 + Math.floor(i * 300 / rows)), it[0], it[1], 1,
-        'SCAN', '', '', 'ข้อมูลทดสอบแรงงาน', now, now, LOADTEST_SRC, 'LOADTEST', '', '']);
-    }
-    for (var k = 0; k < out.length; k += 5000) appendRows_(sh, out.slice(k, k + 5000));
-    lxReset_();
-    var X = logIdx_(project, { write: true }); X.save();
-    logAdmin_('LOADTEST_SEED', project, 'เติมแถวทดสอบแรงงาน ' + rows + ' แถว (Count_Log รวม ' + (X.last - 1) + ' แถว) — ลบด้วย loadTestClear()');
-    return 'เติม ' + rows + ' แถว · Count_Log รวม ' + (X.last - 1) + ' แถว';
-  } finally { releaseLock_(lock); }
-}
-
-function loadTestClear() {
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(30000)) throw new Error('มีเครื่องกำลังส่งข้อมูลอยู่ ลองใหม่อีกครั้ง');
-  try {
-    var sh = SpreadsheetApp.getActive().getSheetByName('Count_Log');
-    var n = sh.getLastRow();
-    if (n < 2) return 'ไม่มีข้อมูล';
-    var width = sh.getLastColumn();
-    var vals = sh.getRange(2, 1, n - 1, width).getValues();   // ค่าจริง (ไม่ใช่ค่าแสดงผล) เขียนกลับได้เหมือนเดิม
-    var srcCol = SHEETS.Count_Log.indexOf('Source');
-    var keep = vals.filter(function (r) { return r[srcCol] !== LOADTEST_SRC; });
-    var removed = vals.length - keep.length;
-    if (!removed) return 'ไม่มีแถวทดสอบแรงงาน';
-    sh.getRange(2, 1, n - 1, width).clearContent();
-    if (keep.length) sh.getRange(2, 1, keep.length, width).setValues(keep);
-    lxReset_();
-    logAdmin_('LOADTEST_CLEAR', readConfig_().PROJECT_ID, 'ลบแถวทดสอบแรงงาน ' + removed + ' แถว (เหลือ ' + keep.length + ' แถว)');
-    return 'ลบ ' + removed + ' แถว · เหลือ ' + keep.length + ' แถว';
-  } finally { releaseLock_(lock); }
-}
+// ---------- ทดสอบแรงงาน (ขั้น C) ----------
+// v2.4.1: เอา loadTestSeed() / loadTestClear() ออก — loadTestClear อ่าน Count_Log ทั้งชีตแล้วเขียนกลับ ประวัติแก้ไขของชีตยืนยันว่าเป็นจุดที่
+// Scan_Time / Received_Time ของรายการจริงหาย (UAT 12 พ.ย. 9:42) · ยอดนับไม่หาย Seq ครบ
+// กฎ: ไม่มีโค้ดไหนเขียนทับ Count_Log ได้ — เพิ่มแถวต่อท้ายเท่านั้น · ทดสอบแรงงานครั้งต่อไปทำบนสำเนาไฟล์ Sheets

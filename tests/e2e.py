@@ -3,7 +3,7 @@ E2E เว็บแอป TC21 กับเซิร์ฟเวอร์จำ�
 python3 tests/e2e.py
 จำลองการยิงด้วยการพิมพ์ + Enter แบบเดียวกับ DataWedge (keystroke output)
 """
-import json, os, sys, time, urllib.request
+import json, os, re, sys, time, urllib.request
 from playwright.sync_api import sync_playwright
 
 PORT = int(os.environ.get('PORT', 8787))
@@ -80,7 +80,7 @@ with sync_playwright() as p:
     pg.wait_for_function("/พร้อมนับ ✓/.test(document.querySelector('#readyHead').textContent)", timeout=10000)
     shot('03-ready-pass')
     check(pg.is_visible('#btnStart'), 'ผ่านทุกข้อ ขึ้นปุ่มเริ่มนับ')
-    check('แอป 2.4.0 · เซิร์ฟเวอร์ 2.4.0' in pg.inner_text('#readyList'), 'แสดงเวอร์ชันแอปและเซิร์ฟเวอร์ตรงกัน')
+    check('แอป 2.4.1 · เซิร์ฟเวอร์ 2.4.1' in pg.inner_text('#readyList'), 'แสดงเวอร์ชันแอปและเซิร์ฟเวอร์ตรงกัน')
     pg.click('#btnStart'); pg.wait_for_selector('#v-count.on')
     check('นุ่น' in pg.inner_text('#tbStaff'), 'เข้างานเป็น นุ่น')
 
@@ -194,7 +194,7 @@ with sync_playwright() as p:
     check('9.9.9' in pg.inner_text('#readyList'), 'มีเวอร์ชันใหม่ → ขึ้น ✗ พร้อมปุ่ม "อัปเดตแอปตอนนี้"')
     shot('11-update')
     pg.click('#btnUpdate'); pg.wait_for_load_state('load'); pg.wait_for_timeout(1500)
-    get('/debug/version?v=2.4.0')
+    get('/debug/version?v=2.4.1')
     pg.wait_for_selector('.view.on', timeout=10000)
     check('รายการ 38' in pg.inner_text('#syncText'), 'หลังกดอัปเดต แอปโหลดใหม่ ข้อมูลในเครื่องยังครบ 38 รายการ')
 
@@ -240,6 +240,7 @@ with sync_playwright() as p:
     pg.wait_for_selector('#v-setup.on', timeout=10000)
     dev = [d for d in get('/debug/locations')['devices'] if d['id'] == 'TC21-01'][0]
     check(not dev['paired'], 'หน้า Admin ขึ้น "ยังไม่จับคู่" ตรงกับเครื่อง')
+    check(pg.inner_text('#setupMsg') == '', 'ยกเลิกการจับคู่แล้ว หน้าตั้งค่าไม่มีข้อความ "จับคู่สำเร็จ" ค้าง (v2.4.1 · UAT G6-4): ' + pg.inner_text('#setupMsg'))
     pg.fill('#setDevice', 'TC21-01'); pg.fill('#setCode', get('/debug/paircode?d=TC21-01')['pairCode']); pg.click('#btnPair')
     pg.wait_for_function("/พร้อม/.test(document.querySelector('#readyHead').textContent)", timeout=20000)
     check('ยิงบัตร' in pg.inner_text('#readyList') or 'EMP' in pg.inner_text('#readyList'), 'จับคู่ใหม่แล้วต้องยิงบัตรผู้ตรวจสอบใหม่')
@@ -266,10 +267,12 @@ with sync_playwright() as p:
     check(True, 'เปิดแอปใหม่ยังอยู่หน้าหยุดยิง (จำสถานะไว้)')
     pg.click('#btnRePair'); pg.wait_for_selector('#v-setup.on')
     check(pg.input_value('#setDevice') == 'TC21-01', 'จับคู่ใหม่: ใส่รหัสเครื่องเดิมให้แล้ว')
+    check('จับคู่สำเร็จ' not in pg.inner_text('#setupMsg'), 'หน้าตั้งค่าไม่มีข้อความ "จับคู่สำเร็จ" ค้างจากครั้งก่อน (v2.4.1 · UAT G6-4): ' + pg.inner_text('#setupMsg'))
     pg.fill('#setDevice', 'TC21-02'); pg.fill('#setCode', '123456'); pg.click('#btnPair'); pg.wait_for_timeout(300)
     check('ค้างส่ง' in pg.inner_text('#setupMsg') and 'TC21-01' in pg.inner_text('#setupMsg'), 'ห้ามจับคู่เป็นรหัสอื่นเมื่อมีข้อมูลค้าง: ' + pg.inner_text('#setupMsg'))
     get('/debug/enable?d=TC21-01')
-    pg.fill('#setDevice', 'TC21-01'); pg.fill('#setCode', get('/debug/paircode?d=TC21-01')['pairCode']); pg.click('#btnPair')
+    pg.fill('#setDevice', 'TC21-01'); pg.fill('#setCode', get('/debug/paircode?d=TC21-01')['pairCode'])
+    pg.press('#setCode', 'Enter')   # v2.4.1: ปุ่ม → บนคีย์บอร์ดตัวเลข = จับคู่ (UAT G6-4 คีย์บอร์ดบังปุ่ม)
     pg.wait_for_function("/พร้อม/.test(document.querySelector('#readyHead').textContent)", timeout=20000)
     pg.wait_for_function("/ค้าง 0/.test(document.querySelector('#syncText').textContent)", timeout=20000)
     rows = log_rows()
@@ -288,5 +291,32 @@ with sync_playwright() as p:
     pg.wait_for_function("/ค้าง 0/.test(document.querySelector('#syncText').textContent)", timeout=15000)
     pg.reload(); pg.wait_for_selector('#v-count.on', timeout=15000); pg.wait_for_timeout(500)
     check(pg.inner_text('#tbLoc') == 'C9', 'เปิดแอปใหม่ยังอยู่ C9 (ยังไม่มีรายการ): ' + pg.inner_text('#tbLoc'))
+
+    print('ค้นหา SKU บนเครื่อง (v2.4.1)')
+    n_before = len(log_rows())
+    open_menu('sku'); pg.wait_for_selector('#v-sku.on')
+    check(pg.evaluate("document.activeElement !== document.querySelector('#skuQ')"), 'เข้าหน้าค้นหา: ไม่โฟกัสช่องพิมพ์ (คีย์บอร์ดไม่เด้ง)')
+    scan(BC1); pg.wait_for_function("/บัญชี/.test(document.querySelector('#skuRes').textContent)", timeout=10000)
+    res = pg.inner_text('#skuRes')
+    rows = [r for r in log_rows() if r[7] == MAT1]
+    tot = sum(float(r[8]) for r in rows); locs = {}
+    for r in rows: locs[r[5]] = locs.get(r[5], 0) + float(r[8])
+    lis = pg.eval_on_selector_all('#skuRes li', 'e => e.map(x => [x.querySelector(".n").textContent, x.querySelector(".q").textContent])')
+    want = sorted([[l, q] for l, q in locs.items() if q], key=lambda x: (re.sub(r'\d', '', x[0]), int(re.sub(r'\D', '', x[0]) or 0)))
+    check(MAT1 in res and pg.inner_text('.skugrid div:nth-child(2) .v') == f'{int(tot):,}' and [[l, float(q.replace(',', ''))] for l, q in lis] == want,
+          f'ยิงบาร์โค้ด → นับได้ {int(tot)} = Count_Log · Location=ชิ้น ตรงชีต: ' + ' '.join(f'{l}={q}' for l, q in lis))
+    check(len(log_rows()) == n_before, 'ค้นหาไม่บันทึกอะไรลง Count_Log')
+    shot('16-sku')
+    scan('LOC:C9'); pg.wait_for_timeout(200)
+    check(pg.locator('#v-sku.on').count() == 1, 'ยิงป้าย Location ในหน้าค้นหา → เตือน ไม่เปิด Location')
+    pg.fill('#skuQ', MAT1.lower()); pg.press('#skuQ', 'Enter'); pg.wait_for_function("/บัญชี/.test(document.querySelector('#skuRes').textContent)", timeout=10000)
+    check(MAT1 in pg.inner_text('#skuRes'), 'พิมพ์รหัสสินค้า (ตัวเล็ก) + Enter → ค้นหาได้')
+    scan(UNKNOWN); pg.wait_for_function("/ไม่มีใน Master/.test(document.querySelector('#skuRes').textContent)", timeout=10000)
+    check('–' in pg.inner_text('.skugrid'), 'บาร์โค้ดไม่มีใน Master → บอกชัด ไม่มียอดบัญชี')
+    get('/debug/offline?on=1'); scan(BC1); pg.wait_for_timeout(1500)
+    check('ต่อ Wi-Fi' in pg.inner_text('#skuRes') or 'ติดต่อ' in pg.inner_text('#skuRes'), 'ออฟไลน์ → บอกให้ต่อ Wi-Fi: ' + pg.inner_text('#skuRes'))
+    get('/debug/offline?on=0')
+    pg.click('#btnSkuBack'); pg.wait_for_selector('#v-count.on')
+    check(pg.inner_text('#tbLoc') == 'C9', 'กด "กลับ" → กลับหน้านับที่ C9')
     b.close()
 print(f'\nE2E ผ่าน {ok} ข้อ')

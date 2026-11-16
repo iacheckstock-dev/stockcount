@@ -171,19 +171,23 @@ test('rebuildCountIndex() (กด Run ในหน้า Apps Script) สร้�
   same('หลังสร้างใหม่ด้วยมือ');
 });
 
-test('ทดสอบแรงงาน: loadTestSeed เติม 11,000 แถว → ส่งข้อมูลยังไม่อ่านชีตทั้งชีต · loadTestClear ลบเฉพาะแถวทดสอบ', () => {
-  const before = env.sheets.Count_Log.data.length;
-  run('loadTestSeed(11000)');
+test('ทดสอบแรงงาน (v2.4.1): ไม่มีฟังก์ชันเขียนทับ Count_Log ในระบบ · ชีต 11,000 แถว ส่งข้อมูลยังไม่อ่านชีตทั้งชีต', () => {
+  // v2.4.1 เอา loadTestSeed/loadTestClear ออก (loadTestClear เขียน Count_Log ทั้งชีตใหม่ เวลาของรายการจริงหาย) — เติมแถวในชุดทดสอบเองแทน
+  assert.strictEqual(run('typeof loadTestSeed'), 'undefined');
+  assert.strictEqual(run('typeof loadTestClear'), 'undefined');
+  const d = env.sheets.Count_Log.data, project = d[1][1], before = d.length;
+  for (let i = 0; i < 11000; i++) {
+    const dev = 'LOADTEST-' + (1 + i % 4), s = 1 + Math.floor(i / 4);
+    d.push([dev + '-' + String(s).padStart(6, '0'), project, dev, s, 'LOADTEST', 'ZZ' + (1 + Math.floor(i * 300 / 11000)), d[1][6], d[1][7], 1,
+      'SCAN', '', '', '', '2026-11-04 10:00:00', '2026-11-04 10:00:00', 'LOADTEST', 'LOADTEST', '', '']);
+  }
+  run('rebuildCountIndex()');
   assert.strictEqual(env.sheets.Count_Log.data.length, before + 11000);
   same('หลังเติมแถวทดสอบ');
   env.stats.reset(); A.sync(A.batch('A1', 15));
   assert.ok(env.stats.lock.cells < 1000, 'อ่านในล็อก ' + env.stats.lock.cells + ' เซลล์');
-  const real = env.sheets.Count_Log.data.slice(1).filter(r => r[15] !== 'LOADTEST').length;
-  run('loadTestClear()');
-  assert.strictEqual(env.sheets.Count_Log.data.filter(r => r.some(v => v !== '')).length - 1, real);
-  assert.ok(!env.sheets.Count_Log.data.slice(1).some(r => r[15] === 'LOADTEST'));
-  A.sync(A.batch('A1', 1));
-  same('หลังลบแถวทดสอบ');
+  same('หลังส่งข้อมูล');
+  d.splice(before, 11000); run('rebuildCountIndex()'); same('หลังเอาแถวทดสอบออก (ในชุดทดสอบ)');
 });
 
 test('cache คืนค่ารุ่นเก่าแบบสุ่ม (2 เครื่องส่งสลับ + คำตอบหายแล้วส่งซ้ำ) → ดัชนีที่บันทึกไว้ยังตรงชีต (v2.3.1)', () => {
