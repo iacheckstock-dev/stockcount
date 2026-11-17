@@ -219,9 +219,9 @@ function perfSummary_(p) {
 function apiHello_(a, req) {
   heartbeat_(a.deviceId, req.pending, req.location, perfSummary_(req.perf));
   // บอกจำนวนเครื่องใน Location ที่เครื่องอยู่ (อ่าน Loc_Members ซึ่งเล็ก) — ผู้ดูแลรู้ว่ามีผู้ช่วยเข้ามา โดยไม่ต้องถาม locInfo ตลอด (v2.2.7)
-  var out = { ok: true };
+  var cfg = readConfig_(), out = { ok: true, round: cfg.ROUND_STATUS || 'NONE', project: cfg.PROJECT_ID };   // round: v2.5.0
   var loc = normLoc_(req.location);
-  if (loc) out.members = membersOf_(membersTable_(), readConfig_().PROJECT_ID, loc).length;
+  if (loc) out.members = membersOf_(membersTable_(), cfg.PROJECT_ID, loc).length;
   return out;
 }
 
@@ -680,6 +680,7 @@ function apiSync_(a, req) {
   var cfg = readConfig_();
   res.masterHash = cfg.MASTER_APPROVED_PROJECT === cfg.PROJECT_ID ? cfg.MASTER_APPROVED_HASH : '';
   res.stockVersion = stockVersion_(cfg);
+  res.round = cfg.ROUND_STATUS || 'NONE';   // v2.5.0: เครื่องรู้ทันทีเมื่อปิดการนับ / เปิดการนับอีกครั้ง
   return res;
 }
 
@@ -747,6 +748,12 @@ function ingest_(deviceId, entries, events, source, device, appVersion) {
     logSys_('QUARANTINE', deviceId, qrows.length + ' รายการจากรอบอื่น/รอบที่ปิดแล้ว');
   }
   var revokedLocs = rows.length && device && device.Revoked_At ? revokeWindow_(project, deviceId, device, entries, out.accepted) : [];
+  // ระหว่างปิดการนับ (v2.5.0): รับตามปกติ (ค้างส่งจากก่อนปิด) แต่นับไว้ และบันทึกถ้ามีรายการที่ยิงหลังเวลาปิด (เครื่องยังไม่รู้ว่าปิด เช่น ออฟไลน์)
+  if (rows.length && cfg.ROUND_STATUS === 'COUNT_CLOSED') {
+    var late = cfg.COUNT_CLOSED_AT ? rows.filter(function (r) { return r[13] && r[13] >= cfg.COUNT_CLOSED_AT; }).length : 0;
+    afterClose_({ n: rows.length, late: late, at: received });
+    logSys_('SYNC_AFTER_COUNT_CLOSE', deviceId, 'รับ ' + rows.length + ' รายการหลังปิดการนับ' + (late ? ' · ยิงหลังเวลาปิด ' + late + ' รายการ (เครื่องยังไม่รู้ว่าปิด)' : ' (ค้างส่งจากก่อนปิด)'));
+  }
   if (rows.length && cfg.ROUND_STATUS === 'SETUP') {
     setConfig_({ ROUND_STATUS: 'COUNTING' });
     logSys_('ROUND_COUNTING', project, 'เริ่มนับ (ได้รับรายการแรกจาก ' + deviceId + ')');

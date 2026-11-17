@@ -45,7 +45,10 @@
 | SCHEMA_VERSION | เวอร์ชันโครงสร้างชีต ต่ำกว่าโค้ด = อัปเกรดอัตโนมัติ |
 | PROJECT_ID | รหัสรอบนับ เช่น `2026Q4` |
 | COUNT_DATE | วันนับ (yyyy-mm-dd) เทียบกับยอด SAP สิ้นวันก่อนหน้า (D−1) |
-| ROUND_STATUS | `NONE` → `SETUP` → `COUNTING` (เมื่อได้รายการแรก) → `COUNT_CLOSED` → `CLOSED` |
+| ROUND_STATUS | `NONE` → `SETUP` → `COUNTING` (เมื่อได้รายการแรก) → `COUNT_CLOSED` (กด "ปิดการนับ" · v2.5.0) ⇄ `COUNTING` (กด "เปิดการนับอีกครั้ง") → `CLOSED` (v2.5.1) |
+| COUNT_CLOSED_AT / _BY | เวลาและรหัสผู้ตรวจสอบที่กดปิดการนับ (v2.5.0) · ว่างเมื่อเปิดการนับอีกครั้ง |
+| LAST_RECONCILE | ผลกระทบยอดทั้งรอบครั้งล่าสุด (JSON: at, ok, project, lastRow, lines) — เงื่อนไขปิดรอบ K4 (v2.5.0) |
+| SUMMARY_SAVED | ผลสรุปที่บันทึกล่าสุด (JSON: project, run, at, sig) — เงื่อนไขปิดรอบ K5 (v2.5.0) |
 | DRIVE_FOLDER_ID | โฟลเดอร์ Drive เก็บไฟล์นำเข้าและ Archive |
 | SAP_FILE_NAME / _DATE / _UPLOADED_AT / _UPLOADED_BY | ไฟล์ SAP ล่าสุดที่อัปโหลด |
 | SAP_D1_CONFIRMED | ผู้ยืนยันว่าบัญชีปิดยอด D−1 แล้วตอนอัปโหลด |
@@ -254,3 +257,7 @@
 | Time / By | เวลา / อีเมลผู้ทำ (หรือระบบ) |
 | Action | `SETUP` `OPEN_ROUND` `RESET_ROUND` `UPLOAD_SAP` `UPLOAD_POS` `DECIDE_CONFLICT` `ACK_WARNING` `APPROVE_MASTER` `SET_API_URL` `DEVICE_ADD` `DEVICE_PAIR_CODE` `DEVICE_PAIRED` `DEVICE_REVOKE` `DEVICE_ENABLE` `IMPORT_FILE` `ROUND_COUNTING` `QUARANTINE` `LOC_SUBMIT_FOR` `LOC_TRANSFER` `MIGRATE_MEMBERS` · `LOC_FLAG_RESOLVE` `LOC_FLAG_CLEARED` `INDEX_FIX` `RECONCILE` `ADMIN_LOG_WARN_ACK` · `<ACTION>_FAILED` (v2.3.8: บันทึกก่อนทำ แล้วทำไม่สำเร็จ) |
 | Target / Detail | สิ่งที่ถูกกระทำ / รายละเอียด |
+| Project_ID | รหัสรอบตอนบันทึก (v2.5.0) · แถวก่อน v2.5.0 ว่าง — หน้า Admin ใช้รอบจาก `OPEN_ROUND` ก่อนหน้า (อ่านอย่างเดียว ไม่เขียนกลับ) |
+
+**Admin_Log เก็บต่อเนื่องข้ามรอบ ไม่ล้างตอนปิดรอบ** (ตัดสิน Q2 เฟส 4 · 17 พ.ย.) — หน้า Admin → บันทึก Admin แสดงเฉพาะรอบปัจจุบัน ติ๊ก "แสดงทุกรอบ" เพื่อดูทั้งหมด · ตอนปิดรอบ (v2.5.1) ไฟล์สำรองเก็บเฉพาะแถวของรอบนั้น
+Action ที่เพิ่มใน v2.5.0: `COUNT_CLOSE` (ผู้กด + จำนวน Location ที่ยังไม่ปิด / เครื่องที่ยังไม่พร้อมตอนกด) · `COUNT_REOPEN` (ผู้กด + เหตุผล + จำนวนรายการที่รับระหว่างปิด) · `SYNC_AFTER_COUNT_CLOSE` (รับรายการระหว่างปิดการนับ · แยกจำนวนที่ยิงหลังเวลาปิด)

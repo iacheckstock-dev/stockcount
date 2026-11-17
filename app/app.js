@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2.4.2';
+  var APP_VERSION = '2.5.0';
   var QTY_CONFIRM = 150;      // จำนวนที่ป้อนเองเกินนี้ต้องยืนยันอีกครั้ง
   var QTY_MAX_DIGITS = 5;     // ยาวกว่านี้ = น่าจะยิงบาร์โค้ดเข้าช่องจำนวน
   var INFO_EVERY = 15000;     // ถามสถานะผู้ช่วย/ผู้ดูแลระหว่างนับร่วมกัน
@@ -137,6 +137,38 @@
   $('mNo').onclick = function () { if (modalCb) modalCb(false); };
   $('mInput').addEventListener('keydown', function (e) { if (e.key === 'Enter' && modalCb) { e.preventDefault(); modalCb(true); } });
   function confirmBox(title, html, yes) { return modal({ title: title, html: html, yes: yes }); }
+
+  // ---------- ปิดการนับ (v2.5.0) ----------
+  // สถานะรอบล่าสุดที่รู้ เก็บใน S.boot.project.status (จำในเครื่อง ใช้ตอนออฟไลน์ได้) · อัปเดตจาก bootstrap / sync / hello
+  function roundStatus() { return (S.boot && S.boot.project && S.boot.project.status) || ''; }
+  function countClosed() { return roundStatus() === 'COUNT_CLOSED'; }
+  function closedBox() {
+    SOUND.bad();
+    return result(false, 'ปิดการนับแล้ว — ไม่บันทึก', 'ยิงสินค้า เปิด Location ใหม่ และแก้ยอดไม่ได้\n' +
+      'Location ที่ยังเปิดอยู่: ผู้ดูแลกด "ปิด Location" · ผู้ช่วยกด "ส่งงาน"\nค้นหา SKU ได้ที่เมนู ⋮\nต้องนับเพิ่ม: แจ้งทีมให้กด "เปิดการนับอีกครั้ง" ในหน้า Admin', { scanCloses: true });
+  }
+  /** ใช้หน้าปุ่ม/การยิงที่จะบันทึกยอด: ปิดการนับแล้ว → แจ้งกล่องกลางจอ แล้วคืน true (หยุด) */
+  function blockedClosed() { if (!countClosed()) return false; closedBox(); return true; }
+  /** เซิร์ฟเวอร์บอกสถานะรอบ: เปลี่ยน → จำไว้ + แจ้งกลางจอ */
+  function setRound(st, project) {
+    if (!st || !S.boot || !S.boot.project) return;
+    if (project !== undefined && project !== S.boot.project.id) return;   // รอบเปลี่ยน: ตรวจความพร้อมใหม่จัดการเอง
+    var prev = S.boot.project.status;
+    if (prev === st) return;
+    S.boot.project.status = st;
+    DB.set('boot', S.boot);
+    if (st === 'COUNT_CLOSED') {
+      SOUND.warn();
+      var html = 'รอบ ' + esc(S.boot.project.id) + ' ปิดการนับจากหน้า Admin แล้ว<br>• <b>ยิงสินค้าและเปิด Location ใหม่ไม่ได้</b><br>• รายการที่ค้างส่ง ระบบส่งให้เองตามปกติ' +
+        (S.loc ? '<br>• ' + esc(S.loc) + ' ยังเปิดอยู่: ' + (isHelper(S.loc) ? 'กด "ส่งงาน"' : 'ตรวจยอดแล้วกด "ปิด Location"') : '') + '<br>• ค้นหา SKU ได้ที่เมนู ⋮';
+      if ($('modal').classList.contains('hidden')) modal({ title: 'ปิดการนับแล้ว', html: html, yes: 'รับทราบ', noCancel: true });
+      else toast('ปิดการนับแล้ว — ยิงไม่ได้', true);
+    } else if (prev === 'COUNT_CLOSED' && st === 'COUNTING') {
+      SOUND.ok();
+      result(true, 'เปิดการนับอีกครั้งแล้ว', 'ยิงต่อได้ตามปกติ');
+    }
+    render();
+  }
 
   // ---------- เครือข่าย ----------
   function fetchTimeout(url, opt, ms) {
@@ -592,6 +624,7 @@
       }
       if (res.masterHash !== undefined && S.masterHash && res.masterHash && res.masterHash !== S.masterHash) S.masterChanged = true;
       if (res.stockVersion && res.stockVersion !== S.stockVersion) downloadStock().catch(function () {});
+      if (res.round) setRound(res.round);
       S.lastSyncOk = Date.now();
       return Promise.all([DB.putMany('entries', changed), DB.remove('events', removeIds), saveState()]).then(function () {
         S.syncing = false; render();
@@ -617,6 +650,7 @@
     lastHello = Date.now();
     var loc = S.loc;
     api('hello', { pending: pending().length + S.oldPending.length, location: loc || '', perf: perfReport() }, 10000).then(function (r) {
+      if (r.round) setRound(r.round, r.project);
       // เซิร์ฟเวอร์บอกว่า Location นี้มีหลายเครื่อง แต่เครื่องยังไม่รู้ → ถามรายละเอียด (U7/U8)
       if (loc && loc === S.loc && r.members > 1 && !hasOthers(loc) && !S.infoBusy) fetchInfo(loc);
     }, function (err) {
@@ -671,6 +705,7 @@
     else if (S.lastErr === 'BAD_TOKEN' || S.lastErr === 'DEVICE_DISABLED' || S.lastErr === 'UNKNOWN_DEVICE') { msg = 'เครื่องนี้ถูกยกเลิกหรือต้องจับคู่ใหม่ ข้อมูลในเครื่องไม่หาย ให้ Export ไฟล์ แล้วแจ้งหัวหน้าทีม'; bad = true; }
     else if (oldest && Date.now() - oldest > STALE_MIN * 60000) { msg = 'มีรายการค้างส่งเกิน ' + STALE_MIN + ' นาที — ไปจุดที่มี Wi-Fi หรือ Export ไฟล์'; bad = true; }
     else if (rejected) { msg = 'มี ' + rejected + ' รายการที่เซิร์ฟเวอร์ไม่รับ ดูที่หน้าสถานะ'; bad = true; }
+    else if (countClosed()) { msg = 'ปิดการนับแล้ว — ยิงไม่ได้ · ส่งงาน / ปิด Location ที่ค้างได้ · ค้นหา SKU ได้ที่ ⋮'; bad = true; }
     else if (S.masterChanged) msg = 'หัวหน้าทีมอนุมัติรายการบาร์โค้ดชุดใหม่ ไปที่สถานะ → ตรวจความพร้อมใหม่ เพื่อโหลด';
     else if (S.recountBanner && S.view === 'count') msg = S.recountBanner;
     else if (S.slow && S.online !== false) msg = S.slow === 'BAD_REPLY' || S.slow === 'SERVER_ERROR' ? 'เซิร์ฟเวอร์มีปัญหา (ไม่ใช่ Wi-Fi) — นับต่อได้ ข้อมูลไม่หาย ถ้าเป็นนานให้แจ้งหัวหน้าทีม' :
@@ -805,6 +840,7 @@
     if (S.checking) { SOUND.warn(); toast('รอสักครู่ — กำลังตรวจ ' + S.checking + ' (ยังไม่บันทึก)', true); return; }
     if (S.sending) { SOUND.warn(); toast('รอสักครู่ — กำลังส่ง ' + S.sending + ' (ยังไม่บันทึก)', true); return; }
     if (/^LOC:/.test(up)) { var loc = normLoc(up); if (!loc) { SOUND.bad(); toast('ป้าย Location ไม่ถูกต้อง', true); return; } return openLocation(loc); }
+    if (blockedClosed()) return;   // v2.5.0 ปิดการนับแล้ว: ไม่รับการยิงสินค้า (ป้าย Location ตรวจใน openLocation)
     if (S.view !== 'count') show('count');
     scanProduct(code);
   }
@@ -850,6 +886,11 @@
    * 3) เช็กเบื้องหลัง: ถ้ามีเครื่องอื่นเป็นผู้ดูแล → ถามเข้าร่วม · ถ้าผู้ดูแลปิดแล้ว → ไม่รับการยิง
    */
   function openLocation(loc) {
+    // v2.5.0 ปิดการนับแล้ว: เปิด Location ใหม่ไม่ได้ · กลับเข้า Location ที่เครื่องนี้ พัก / กำลังนับ ค้างอยู่ได้ เพื่อกด "ปิด Location" / "ส่งงาน"
+    if (countClosed()) {
+      var rr = S.roles[loc];
+      if (!rr || (rr.state !== 'PAUSED' && rr.state !== 'COUNTING')) { closedBox(); return Promise.resolve(); }
+    }
     if (!isReady()) { SOUND.bad(); toast('ตรวจความพร้อมยังไม่ผ่าน — แก้ข้อ ✗ ก่อน', true); show('ready'); return Promise.resolve(); }
     if (!S.staff) { SOUND.bad(); setCard('bad', 'ยิงบัตรผู้ตรวจสอบ (EMP:) ก่อน'); show('count'); return Promise.resolve(); }
     if (S.loc === loc) { show('count'); toast('อยู่ที่ ' + loc + ' แล้ว'); return Promise.resolve(); }
@@ -1107,6 +1148,7 @@
 
   $('btnUndo').onclick = function () {
     if (!S.loc) { toast('ยังไม่ได้เปิด Location', true); return; }
+    if (blockedClosed()) return;
     var v = voidedSet();
     var last = S.entries.slice().reverse().find(function (e) { return e.location === S.loc && (e.type === 'SCAN' || e.type === 'MANUAL') && !v[e.logId]; });
     if (!last) { toast('ไม่มีรายการให้ยกเลิก', true); return; }
@@ -1141,7 +1183,7 @@
   };
   $('btnLoc').onclick = function () { if (!S.loc) { toast('ยิงป้าย Location ก่อน หรือเลือกจาก ⋮ → Location ที่นับแล้ว', true); return; } show('loc'); };
   $('tbLoc').onclick = function () { if (S.view === 'count' || S.view === 'loc') show('locs'); };
-  $('btnManual').onclick = function () { if (!S.loc) { toast('ยิงป้าย Location ก่อน', true); return; } show('manual'); };
+  $('btnManual').onclick = function () { if (!S.loc) { toast('ยิงป้าย Location ก่อน', true); return; } if (blockedClosed()) return; show('manual'); };
   /** ตรวจความพร้อมผ่านแล้ว (รอบนี้) — ยังไม่ผ่านห้ามเข้าหน้านับทุกทาง */
   function isReady() { return !!(S.readiness && S.readiness.pass && S.readiness.project === S.projectId && S.staff); }
   $('btnMenu').onclick = function (e) {
@@ -1381,6 +1423,7 @@
 
   $('locItems').addEventListener('click', function (e) {
     var li = e.target.closest('li[data-k]'); if (!li) return;
+    if (blockedClosed()) return;
     var key = li.dataset.k;
     if (ownScope(S.loc)) { editMine(key); return; }
     var total = S.totalMode === S.loc;
@@ -1402,6 +1445,7 @@
   }
   $('btnLocTotal').onclick = function () {
     var loc = S.loc;
+    if (blockedClosed()) return;
     if (S.totalMode === loc) { S.totalMode = null; renderLoc(); return; }
     ownerGate(loc, 'แก้ยอดรวม ', true).then(function (ok) {
       if (!ok) return;
@@ -1485,6 +1529,7 @@
 
   $('btnLocBack').onclick = function () { S.totalMode = null; show('count'); };
   $('btnLocUndo').onclick = function () {
+    if (blockedClosed()) return;
     var loc = S.loc, v = voidedSet();
     if (ownScope(loc)) {
       var mineLast = S.entries.slice().reverse().find(function (e) { return e.location === loc && e.type === 'SELF_SET' && !v[e.logId]; });
@@ -1506,6 +1551,7 @@
     });
   };
   $('btnLocClear').onclick = function () {
+    if (blockedClosed()) return;
     var loc = S.loc;
     if (ownScope(loc)) { clearMine(loc); return; }
     var needReason = S.totalMode === loc;
@@ -1617,7 +1663,7 @@
   function renderStatus() {
     var p = pending().length, rej = S.entries.filter(function (e) { return e.rejected; });
     var rows = [
-      ['เครื่อง', S.cfg.deviceId || '-'], ['รอบ', S.projectId || '-'], ['ผู้ตรวจสอบ', S.staff ? S.staff.code : '-'],
+      ['เครื่อง', S.cfg.deviceId || '-'], ['รอบ', (S.projectId || '-') + (countClosed() ? ' · ปิดการนับแล้ว' : '')], ['ผู้ตรวจสอบ', S.staff ? S.staff.code : '-'],
       ['รายการที่บันทึก', fmt(S.entries.length)], ['รายการที่ส่งแล้ว', fmt(S.entries.length - p - rej.length)], ['รายการค้างส่ง', fmt(p)],
       ['ยอดรวมทั้งเครื่อง (ชิ้น)', fmt(deviceTotal())],
       ['เซิร์ฟเวอร์ไม่รับ', fmt(rej.length)], ['ข้อมูลรอบอื่นค้างส่ง', fmt(S.oldPending.length)], ['รอตรวจ Location', fmt(S.events.length)],
@@ -1842,6 +1888,7 @@
         if (!boot) add('รอบที่เลือกเปิดอยู่ และ token ถูกต้อง', 'FAIL', 'ยังไม่เคยเชื่อมต่อเซิร์ฟเวอร์');
         else if (b.err && !offline) add('รอบที่เลือกเปิดอยู่ และ token ถูกต้อง', 'FAIL', b.err.message);
         else if (!boot.project.id || SYNC_OK.indexOf(boot.project.status) < 0) add('รอบที่เลือกเปิดอยู่ และ token ถูกต้อง', 'FAIL', 'รอบ ' + (boot.project.id || '-') + ' สถานะ ' + boot.project.status);
+        else if (boot.project.status === 'COUNT_CLOSED') add('รอบที่เลือกเปิดอยู่ และ token ถูกต้อง', 'WARN', boot.project.id + ' ปิดการนับแล้ว — ยิงไม่ได้ ส่งงาน / ปิด Location ที่ค้าง และค้นหา SKU ได้');
         else add('รอบที่เลือกเปิดอยู่ และ token ถูกต้อง', offline ? 'WARN' : 'OK', boot.project.id + ' · นับวันที่ ' + boot.project.countDate + (offline ? ' (ข้อมูลล่าสุดในเครื่อง)' : ''));
         // 5 Master
         var masterP = Promise.resolve();

@@ -21,7 +21,7 @@ env.sheets.Staff.data.push(['EMP-NU', 'นุ่น', 'ผู้ตรวจส�
 run('apiSeedDevices(5, "TC21")');
 
 let offline = false;
-let appVersion = '2.4.2';
+let appVersion = '2.5.0';
 let slowMs = 0;
 let apiDelay = { ms: 0, action: '' };   // จำลองเซิร์ฟเวอร์ช้า (GAS จริงตอบ 1–5 วินาที) v2.2.6
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'application/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.webmanifest': 'application/manifest+json' };
@@ -55,6 +55,9 @@ http.createServer((req, res) => {
       if (url.pathname === '/debug/apidelay') { apiDelay = { ms: Number(url.searchParams.get('ms') || 0), action: url.searchParams.get('action') || '' }; return send(200, apiDelay); }
       if (url.pathname === '/debug/slow') { slowMs = Number(url.searchParams.get('ms') || 0); return send(200, { slowMs }); }
       if (url.pathname === '/debug/reupload-sap') { run('apiUpload("SAP", _sap, { fileName: "sap2.xls", fileDate: "2026-11-04", d1Confirmed: true })'); return send(200, { ok: true }); }
+      if (url.pathname === '/debug/countclose') return send(200, run('apiCountClose(_s)', { _s: url.searchParams.get('staff') || 'EMP-NU' }).check);
+      if (url.pathname === '/debug/countreopen') return send(200, run('apiCountReopen(_s, _w)', { _s: url.searchParams.get('staff') || 'EMP-NU', _w: url.searchParams.get('why') || 'e2e' }).check);
+      if (url.pathname === '/debug/closecheck') return send(200, run('apiCloseCheck()'));
       if (url.pathname === '/debug/version') { appVersion = url.searchParams.get('v'); return send(200, { appVersion }); }
       if (url.pathname === '/app/config.json') return send(200, { apiUrl: 'http://localhost:' + PORT + '/api', appVersion });
       if (url.pathname.startsWith('/app/') && slowMs) return setTimeout(serveStatic, slowMs);   // จำลองเน็ตช้า/เพิ่งต่อ Wi-Fi

@@ -1021,11 +1021,169 @@ console.log('\nปรับยอดด้วยมือ (v2.4.2)');
   });
 }
 
+console.log('\nปิดการนับ / เงื่อนไขปิดรอบ / Admin_Log ต่อเนื่องข้ามรอบ (v2.5.0)');
+{
+  const O = device('TC21-01', 'EMP-K', '2.5.0'), H = device('TC21-02', 'EMP-KH', '2.5.0');
+  const AL = env.sheets.Admin_Log, CL = env.sheets.Count_Log, AJ = () => env.sheets.Adjustments.data;
+  const cfg = () => run('readConfig_()');
+  const K = (full) => run(full === false ? 'closeCheck_(false)' : 'apiCloseCheck()');
+  const item = (R, id) => R.items.find(x => x.id === id);
+  const lastLog = a => AL.data.filter(r => r[2] === a).slice(-1)[0];
+  test('Admin_Log มีคอลัมน์ Project_ID · แถวใหม่บันทึกรหัสรอบ · หน้า Admin ได้ทั้ง "รอบนี้" และ "ทุกรอบ"', () => {
+    assert.strictEqual(AL.data[0][5], 'Project_ID');
+    run('apiReconcile()');
+    assert.strictEqual(lastLog('RECONCILE')[5], '2026Q4');
+    const L = run('apiGetState()').log;
+    assert.ok(L.cur.length && L.cur.every(r => r[5] === '2026Q4') && L.project === '2026Q4' && L.allCount >= L.curCount, JSON.stringify(L.cur[0]));
+  });
+  test('แถวเก่าไม่มี Project_ID → ใช้รอบจาก OPEN_ROUND ก่อนหน้า (อ่านอย่างเดียว) · ก่อน OPEN_ROUND แรก = ไม่มีรอบ', () => {
+    const t = '2026-01-01 00:00:00', u = 'x@y';
+    const L = run('logView_(_l, "B")', { _l: [['Time', 'By', 'Action', 'Target', 'Detail', 'Project_ID'], [t, u, 'SETUP', '', ''], [t, u, 'OPEN_ROUND', 'A', ''], [t, u, 'X', '', ''],
+      [t, u, 'OPEN_ROUND', 'B', ''], [t, u, 'Y', '', ''], [t, u, 'Z', '', '', 'B'], ['', '', '', '', '']] });
+    assert.deepStrictEqual(L.cur.map(r => r[2]), ['Z', 'Y', 'OPEN_ROUND']);
+    assert.deepStrictEqual(L.all.map(r => r[5]), ['B', 'B', 'B', 'A', 'A', '']);
+    assert.strictEqual(L.allCount, 6, 'แถวว่างไม่นับ');
+  });
+  test('ก่อนปิดการนับ: แผงเงื่อนไขมี K1–K7 · K7 ✗ (ยังกำลังนับ) · ยังไม่ครบ', () => {
+    assert.strictEqual(cfg().ROUND_STATUS, 'COUNTING');
+    const R = K();
+    assert.strictEqual(R.items.map(x => x.id).join(','), 'K1,K2,K3,K4,K5,K6,K7');
+    assert.ok(!item(R, 'K7').ok && /กำลังนับ/.test(item(R, 'K7').detail) && !R.ok && R.full);
+    assert.ok(R.items.every(x => x.ok || x.fix), 'ข้อที่ไม่ผ่านมีวิธีแก้ทุกข้อ');
+    assert.ok(!item(R, 'K4').ok && /ยังไม่ได้ปิดการนับ|ยังไม่ได้กระทบยอด|พบจุดต่าง/.test(item(R, 'K4').detail), item(R, 'K4').detail);
+  });
+  test('ปิดการนับ: ต้องเลือกรหัสผู้ตรวจสอบที่ใช้งาน · สถานะอื่นที่ไม่ใช่กำลังนับปิดไม่ได้', () => {
+    assert.throws(() => run('apiCountClose("")'), /ผู้ตรวจสอบ/);
+    assert.throws(() => run('apiCountClose("EMP-NOBODY")'), /ผู้ตรวจสอบ/);
+    run('setConfig_({ ROUND_STATUS: "SETUP" })');
+    assert.throws(() => run('apiCountClose("EMP-K")'), /กำลังนับ/);
+    run('setConfig_({ ROUND_STATUS: "COUNTING" })');
+  });
+  test('ปิดการนับ: Admin_Log ไม่ติด → ไม่เปลี่ยนสถานะ (fail closed)', () => {
+    AL.dropWrites = true;
+    assert.throws(() => run('apiCountClose("EMP-K")'), /Admin_Log/);
+    AL.dropWrites = false; run('apiAckLogWarn()');
+    assert.strictEqual(cfg().ROUND_STATUS, 'COUNTING');
+  });
+  let closedAt;
+  test('ปิดการนับ → COUNT_CLOSED · บันทึกเวลา/ผู้กด · Admin_Log COUNT_CLOSE บอกสถานะ Location และเครื่องตอนกด · กดซ้ำไม่ได้', () => {
+    const r = run('apiCountClose("emp-k")');
+    const c = cfg();
+    closedAt = c.COUNT_CLOSED_AT;
+    assert.ok(c.ROUND_STATUS === 'COUNT_CLOSED' && closedAt && c.COUNT_CLOSED_BY === 'EMP-K', JSON.stringify(c));
+    assert.ok(r.state.round.status === 'COUNT_CLOSED' && r.state.round.statusTh === 'ปิดการนับแล้ว' && r.state.round.closedBy === 'EMP-K');
+    assert.ok(item(r.check, 'K7').ok && !r.check.full);
+    const l = lastLog('COUNT_CLOSE');
+    assert.ok(l[3] === '2026Q4' && /ผู้กด EMP-K/.test(l[4]) && /Location/.test(l[4]) && /เครื่อง/.test(l[4]) && l[5] === '2026Q4', l[4]);
+    assert.throws(() => run('apiCountClose("EMP-K")'), /ปิดการนับไปแล้ว/);
+  });
+  test('เปิดรอบใหม่ระหว่างปิดการนับไม่ได้ (ต้องปิดรอบก่อน)', () => {
+    assert.throws(() => run('apiOpenRound("2027Q1", "2027-01-05")'), /ปิดรอบก่อน/);
+  });
+  test('เครื่องรู้สถานะ: hello / sync ตอบ round = COUNT_CLOSED · bootstrap ก็เป็น COUNT_CLOSED', () => {
+    const h = O.call('hello', { pending: 0, location: '' });
+    assert.ok(h.ok && h.round === 'COUNT_CLOSED' && h.project === '2026Q4', JSON.stringify(h));
+    assert.strictEqual(O.sync([], []).round, 'COUNT_CLOSED');
+    assert.strictEqual(O.call('bootstrap').project.status, 'COUNT_CLOSED');
+  });
+  test('รายการค้างส่งจากก่อนปิด ยังรับเข้า Count_Log (ไม่กักไว้) · นับไว้ · บันทึก SYNC_AFTER_COUNT_CLOSE', () => {
+    O.seq = run('deviceMaxSeqAll_("TC21-01")'); O.at = Date.now();   // event id ไม่ซ้ำกับชุดทดสอบก่อนหน้า
+    const n0 = CL.data.length;
+    const r = O.sync([O.scan('Z1', BC2, MAT2, 1, { scanTime: '2026-11-04 09:00:00' })], []);
+    assert.ok(r.accepted.length === 1 && !r.quarantined.length, JSON.stringify(r.quarantined));
+    assert.strictEqual(CL.data.length, n0 + 1);
+    const l = lastLog('SYNC_AFTER_COUNT_CLOSE');
+    assert.ok(l && /รับ 1 รายการ/.test(l[4]) && /ค้างส่งจากก่อนปิด/.test(l[4]), l && l[4]);
+    const a = run('afterClose_()');
+    assert.ok(a.n === 1 && a.late === 0 && a.last, JSON.stringify(a));
+  });
+  test('รายการที่ยิงหลังเวลาปิด (เครื่องยังไม่รู้ เช่น ออฟไลน์) → รับ แต่นับเป็น "ยิงหลังเวลาปิด" แจ้งในแผงเงื่อนไข', () => {
+    const late = run('now_()');
+    O.sync([O.scan('Z1', BC2, MAT2, 1, { scanTime: late >= closedAt ? late : closedAt })], []);
+    assert.ok(/ยิงหลังเวลาปิด 1 รายการ/.test(lastLog('SYNC_AFTER_COUNT_CLOSE')[4]));
+    const a = K(false).after;
+    assert.ok(a.n === 2 && a.late === 1, JSON.stringify(a));
+  });
+  test('ระหว่างปิดการนับ ผู้ดูแลยังปิด Location ได้ (เหตุการณ์ CLOSE รับตามปกติ)', () => {
+    const r = O.sync([], [O.ev('OPEN', 'Z1'), O.ev('CLOSE', 'Z1', { total: 2 })]);
+    assert.ok(r.events.length === 2 && r.events[1].match !== 'WAIT', JSON.stringify(r.events));
+    assert.ok(/ปิดแล้ว/.test(loc('Z1').Status), loc('Z1').Status + ' ' + JSON.stringify(r.events) + JSON.stringify(mem('Z1','TC21-01')));
+  });
+  test('K3: เครื่องค้างส่งตามสัญญาณล่าสุด → ✗ บอกเครื่องและจำนวน · ส่งครบ (0) → เครื่องนั้นผ่าน', () => {
+    O.call('hello', { pending: 3, location: '' });
+    let k3 = item(K(false), 'K3');
+    assert.ok(!k3.ok && k3.list.some(x => /^TC21-01: ค้างส่ง 3 รายการ/.test(x)), JSON.stringify(k3.list));
+    O.call('hello', { pending: 0, location: '' }); H.call('hello', { pending: 0, location: '' });
+    k3 = item(K(false), 'K3');
+    assert.ok(k3.list.some(x => /^TC21-01: ค้าง 0/.test(x)) && k3.list.some(x => /^TC21-02: ค้าง 0/.test(x)), JSON.stringify(k3.list));
+    const paired = run('apiDevicesState()').devices.filter(d => d.active && d.paired).map(d => d.id);
+    assert.strictEqual(k3.ok, paired.every(id => k3.list.some(x => x.indexOf(id + ': ค้าง 0') === 0)));
+  });
+  test('K4: กระทบยอดก่อนปิดการนับ → ✗ ต้องทำใหม่ · กระทบยอดหลังปิด → ตามผลจริง · มีแถวเข้ามาหลังกระทบยอด → ✗', () => {
+    const R0 = JSON.parse(cfg().LAST_RECONCILE || 'null');
+    run('setConfig_({ LAST_RECONCILE: _v })', { _v: JSON.stringify(Object.assign({}, R0, { at: '2000-01-01 00:00:00', ok: true, lastRow: CL.data.length })) });
+    assert.ok(/ก่อนปิดการนับ/.test(item(K(false), 'K4').detail), item(K(false), 'K4').detail);
+    const rec = run('apiReconcile()');
+    const k4 = item(K(false), 'K4');
+    assert.strictEqual(k4.ok, rec.ok, k4.detail);
+    assert.ok(rec.ok ? /ตรงทั้งหมด/.test(k4.detail) : /พบจุดต่าง/.test(k4.detail), k4.detail);
+    // บังคับผลตรง แล้วให้มีแถวเพิ่ม → ต้องกระทบยอดใหม่
+    run('setConfig_({ LAST_RECONCILE: _v })', { _v: JSON.stringify(Object.assign({}, JSON.parse(cfg().LAST_RECONCILE), { ok: true })) });
+    assert.ok(item(K(false), 'K4').ok);
+    O.sync([O.scan('Z1', BC2, MAT2, 1, { scanTime: '2026-11-04 09:01:00' })], []);
+    assert.ok(/มีรายการเข้ามาหลังกระทบยอด/.test(item(K(false), 'K4').detail));
+  });
+  test('K5: ยังไม่ได้เทียบตอนตรวจแบบเร็ว · บันทึกผลสรุปหลังปิด → ✓ · ปรับยอดหลังบันทึก → ✗ ตัวเลขเปลี่ยน · บันทึกก่อนปิด → ✗', () => {
+    run('apiSummarySave()');
+    const sv = JSON.parse(cfg().SUMMARY_SAVED);
+    assert.ok(sv.project === '2026Q4' && sv.sig && sv.at >= closedAt);
+    assert.ok(!item(K(false), 'K5').ok && /ยังไม่ได้เทียบ/.test(item(K(false), 'K5').detail));
+    assert.ok(item(K(), 'K5').ok, item(K(), 'K5').detail);
+    run('apiAdjust(_o)', { _o: { material: MAT1, qty: 1, reason: 'RECOUNT', note: '', location: '', staff: 'EMP-K' } });
+    assert.ok(/ตัวเลขเปลี่ยนหลังบันทึกครั้งที่/.test(item(K(), 'K5').detail), 'ปรับยอดได้ระหว่างปิดการนับ และ K5 จับได้');
+    run('apiAdjustReverse(_i, "EMP-K", "ทดสอบ K5 เสร็จ")', { _i: AJ().slice(-1)[0][0] });   // คืนยอดเดิม (ชุดข้อมูลหน้า Admin ยังมี SKU ปรับเท่าบัญชี)
+    run('apiSummarySave()');
+    run('setConfig_({ SUMMARY_SAVED: _v })', { _v: JSON.stringify(Object.assign(JSON.parse(cfg().SUMMARY_SAVED), { at: '2000-01-01 00:00:00' })) });
+    assert.ok(/บันทึกก่อนปิดการนับ/.test(item(K(), 'K5').detail));
+    run('apiSummarySave()');
+    assert.ok(item(K(), 'K5').ok);
+  });
+  test('K6: Admin_Log เขียนไม่ติดค้างอยู่ → ✗ · กดรับทราบ → ✓', () => {
+    AL.dropWrites = true; run('logSys_("TEST", "-", "x")'); AL.dropWrites = false;
+    assert.ok(!item(K(false), 'K6').ok);
+    run('apiAckLogWarn()');
+    assert.ok(item(K(false), 'K6').ok);
+  });
+  test('K1 / K2: Location ที่ยังไม่ปิดและธงต้องตรวจซ้ำ แสดงชื่อ Location ให้ตามแก้', () => {
+    const R = K(false), open = run('apiDevicesState()').locations.filter(l => !/ปิดแล้ว/.test(l.Status));
+    const k1 = item(R, 'K1');
+    assert.strictEqual(k1.ok, open.length === 0);
+    open.slice(0, 30).forEach(l => assert.ok(k1.list.some(x => x.indexOf(l.Location + ' (') === 0), l.Location));
+    const flagged = run('apiDevicesState()').locations.filter(l => l.Flag_Check);
+    assert.strictEqual(item(R, 'K2').ok, flagged.length === 0);
+  });
+  test('เปิดการนับอีกครั้ง: ต้องมีเหตุผลและผู้ตรวจสอบ → COUNTING · ล้างเวลาปิด · บันทึก COUNT_REOPEN พร้อมเหตุผลและจำนวนที่รับระหว่างปิด', () => {
+    assert.throws(() => run('apiCountReopen("EMP-K", "  ")'), /เหตุผล/);
+    assert.throws(() => run('apiCountReopen("", "นับ C12 ใหม่")'), /ผู้ตรวจสอบ/);
+    const r = run('apiCountReopen("EMP-KH", "นับทวน C12 ไม่ตรง")');
+    const c = cfg();
+    assert.ok(c.ROUND_STATUS === 'COUNTING' && !c.COUNT_CLOSED_AT && !c.COUNT_CLOSED_BY && r.state.round.status === 'COUNTING');
+    const l = lastLog('COUNT_REOPEN');
+    assert.ok(/ผู้กด EMP-KH/.test(l[4]) && /นับทวน C12 ไม่ตรง/.test(l[4]) && /ระหว่างปิดรับ \d+ รายการ \(ยิงหลังปิด 1\)/.test(l[4]), l[4]);
+    assert.strictEqual(JSON.stringify(run('afterClose_()')), JSON.stringify({ n: 0, late: 0, last: '' }));
+    assert.throws(() => run('apiCountReopen("EMP-K", "ซ้ำ")'), /เฉพาะตอนปิดการนับแล้ว/);
+    assert.strictEqual(O.call('hello', { pending: 0, location: '' }).round, 'COUNTING');
+    assert.ok(!item(K(false), 'K7').ok && !item(K(false), 'K4').ok, 'กลับมานับ → K7 และ K4 ไม่ผ่าน (ต้องปิดและกระทบยอดใหม่)');
+  });
+}
+
 // DUMP_ADMIN=ไฟล์ → เก็บ apiDevicesState() ไว้ให้ tests/admin-ui.py ใช้แสดงหน้า Admin จริงในเบราว์เซอร์
 if (process.env.DUMP_ADMIN) {
   const st = run('apiDevicesState()');
   st.SUMMARY = run('apiSummary()');
   st.SKU_DETAIL = run('apiSkuDetail(_k)', { _k: MAT1 });
+  st.STATE = run('apiGetState()');      // v2.5.0 หน้า Admin ทั้งหน้า (การ์ดปิดการนับ / บันทึก Admin)
+  st.KCHECK = run('apiCloseCheck()');
   require('fs').writeFileSync(process.env.DUMP_ADMIN, JSON.stringify(st));
 }
 

@@ -43,6 +43,20 @@
   details summary { cursor:pointer; color:var(--acc); font-size:12px; }
   #toast { position:fixed; bottom:16px; left:50%; transform:translateX(-50%); padding:10px 16px; border-radius:8px; background:#111; color:#fff; display:none; max-width:80%; z-index:10; }
   #toast.err { background:var(--bad); }
+  /* error เป็นกล่องกลางจอ (v2.5.0) — อยู่บนสุด ทับกล่องรอ/กล่องอื่น */
+  #errDlg { position:fixed; inset:0; background:rgba(0,0,0,.35); display:none; align-items:center; justify-content:center; z-index:20; }
+  #errDlg.on { display:flex; }
+  #errDlg .box { background:#fff; border-radius:10px; padding:18px 20px; width:480px; max-width:94vw; max-height:90vh; overflow:auto; border-top:6px solid var(--bad); text-align:center; }
+  #errDlg .ic { width:46px; height:46px; line-height:46px; border-radius:50%; margin:2px auto 8px; background:var(--badbg); color:var(--bad); font-size:26px; font-weight:700; }
+  #errDlg h3 { margin:0 0 8px; color:var(--bad); }
+  #errMsg { white-space:pre-wrap; text-align:left; background:var(--soft); border-radius:8px; padding:10px 12px; }
+  /* ปิดการนับ / เงื่อนไขปิดรอบ (v2.5.0) */
+  .klist { width:100%; border-collapse:collapse; margin-top:8px; }
+  .klist td { border-top:1px solid var(--line); padding:6px 8px; vertical-align:top; }
+  .klist td.k { width:34px; font-weight:700; } .klist td.r { width:28px; font-size:18px; text-align:center; }
+  .klist .y { color:var(--ok); } .klist .x { color:var(--bad); }
+  .klist .fix { color:var(--warn); font-size:13px; margin-top:2px; } .klist .lst { color:var(--mut); font-size:12px; margin-top:2px; }
+  #askStaffBox select { min-width:260px; }
   .okline { color:#1a7f37; font-size:13px; margin:4px 0; }
   #trDlg, #revDlg, #flagDlg, #askDlg, #skuDlg, #walkDlg, #adjDlg { position:fixed; inset:0; background:rgba(0,0,0,.35); display:none; align-items:center; justify-content:center; z-index:8; }
   #trDlg.on, #revDlg.on, #flagDlg.on, #askDlg.on, #skuDlg.on, #walkDlg.on, #adjDlg.on { display:flex; }
@@ -139,6 +153,12 @@
         <h3>ตัวเลขสรุป</h3>
         <div class="kv" id="statsKv"></div>
       </div>
+    </div>
+    <!-- ปิดการนับ และเงื่อนไขปิดรอบ (เฟส 4 · v2.5.0) -->
+    <div class="card" style="margin-top:12px" id="closeCard">
+      <h3>ปิดการนับ และเงื่อนไขปิดรอบ</h3>
+      <div id="closeBox"></div>
+      <div id="kBox"></div>
     </div>
     <div class="card" style="margin-top:12px">
       <h3>อนุมัติ Master (รายการบาร์โค้ดที่ส่งลงเครื่อง)</h3>
@@ -250,6 +270,7 @@
 
   <!-- บันทึก -->
   <section id="log">
+    <div class="row"><label><input type="checkbox" id="logAll" onchange="renderLog()"> แสดงทุกรอบ</label> <span class="muted" id="logInfo"></span></div>
     <div class="scroll"><table id="logTbl"></table></div>
   </section>
 </main>
@@ -348,8 +369,9 @@
   <div id="askWhyBox" style="display:none">
     <div style="margin-top:10px"><b>เหตุผล</b> <span class="muted">(บังคับ)</span></div>
     <textarea id="askWhy" oninput="askCheck()"></textarea>
-    <div id="askNeed">ต้องใส่เหตุผลก่อน</div>
   </div>
+  <div id="askStaffBox" style="display:none;margin-top:10px"><b>รหัสผู้ตรวจสอบที่กด</b> <span class="muted">(บังคับ)</span><br><select id="askStaff" onchange="askCheck()"></select></div>
+  <div id="askNeed"></div>
   <div class="row" style="margin-top:12px;justify-content:flex-end">
     <button class="btn sec" id="askCancel" onclick="askClose()">ยกเลิก</button>
     <button class="btn" id="askOk" onclick="askDo()">ตกลง</button>
@@ -357,6 +379,13 @@
 </div></div>
 <div id="busy"><div class="bx"><div class="spin"></div><div id="busyMsg">กำลังทำงาน…</div><div class="sub" id="busySub">รอเซิร์ฟเวอร์ตอบ อย่าปิดหน้านี้</div></div></div>
 <div id="toast"></div>
+<div id="errDlg"><div class="box" role="alertdialog" aria-labelledby="errTitle">
+  <div class="ic">✕</div>
+  <h3 id="errTitle">ทำไม่สำเร็จ</h3>
+  <div id="errMsg"></div>
+  <div class="muted" style="margin-top:8px">ยังไม่มีอะไรเปลี่ยน เว้นแต่ข้อความด้านบนบอกไว้ · ถ้าไม่แน่ใจ กด F5 แล้วตรวจอีกครั้ง</div>
+  <div class="row" style="margin-top:12px;justify-content:center"><button class="btn" id="errOk" onclick="errClose()">รับทราบ</button></div>
+</div></div>
 
 <script>
 var S = null;            // state ล่าสุดจากเซิร์ฟเวอร์
@@ -368,18 +397,29 @@ var STATUS = { MATCH:['ตรง','ok'], QTY_DIFF:['ยอดต่าง','bad'
 function $(id) { return document.getElementById(id); }
 function esc(s) { return String(s === null || s === undefined ? '' : s).replace(/[&<>"]/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
 function fmt(n) { return n === '' || n === null || n === undefined ? '' : Number(n).toLocaleString('th-TH', { maximumFractionDigits: 2 }); }
-function toast(msg, err) { var t = $('toast'); t.textContent = msg; t.className = err ? 'err' : ''; t.style.display = 'block'; clearTimeout(t._h); t._h = setTimeout(function () { t.style.display = 'none'; }, err ? 8000 : 3500); }
+/** ข้อความแจ้ง: สำเร็จ = แถบล่างหายเอง · error = กล่องกลางจอ ต้องกดรับทราบ (v2.5.0 — UAT G9-4 error แถบล่างหายก่อนอ่านทัน) */
+function toast(msg, err) {
+  if (err) return errBox(msg);
+  var t = $('toast'); t.textContent = msg; t.className = err ? 'err' : ''; t.style.display = 'block'; clearTimeout(t._h); t._h = setTimeout(function () { t.style.display = 'none'; }, err ? 8000 : 3500); }
 /** กล่องรอกลางจอพร้อมไอคอนหมุน — บอกว่ากำลังรออะไร กันกดซ้ำ (v2.2.9) */
 function busy(on, msg, sub) {
   $('busy').style.display = on ? 'flex' : 'none';
   if (on) { $('busyMsg').textContent = msg || 'กำลังทำงาน…'; $('busySub').textContent = sub || 'รอเซิร์ฟเวอร์ตอบ อย่าปิดหน้านี้'; }
 }
 
+function errBox(msg, title) {
+  $('errTitle').textContent = title || 'ทำไม่สำเร็จ';
+  $('errMsg').textContent = String(msg || 'เกิดข้อผิดพลาด');
+  $('errDlg').classList.add('on');
+  setTimeout(function () { $('errOk').focus(); }, 30);
+}
+function errClose() { $('errDlg').classList.remove('on'); }
+document.addEventListener('keydown', function (e) { if ($('errDlg').classList.contains('on') && (e.key === 'Escape' || e.key === 'Enter')) { e.preventDefault(); errClose(); } });
 function call(fn, args, ok, msg) {
   busy(true, msg);
   google.script.run
     .withSuccessHandler(function (r) { busy(false); ok && ok(r); })
-    .withFailureHandler(function (e) { busy(false); toast(e && e.message ? e.message : String(e), true); })[fn].apply(null, args || []);
+    .withFailureHandler(function (e) { busy(false); errBox(e && e.message ? e.message : String(e)); })[fn].apply(null, args || []);
 }
 
 document.querySelectorAll('#nav button').forEach(function (b) {
@@ -439,10 +479,11 @@ function render(s) {
   S = s;
   $('who').textContent = s.user + ' · ระบบ v' + (s.version || '?');
   var r = s.round;
-  $('roundTag').textContent = r.projectId ? r.projectId + ' · นับ ' + r.countDate + ' · ' + r.status : 'ยังไม่เปิดรอบ';
+  $('roundTag').textContent = r.projectId ? r.projectId + ' · นับ ' + r.countDate + ' · ' + (r.statusTh || r.status) : 'ยังไม่เปิดรอบ';
+  $('roundTag').className = 'pill ' + (r.status === 'COUNT_CLOSED' ? 'warn' : r.status === 'CLOSED' ? 'bad' : 'info');
   $('provTag').style.display = s.master.hasPos && !s.master.hasSap ? '' : 'none';
   $('pid').value = r.projectId || defaultPid(); $('cdate').value = r.countDate || '';
-  $('roundKv').innerHTML = kv([['รหัสรอบ', r.projectId || '-'], ['วันนับ (D)', r.countDate || '-'], ['ยอดตามบัญชี ณ', r.countDate ? 'สิ้นวัน ' + prevDay(r.countDate) : '-'], ['สถานะ', r.status]]);
+  $('roundKv').innerHTML = kv([['รหัสรอบ', r.projectId || '-'], ['วันนับ (D)', r.countDate || '-'], ['ยอดตามบัญชี ณ', r.countDate ? 'สิ้นวัน ' + prevDay(r.countDate) : '-'], ['สถานะ', (r.statusTh || r.status) + ' (' + r.status + ')']]);
   var f = s.files;
   $('filesKv').innerHTML = kv([
     ['POS', f.pos.name ? esc(f.pos.name) + '<br><span class="muted">ไฟล์ลงวันที่ ' + esc(f.pos.date) + ' · อัปโหลด ' + esc(f.pos.at) + '</span>' : '<span class="pill bad">ยังไม่มี</span>'],
@@ -459,8 +500,74 @@ function render(s) {
   renderChecks(s.master.checks);
   renderConflicts(s.master);
   var b = $('confBadge'); b.textContent = s.master.pendingConflicts; b.style.display = s.master.pendingConflicts ? '' : 'none';
-  $('logTbl').innerHTML = '<tr><th>เวลา</th><th>ผู้ทำ</th><th>การกระทำ</th><th>สิ่งที่ถูกกระทำ</th><th>รายละเอียด</th></tr>' +
-    s.log.map(function (l) { return '<tr>' + l.map(function (c) { return '<td>' + esc(c) + '</td>'; }).join('') + '</tr>'; }).join('');
+  renderLog();
+  renderClose(s);
+}
+/** บันทึก Admin (v2.5.0): ค่าเริ่มต้นแสดงเฉพาะรอบปัจจุบัน · Admin_Log เก็บต่อเนื่องทุกรอบ */
+function renderLog() {
+  var L = S && S.log; if (!L) return;
+  var all = $('logAll').checked, list = all ? L.all : L.cur;
+  $('logInfo').textContent = all ? 'ทุกรอบ ' + L.allCount + ' รายการ (แสดงล่าสุด ' + list.length + ')' :
+    'รอบ ' + (L.project || '-') + ' ' + L.curCount + ' รายการ (แสดงล่าสุด ' + list.length + ') · ทั้งชีต ' + L.allCount + ' รายการ';
+  $('logTbl').innerHTML = '<tr><th>เวลา</th><th>ผู้ทำ</th><th>การกระทำ</th><th>สิ่งที่ถูกกระทำ</th><th>รายละเอียด</th><th>รอบ</th></tr>' +
+    list.map(function (l) { return '<tr>' + l.map(function (c) { return '<td>' + esc(c) + '</td>'; }).join('') + '</tr>'; }).join('');
+}
+
+// ---------- ปิดการนับ / เงื่อนไขปิดรอบ (เฟส 4 · v2.5.0) ----------
+var KCHK = null;
+function renderClose(s) {
+  var r = s.round, h = '';
+  if (r.status === 'COUNTING') {
+    h = '<div>สถานะ: <span class="pill info">กำลังนับ</span></div>' +
+      '<div class="muted" style="margin:6px 0">กดเมื่อนับครบทุกจุดแล้ว · เครื่องจะหยุดยิงและเปิด Location ใหม่ไม่ได้ · รายการที่ค้างส่งยังเข้าได้ · ผู้ดูแลยังกด "ปิด Location" / ผู้ช่วยยังกด "ส่งงาน" ได้ · หน้านี้ยังปรับยอด สรุปผล และพิมพ์ใบเดินตรวจได้</div>' +
+      '<button class="btn" onclick="countClose()">ปิดการนับ</button>';
+  } else if (r.status === 'COUNT_CLOSED') {
+    h = '<div>สถานะ: <span class="pill warn">ปิดการนับแล้ว</span> <span class="muted">เมื่อ ' + esc(r.closedAt) + ' โดย ' + esc(r.closedBy) + '</span></div>' +
+      '<div class="muted" style="margin:6px 0">เครื่องยิงไม่ได้ · ต้องนับเพิ่ม กด "เปิดการนับอีกครั้ง" (ใส่เหตุผล) · ขั้นต่อไป: ทำเงื่อนไขด้านล่างให้ครบ แล้วปิดรอบ (ปุ่มปิดรอบมาใน v2.5.1)</div>' +
+      '<button class="btn sec" onclick="countReopen()">เปิดการนับอีกครั้ง</button>';
+  } else {
+    h = '<div>สถานะ: <span class="pill info">' + esc(r.statusTh || r.status) + '</span></div><div class="muted" style="margin-top:6px">' +
+      (r.status === 'SETUP' ? 'ปุ่ม "ปิดการนับ" ใช้ได้เมื่อเครื่องเริ่มส่งรายการแรก (สถานะเป็น "กำลังนับ")' : r.status === 'CLOSED' ? 'ปิดรอบแล้ว' : 'ยังไม่เปิดรอบ') + '</div>';
+  }
+  $('closeBox').innerHTML = h;
+  var canCheck = !!r.projectId && r.status !== 'NONE';
+  $('kBox').innerHTML = canCheck ? '<div class="row" style="margin-top:10px"><button class="btn sec" onclick="closeCheck()">ตรวจเงื่อนไขปิดรอบ</button>' +
+    '<span class="muted">ดูอย่างเดียว ไม่เปลี่ยนข้อมูล · คำนวณผลสรุปใหม่เพื่อเทียบ (ใช้เวลาครู่หนึ่ง)</span></div><div id="kList">' + (KCHK && KCHK.project === r.projectId ? kHtml(KCHK) : '') + '</div>' : '';
+}
+function kHtml(K) {
+  var bad = K.items.filter(function (x) { return !x.ok; }).length;
+  return '<div style="margin-top:8px"><b>' + (K.ok ? '<span class="y" style="color:var(--ok)">✓ ครบทุกเงื่อนไข</span> พร้อมปิดรอบ' : '<span style="color:var(--bad)">✗ ยังไม่ครบ ' + bad + ' ข้อ</span>') + '</b> <span class="muted">ตรวจเมื่อ ' + esc(K.at) +
+    (K.full ? '' : ' · ยังไม่ได้เทียบตัวเลข K5 กด "ตรวจเงื่อนไขปิดรอบ"') + '</span>' +
+    (K.after && K.after.n ? '<div class="card" style="margin-top:6px;border-color:var(--warn);background:var(--warnbg)">หลังปิดการนับ รับรายการเพิ่ม ' + K.after.n + ' รายการ' +
+      (K.after.late ? ' · <b>ยิงหลังเวลาปิด ' + K.after.late + ' รายการ</b> (เครื่องยังไม่รู้ว่าปิด เช่น ออฟไลน์) — ดูรายละเอียดใน บันทึก Admin (SYNC_AFTER_COUNT_CLOSE)' : ' (ค้างส่งจากก่อนปิด)') + '</div>' : '') +
+    '<table class="klist">' + K.items.map(function (x) {
+      return '<tr><td class="k">' + esc(x.id) + '</td><td class="r ' + (x.ok ? 'y' : 'x') + '">' + (x.ok ? '✓' : '✗') + '</td><td><b>' + esc(x.title) + '</b><div>' + esc(x.detail) + '</div>' +
+        (x.list && x.list.length ? '<div class="lst">' + x.list.map(esc).join(' · ') + '</div>' : '') + (x.fix ? '<div class="fix">ทำอย่างไร: ' + esc(x.fix) + '</div>' : '') + '</td></tr>';
+    }).join('') + '</table></div>';
+}
+function closeCheck() {
+  call('apiCloseCheck', [], function (K) { KCHK = K; $('kList').innerHTML = kHtml(K); }, 'กำลังตรวจเงื่อนไขปิดรอบ…');
+}
+function countClose() {
+  ask({ title: 'ปิดการนับ รอบ ' + S.round.projectId + '?', ok: 'ปิดการนับ', staff: true,
+    body: '<div>หลังกด:</div><ul style="margin:4px 0 0 18px;padding:0"><li>เครื่องทุกเครื่องยิงสินค้าและเปิด Location ใหม่ไม่ได้ (รู้ภายใน 1 นาที)</li>' +
+      '<li>รายการที่ค้างส่งในเครื่องยังส่งเข้ามาได้ตามปกติ</li><li>ผู้ดูแลยังกด "ปิด Location" ผู้ช่วยยังกด "ส่งงาน" ได้</li>' +
+      '<li>หน้านี้ยังปรับยอด สรุปผล และพิมพ์ใบเดินตรวจได้</li><li>ต้องนับเพิ่ม: กด "เปิดการนับอีกครั้ง" พร้อมเหตุผล</li></ul>' }, function (why, st) {
+    call('apiCountClose', [st], function (r) { KCHK = r.check; setState(r.state); closeDoneBox(r.check, true); }, 'กำลังปิดการนับ…');
+  });
+}
+function countReopen() {
+  ask({ title: 'เปิดการนับอีกครั้ง รอบ ' + S.round.projectId + '?', ok: 'เปิดการนับอีกครั้ง', staff: true, why: 'เช่น นับทวน C12 ไม่ตรงกับพนักงานหน้าร้าน ต้องนับใหม่',
+    body: '<div>เครื่องจะยิงได้อีกครั้ง (รู้ภายใน 1 นาที) · ผลสรุปที่บันทึกไว้แล้วต้องบันทึกใหม่หลังปิดการนับครั้งถัดไป · บันทึกเหตุผลใน Admin_Log (COUNT_REOPEN)</div>' }, function (why, st) {
+    call('apiCountReopen', [st, why], function (r) { KCHK = r.check; setState(r.state); closeDoneBox(r.check, false); }, 'กำลังเปิดการนับอีกครั้ง…');
+  });
+}
+function closeDoneBox(K, closed) {
+  var k1 = K.items[0], k3 = K.items[2];
+  ask({ title: closed ? '✓ ปิดการนับแล้ว' : '✓ เปิดการนับอีกครั้งแล้ว', ok: 'ปิด', noCancel: true,
+    body: closed ? '<div>เครื่องจะขึ้นกล่อง "ปิดการนับแล้ว" และหยุดยิงภายใน 1 นาที</div><div style="margin-top:6px">ตอนนี้: ' + esc(k1.detail) + ' · ' + esc(k3.detail) + '</div>' +
+      '<div class="muted" style="margin-top:6px">ขั้นต่อไป: ให้ทุก Location ปิด · เครื่องค้างส่ง 0 → กระทบยอดทั้งรอบ → สรุปผลและบันทึก → กด "ตรวจเงื่อนไขปิดรอบ"</div>' :
+      '<div>เครื่องยิงได้อีกครั้งภายใน 1 นาที · นับเสร็จแล้วกด "ปิดการนับ" อีกครั้ง</div>' }, function () {});
 }
 
 function kv(pairs, raw) { return pairs.map(function (p) { return '<div>' + esc(p[0]) + '</div><div>' + (raw ? p[1] : esc(p[1])) + '</div>'; }).join(''); }
@@ -846,6 +953,10 @@ function adjCheck() {
       var after = Math.round((r[5] + q) * 1000) / 1000, d = Math.round((after - r[2]) * 1000) / 1000;
       info += '<div style="margin-top:6px">หลังบันทึก: ยอดสุดท้าย <b>' + nf(r[5]) + ' → ' + nf(after) + '</b> · ต่าง <b class="' + cls(d) + '">' + sgn(d) + '</b>' +
         (d === 0 ? ' <span class="pill warn">ปรับเท่ายอดบัญชีพอดี — ระบบจะติดป้ายให้ผู้ตรวจทานเห็น</span>' : '') + '</div>';
+      // Q8 (v2.5.0): จำนวนหักล้างบรรทัดเดิมของ SKU นี้พอดี (เช่น ADJ-0002 +71 หักล้าง ADJ-0001 −71) → แนะนำ "กลับรายการ" แต่ไม่กัน
+      var off = (SUM.adjustments || []).filter(function (a) { return a[2] === r[0] && !a[10] && !a[11] && Math.round((Number(a[4]) + q) * 1000) === 0; });
+      if (off.length) info += '<div class="card" style="margin-top:8px;background:var(--soft)">⚠ จำนวนนี้หักล้าง <b>' + off.map(function (a) { return esc(a[0]) + ' (' + sgn(a[4]) + ' · ' + esc(a[5]) + ')'; }).join(', ') + '</b> พอดี<br>' +
+        'ถ้าต้องการยกเลิกบรรทัดที่คีย์ผิด ให้กดยกเลิกฟอร์มนี้ แล้วกด <b>"กลับรายการ"</b> ที่บรรทัดนั้นแทน — รายงานจะเห็นว่าเป็นการแก้ ไม่ใช่การปรับใหม่<br><span class="muted">ถ้าตั้งใจปรับใหม่จริง (เช่น นับทวนอีกรอบได้ยอดกลับมา) บันทึกต่อได้</span></div>';
     }
   }
   $('adjInfo').innerHTML = info || '<span class="muted">ยิงหรือพิมพ์บาร์โค้ด / Material แล้วจะเห็นยอดปัจจุบัน</span>';
@@ -1099,7 +1210,7 @@ function submitFor(loc, dev) {
   });
 }
 /** กล่องยืนยันกลางหน้า (v2.3.6): opt {title, body(html), ok, why(placeholder → ต้องใส่เหตุผล)} · done(why) เมื่อกดตกลง */
-var ASK = null;
+var ASK = null, LAST_STAFF = '';
 function ask(opt, done) {
   ASK = { opt: opt, done: done };
   $('askTitle').textContent = opt.title; $('askBody').innerHTML = opt.body || '';
@@ -1107,21 +1218,28 @@ function ask(opt, done) {
   $('askCancel').style.display = opt.noCancel ? 'none' : '';   // กล่องแจ้งผล (v2.4.1): ปุ่มเดียว
   $('askWhyBox').style.display = opt.why ? 'block' : 'none';
   $('askWhy').value = ''; $('askWhy').placeholder = opt.why || '';
+  // เลือกรหัสผู้ตรวจสอบ (v2.5.0): opt.staff = true → ต้องเลือกก่อนกดตกลง · done(why, staff)
+  $('askStaffBox').style.display = opt.staff ? 'block' : 'none';
+  if (opt.staff) $('askStaff').innerHTML = '<option value="">— เลือกรหัสผู้ตรวจสอบ —</option>' + ((S && S.staff) || []).map(function (x) {
+    return '<option value="' + esc(x[0]) + '"' + (x[0] === LAST_STAFF ? ' selected' : '') + '>' + esc(x[0] + ' ' + x[1]) + '</option>'; }).join('');
   askCheck();
   $('askDlg').classList.add('on');
   (opt.why ? $('askWhy') : $('askOk')).focus();
 }
 function askCheck() {
-  var need = ASK && ASK.opt.why, ok = !need || !!$('askWhy').value.trim();
-  $('askOk').disabled = !ok; $('askNeed').style.display = ok ? 'none' : 'block';
-  $('askWhy').classList.toggle('need', !ok);
+  var o = ASK ? ASK.opt : {}, whyOk = !o.why || !!$('askWhy').value.trim(), stOk = !o.staff || !!$('askStaff').value, need = [];
+  if (!whyOk) need.push('ต้องใส่เหตุผลก่อน');
+  if (!stOk) need.push('ต้องเลือกรหัสผู้ตรวจสอบก่อน');
+  $('askOk').disabled = !(whyOk && stOk); $('askNeed').innerHTML = need.map(esc).join('<br>'); $('askNeed').style.display = need.length ? 'block' : 'none';
+  $('askWhy').classList.toggle('need', !whyOk);
 }
 function askClose() { $('askDlg').classList.remove('on'); ASK = null; }
 function askDo() {
   if (!ASK) return;
-  var why = $('askWhy').value.trim();
-  if (ASK.opt.why && !why) { askCheck(); return; }
-  var done = ASK.done; askClose(); done(why);
+  var why = $('askWhy').value.trim(), st = ASK.opt.staff ? $('askStaff').value : '';
+  if ((ASK.opt.why && !why) || (ASK.opt.staff && !st)) { askCheck(); return; }
+  if (st) LAST_STAFF = st;
+  var done = ASK.done; askClose(); done(why, st);
 }
 /** ปิดธงต้องตรวจซ้ำ หลังหัวหน้าทีมตรวจแล้ว (อีกทาง: ผู้ดูแลล้าง Location แล้วนับใหม่ ธงหายเอง) */
 // กล่องแทน prompt(): ปุ่มปิดธงกดไม่ได้จนกว่าจะใส่เหตุผล และบอกเป็นตัวแดงว่าขาดอะไร (F3, v2.2.9)

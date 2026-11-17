@@ -198,12 +198,18 @@ sequenceDiagram
 - เหตุการณ์ Location ที่ตัดสินแล้ว (ไม่ใช่ WAIT) จำผลไว้ 6 ชม. (CacheService `ev_<เครื่อง>_<id>`) — ส่งซ้ำได้ผลเดิม ไม่บันทึก Loc_Checks ซ้ำ
 
 ## hello (v2.2.2)
-คำขอ: `{ pending, location }` → `{ ok }`
+คำขอ: `{ pending, location }` → `{ ok, round, project }` (v2.5.0: `round` = ROUND_STATUS ให้เครื่องรู้ว่าปิด / เปิดการนับภายใน 1 นาที · `sync` ตอบ `round` ด้วย)
 - เก็บ `{ at, pending, loc }` ใน CacheService key `hb_<Device_ID>` อายุ 6 ชม. ไม่เขียนชีตและไม่ใช้ล็อก
 - `sync` บันทึกค่าเดียวกันด้วย (`pendingAfter` = จำนวนที่ยังค้างหลังชุดนี้)
 - หน้า Admin → เครื่อง TC21 → คอลัมน์ "ติดต่อล่าสุด": แดงเมื่อไม่ติดต่อเกิน 10 นาทีและครั้งล่าสุดรายงานว่ามีค้าง, เหลืองเมื่อไม่ติดต่อเกิน 10 นาที
 - เครื่องที่ถูกยกเลิกจะได้ `DEVICE_DISABLED` / `BAD_TOKEN` ภายใน 1 นาที และขึ้นแถบแดงทันที
 - ข้อจำกัด: ถ้าเครื่องออฟไลน์แล้วยิงต่อ เซิร์ฟเวอร์จะเห็นจำนวนค้างของครั้งสุดท้ายที่ติดต่อได้ ไม่ใช่ของปัจจุบัน
+
+## ปิดการนับ (v2.5.0)
+- `ROUND_STATUS = COUNT_CLOSED`: `sync` ยังรับรายการเข้า Count_Log ตามปกติ (ค้างส่งจากก่อนปิด ไม่กักไว้ใน Quarantine) · เหตุการณ์ SUBMIT / PAUSE / CLOSE รับตามปกติ
+- รายการที่รับระหว่างปิด → นับใน Script Properties `AFTER_COUNT_CLOSE` และบันทึก `SYNC_AFTER_COUNT_CLOSE` · รายการที่ `scanTime` ≥ `COUNT_CLOSED_AT` นับเป็น "ยิงหลังเวลาปิด" (เครื่องยังไม่รู้ว่าปิด เช่น ออฟไลน์)
+- แอป: รู้สถานะจาก bootstrap / sync / hello (จำใน `boot.project.status` ใช้ตอนออฟไลน์) · ปิดแล้ว → กล่องกลางจอ "ปิดการนับแล้ว" · ไม่รับการยิงสินค้า ป้อนเอง ยกเลิกล่าสุด แก้ / ล้าง / ย้อนยอด และเปิด Location ใหม่ · ยังกลับเข้า Location ที่เครื่องนี้ พัก / กำลังนับ อยู่ได้ เพื่อกด "ปิด Location" / "ส่งงาน" · ค้นหา SKU ได้
+- หน้า Admin: `apiCountClose(staff)` · `apiCountReopen(staff, why)` · `apiCloseCheck()` (K1–K7 ดูอย่างเดียว)
 
 ## unpair (v2.2.2)
 คำขอ: `{ staff }` → `{ ok }` · ล้าง Token_Hash/Pair_Code ของเครื่อง ลบ heartbeat และบันทึก `DEVICE_UNPAIRED` ใน Admin_Log

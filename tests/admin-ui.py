@@ -16,7 +16,11 @@ window.google = { script: { run: (function mk(ok, bad) {
   return new Proxy({}, { get: function (t, k) {
     if (k === 'withSuccessHandler') return function (f) { return mk(f, bad); };
     if (k === 'withFailureHandler') return function (f) { return mk(ok, f); };
-    return function () { CALLS.push([k].concat([].slice.call(arguments))); var r = k === 'apiReconcile' ? window.RECON : k === 'apiSummary' ? window.ST.SUMMARY : k === 'apiSummarySave' ? Object.assign({}, window.ST.SUMMARY, { run: 3, saved: 9, same: !!window.SAME, prevAt: '2026-11-16 10:58:15', lastSave: { run: 3, at: window.ST.SUMMARY.at } }) : k === 'apiAdjust' || k === 'apiAdjustReverse' ? Object.assign({}, window.ST.SUMMARY, { adjDone: { id: 'ADJ-0099', material: 'A112101UT0550XK', name: 'SHIRT', qty: -1, before: 10, after: 9, book: 52, reversed: k === 'apiAdjustReverse' ? 'ADJ-0001' : '' } }) : k === 'apiSkuDetail' ? window.ST.SKU_DETAIL : k === 'apiDevicesState' || k.indexOf('apiLoc') === 0 || k === 'apiPairCode' ? window.ST : {};
+    return function () { CALLS.push([k].concat([].slice.call(arguments)));
+      if (window.FAIL && window.FAIL[k]) { var m = window.FAIL[k]; setTimeout(function () { bad && bad({ message: m }); }, 0); return; }
+      if (k === 'apiCloseCheck') { setTimeout(function () { ok && ok(window.ST.KCHECK); }, 0); return; }
+      if (k === 'apiCountClose' || k === 'apiCountReopen') { setTimeout(function () { ok && ok(window.CLOSERES); }, 0); return; }
+      var r = k === 'apiReconcile' ? window.RECON : k === 'apiSummary' ? window.ST.SUMMARY : k === 'apiSummarySave' ? Object.assign({}, window.ST.SUMMARY, { run: 3, saved: 9, same: !!window.SAME, prevAt: '2026-11-16 10:58:15', lastSave: { run: 3, at: window.ST.SUMMARY.at } }) : k === 'apiAdjust' || k === 'apiAdjustReverse' ? Object.assign({}, window.ST.SUMMARY, { adjDone: { id: 'ADJ-0099', material: 'A112101UT0550XK', name: 'SHIRT', qty: -1, before: 10, after: 9, book: 52, reversed: k === 'apiAdjustReverse' ? 'ADJ-0001' : '' } }) : k === 'apiSkuDetail' ? window.ST.SKU_DETAIL : k === 'apiDevicesState' || k.indexOf('apiLoc') === 0 || k === 'apiPairCode' ? window.ST : {};
       setTimeout(function () { ok && ok(r); }, 0); };
   } });
 })() } };
@@ -198,6 +202,79 @@ with sync_playwright() as p:
     pg.screenshot(path='/tmp/admin-recon.png', full_page=False)
     pg.evaluate("renderDevices(window.ST)")
     pg.screenshot(path='/tmp/admin-ui.png', full_page=True)
+
+    print('v2.5.0: error กล่องกลางจอ · ปิดการนับ · เงื่อนไขปิดรอบ · บันทึก Admin รอบนี้ · Q8')
+    # Q8: จำนวนที่หักล้างบรรทัดเดิมพอดี → เตือนในฟอร์ม แต่ยังบันทึกได้
+    pg.evaluate("loadSummary()"); pg.wait_for_timeout(100)
+    act = [a for a in pg.evaluate('SUM.adjustments') if not a[10] and not a[11]]
+    a0 = act[0]
+    pg.click('text=+ ปรับยอด'); pg.fill('#adjMat', a0[2]); pg.fill('#adjQty', str(-a0[4])); pg.check('input[name=adjR][value=RECOUNT]'); pg.select_option('#adjStaff', 'EMP-K'); pg.wait_for_timeout(50)
+    info = pg.inner_text('#adjInfo')
+    check('หักล้าง' in info and a0[0] in info and 'กลับรายการ' in info and not pg.is_disabled('#adjOk'), 'Q8: คีย์จำนวนตรงข้ามกับ ' + a0[0] + ' → เตือนให้ใช้ "กลับรายการ" แต่ยังกดบันทึกได้')
+    pg.screenshot(path='/tmp/admin-q8.png')
+    pg.fill('#adjQty', str(-a0[4] + 1)); pg.wait_for_timeout(30)
+    check('หักล้าง' not in pg.inner_text('#adjInfo'), 'จำนวนไม่หักล้างพอดี → ไม่เตือน')
+    pg.click('#adjDlg >> text=ยกเลิก')
+    # error ทุกปุ่มเป็นกล่องกลางจอ (call → withFailureHandler)
+    pg.evaluate("window.FAIL = { apiSummarySave: 'มีคนกำลังบันทึกข้อมูลอยู่ ลองใหม่อีกครั้ง' }")
+    pg.click('text=สรุปผลและบันทึก'); pg.wait_for_timeout(50); pg.click('#askOk'); pg.wait_for_timeout(150)
+    check(pg.is_visible('#errDlg') and 'ทำไม่สำเร็จ' in pg.inner_text('#errTitle') and 'มีคนกำลังบันทึก' in pg.inner_text('#errMsg') and not pg.is_visible('#busy'),
+          'บันทึกไม่สำเร็จ → กล่อง ✕ กลางจอ (ไม่ใช่แถบล่าง) · กล่องรอปิดแล้ว (UAT G9-4)')
+    pg.screenshot(path='/tmp/admin-err.png')
+    pg.wait_for_timeout(9000)
+    check(pg.is_visible('#errDlg'), 'กล่อง error ไม่หายเอง (รอ 9 วินาที) ต้องกดรับทราบ')
+    pg.click('#errOk'); check(not pg.is_visible('#errDlg'), 'กด "รับทราบ" → ปิด')
+    pg.evaluate("toast('ทดสอบข้อความผิด', true)")
+    check(pg.is_visible('#errDlg') and not pg.is_visible('#toast'), 'toast แบบ error ทุกจุด → กล่องกลางจอ')
+    pg.keyboard.press('Enter'); check(not pg.is_visible('#errDlg'), 'กด Enter ปิดกล่อง error ได้')
+    pg.evaluate("window.FAIL = {}")
+    # หน้าภาพรวม: การ์ดปิดการนับ (สถานะกำลังนับ)
+    pg.evaluate("st => { setState(st); }", st['STATE'])
+    pg.click('#nav button[data-t=overview]')
+    cb = pg.inner_text('#closeCard')
+    check(st['STATE']['round']['status'] == 'COUNTING' and 'กำลังนับ' in cb and pg.is_visible('#closeBox button:has-text("ปิดการนับ")') and 'ตรวจเงื่อนไขปิดรอบ' in cb, 'กำลังนับ: การ์ดมีปุ่ม "ปิดการนับ" + "ตรวจเงื่อนไขปิดรอบ"')
+    check('กำลังนับ' in pg.inner_text('#roundTag'), 'ป้ายรอบด้านบนเป็นภาษาไทย: ' + pg.inner_text('#roundTag'))
+    pg.evaluate('CALLS.length = 0'); pg.click('#closeBox button:has-text("ปิดการนับ")'); pg.wait_for_timeout(50)
+    check(pg.is_visible('#askDlg') and 'ปิดการนับ รอบ 2026Q4' in pg.inner_text('#askTitle') and pg.is_visible('#askStaff') and pg.is_disabled('#askOk') and 'รหัสผู้ตรวจสอบ' in pg.inner_text('#askNeed'),
+          'กด "ปิดการนับ" → กล่องอธิบายผล + ต้องเลือกรหัสผู้ตรวจสอบก่อน')
+    pg.screenshot(path='/tmp/admin-countclose-ask.png')
+    closed = json.loads(json.dumps(st['STATE'])); closed['round'].update({'status': 'COUNT_CLOSED', 'statusTh': 'ปิดการนับแล้ว', 'closedAt': '2026-11-20 17:05:00', 'closedBy': 'EMP-K'})
+    k = json.loads(json.dumps(st['KCHECK'])); k['full'] = False
+    pg.evaluate("x => { window.CLOSERES = x; }", {'state': closed, 'check': k})
+    pg.select_option('#askStaff', 'EMP-K'); check(not pg.is_disabled('#askOk'), 'เลือกรหัสแล้ว → กดได้')
+    pg.click('#askOk'); pg.wait_for_timeout(150)
+    check(['apiCountClose', 'EMP-K'] in pg.evaluate('CALLS'), 'เรียก apiCountClose(รหัสผู้ตรวจสอบ)')
+    box = pg.inner_text('#askDlg')
+    check(pg.is_visible('#askDlg') and 'ปิดการนับแล้ว' in box and 'ขั้นต่อไป' in box and not pg.is_visible('#askCancel'), 'ผลในกล่องกลางจอ บอกสถานะ Location / เครื่อง และขั้นต่อไป: ' + box.replace('\n', ' ')[:140])
+    pg.click('#askOk')
+    cb = pg.inner_text('#closeCard')
+    check('ปิดการนับแล้ว' in cb and 'EMP-K' in cb and pg.is_visible('#closeBox button:has-text("เปิดการนับอีกครั้ง")') and 'ปิดการนับแล้ว' in pg.inner_text('#roundTag'), 'การ์ดเปลี่ยนเป็น "ปิดการนับแล้ว" + ปุ่ม "เปิดการนับอีกครั้ง"')
+    check('K7' in pg.inner_text('#kList') and 'ยังไม่ได้เทียบตัวเลข K5' in pg.inner_text('#kList'), 'หลังกดปิดแสดงเงื่อนไขทันที (แบบเร็ว ยังไม่เทียบ K5)')
+    # ตรวจเงื่อนไขปิดรอบ (ผลจริงจาก gas-env)
+    pg.click('text=ตรวจเงื่อนไขปิดรอบ'); pg.wait_for_timeout(150)
+    kl = pg.inner_text('#kList'); K = st['KCHECK']
+    rows = pg.locator('#kList .klist tr').count()
+    check(rows == 7 and all(x['id'] in kl and x['title'][:12] in kl for x in K['items']), 'แผงเงื่อนไขแสดง K1–K7 ครบ 7 แถว')
+    bad = [x for x in K['items'] if not x['ok']]
+    check(('ยังไม่ครบ %d ข้อ' % len(bad)) in kl and all(x['fix'][:15] in kl for x in bad), 'ข้อที่ไม่ผ่านบอกจำนวนและ "ทำอย่างไร" ทุกข้อ: ' + ', '.join(x['id'] for x in bad))
+    check(pg.locator('#kList .klist td.r.x').count() == len(bad) and pg.locator('#kList .klist td.r.y').count() == 7 - len(bad), 'เครื่องหมาย ✓/✗ ตรงกับผลจากเซิร์ฟเวอร์')
+    pg.screenshot(path='/tmp/admin-kpanel.png', full_page=True)
+    # เปิดการนับอีกครั้ง: ต้องมีเหตุผล + ผู้ตรวจสอบ
+    pg.evaluate('CALLS.length = 0'); pg.click('#closeBox button:has-text("เปิดการนับอีกครั้ง")'); pg.wait_for_timeout(50)
+    check(pg.is_disabled('#askOk') and 'เหตุผล' in pg.inner_text('#askNeed') and pg.is_visible('#askWhy') and pg.is_visible('#askStaff'), 'เปิดการนับอีกครั้ง → ต้องใส่เหตุผล (บังคับ) + ช่องรหัสผู้ตรวจสอบ')
+    check(pg.input_value('#askStaff') == 'EMP-K', 'จำรหัสผู้ตรวจสอบล่าสุดไว้ให้')
+    pg.fill('#askWhy', 'นับทวน C12 ไม่ตรง'); pg.evaluate("x => { window.CLOSERES = x; }", {'state': st['STATE'], 'check': k})
+    pg.click('#askOk'); pg.wait_for_timeout(150)
+    check(['apiCountReopen', 'EMP-K', 'นับทวน C12 ไม่ตรง'] in pg.evaluate('CALLS'), 'เรียก apiCountReopen(รหัส, เหตุผล)')
+    pg.click('#askOk')
+    # บันทึก Admin: รอบนี้ / ทุกรอบ
+    pg.click('#nav button[data-t=log]')
+    L = st['STATE']['log']
+    n = pg.locator('#logTbl tr').count() - 1
+    check(n == len(L['cur']) and 'รอบ 2026Q4' in pg.inner_text('#logInfo') and pg.locator('#logTbl tr >> nth=0').inner_text().split('\t')[-1] == 'รอบ', 'บันทึก Admin แสดงเฉพาะรอบนี้ + คอลัมน์รอบ: ' + pg.inner_text('#logInfo'))
+    pg.check('#logAll'); pg.wait_for_timeout(30)
+    check(pg.locator('#logTbl tr').count() - 1 == len(L['all']) and 'ทุกรอบ' in pg.inner_text('#logInfo'), 'ติ๊ก "แสดงทุกรอบ" → เห็นทุกรอบ')
+    check(not dialogs, 'ไม่มี popup ของเบราว์เซอร์: ' + json.dumps(dialogs, ensure_ascii=False))
     b.close()
 print('\nผล: ผ่าน %d / ไม่ผ่าน %d' % (P, F))
 sys.exit(1 if F else 0)

@@ -6,13 +6,13 @@
  * (API สำหรับ TC21 จะเพิ่มในเฟส 2 แยกต่างหาก และต้องใช้ device token)
  */
 
-var SCHEMA_VERSION = 7;   // 6 = v2.4.1 Variance.Barcode · 7 = v2.4.2 ชีต Adjustments
+var SCHEMA_VERSION = 8;   // 6 = v2.4.1 Variance.Barcode · 7 = v2.4.2 ชีต Adjustments · 8 = v2.5.0 Admin_Log.Project_ID
 
 /**
  * เวอร์ชันของระบบ (ใช้เลขเดียวทั้งแอป TC21 และเซิร์ฟเวอร์ ตาม Semantic Versioning MAJOR.MINOR.PATCH)
  * ต้องตรงกับ APP_VERSION ใน app/app.js และ appVersion ใน app/config.json — ดู CHANGELOG.md
  */
-var SYSTEM_VERSION = '2.4.2';
+var SYSTEM_VERSION = '2.5.0';
 
 var SHEETS = {
   Config: ['Key', 'Value', 'Note'],
@@ -44,7 +44,8 @@ var SHEETS = {
   Dash_Data: ['Key', 'Value', 'Updated_At'],
   Count_History: ['Project_ID', 'Count_Date', 'SAP_Qty', 'Net_Count', 'Diff_Qty', 'Diff_Value', 'Diff_Items', 'Edits',
     'Archive_Link', 'Checksum'],
-  Admin_Log: ['Time', 'By', 'Action', 'Target', 'Detail'],
+  // Project_ID (v2.5.0): รหัสรอบของแต่ละแถว — Admin_Log เก็บต่อเนื่องข้ามรอบ (ตัดสิน Q2 เฟส 4) หน้า Admin แสดงเฉพาะรอบปัจจุบัน
+  Admin_Log: ['Time', 'By', 'Action', 'Target', 'Detail', 'Project_ID'],
   // ผลสรุปราย SKU ทุกครั้งที่กด "สรุปผลและบันทึก" (v2.4.0) — เก็บต่อท้าย ไม่เขียนทับ
   Variance: ['Run', 'Time', 'Project_ID', 'SAP_File', 'Material', 'Name', 'Book_Qty', 'Book_Source', 'Device_Qty', 'Adjust_Qty',
     'Final_Qty', 'Diff_Qty', 'Unit_Cost', 'Diff_Value', 'SAP_IT', 'SAP_QI', 'SAP_BL', 'Locations', 'Barcode'],
@@ -86,7 +87,11 @@ var CONFIG_DEFAULTS = [
   ['MASTER_APPROVED_ACK', '', 'คำเตือนที่รับทราบแล้ว (คั่นด้วย ,)'],
   ['APP_URL', 'https://iacheckstock-dev.github.io/stockcount/app/', 'ที่อยู่เว็บแอป TC21 (GitHub Pages)'],
   ['MEMBERS_MIGRATED', '', 'รอบที่ย้ายข้อมูล Location เป็นผู้ดูแล/ผู้ช่วยแล้ว (v2.2.0)'],
-  ['API_URL', '', 'URL ของ Web app ที่เครื่องใช้ (Deployment ที่ Active ลงท้าย /exec) — ต้องตรงกับ app/config.json']
+  ['API_URL', '', 'URL ของ Web app ที่เครื่องใช้ (Deployment ที่ Active ลงท้าย /exec) — ต้องตรงกับ app/config.json'],
+  ['COUNT_CLOSED_AT', '', 'เวลากด "ปิดการนับ" (v2.5.0) · ว่าง = ยังไม่ปิด หรือเปิดการนับอีกครั้งแล้ว'],
+  ['COUNT_CLOSED_BY', '', 'รหัสผู้ตรวจสอบที่กดปิดการนับ'],
+  ['LAST_RECONCILE', '', 'ผลกระทบยอดทั้งรอบครั้งล่าสุด (JSON) — ใช้ตรวจเงื่อนไขปิดรอบ K4'],
+  ['SUMMARY_SAVED', '', 'ผลสรุปที่บันทึกล่าสุด (JSON: project, run, at, sig) — ใช้ตรวจเงื่อนไขปิดรอบ K5']
 ];
 
 // ---------- เมนูและหน้า Admin ----------
@@ -219,7 +224,7 @@ function now_() {
 function logAdmin_(action, target, detail) {
   var sh = SpreadsheetApp.getActive().getSheetByName('Admin_Log');
   if (!sh) throw new Error('ไม่พบชีต Admin_Log — บันทึกการกระทำไม่ได้');
-  var row = [now_(), who_(), action, String(target || ''), String(detail || '')];
+  var row = [now_(), who_(), action, String(target || ''), String(detail || ''), readConfig_().PROJECT_ID || ''];
   var r = appendRows_(sh, [row]);
   SpreadsheetApp.flush();
   var got = sh.getRange(r, 3, 1, 2).getValues()[0];
@@ -371,7 +376,9 @@ function apiGetState() {
     version: SYSTEM_VERSION,
     logWarn: adminLogWarn_(),
     spreadsheetUrl: SpreadsheetApp.getActive().getUrl(),
-    round: { projectId: cfg.PROJECT_ID, countDate: cfg.COUNT_DATE, status: cfg.ROUND_STATUS || 'NONE' },
+    round: { projectId: cfg.PROJECT_ID, countDate: cfg.COUNT_DATE, status: cfg.ROUND_STATUS || 'NONE',
+      statusTh: ROUND_STATUS_TH[cfg.ROUND_STATUS || 'NONE'] || cfg.ROUND_STATUS, closedAt: cfg.COUNT_CLOSED_AT || '', closedBy: cfg.COUNT_CLOSED_BY || '' },
+    staff: activeStaff_(),
     files: {
       sap: { name: cfg.SAP_FILE_NAME, date: cfg.SAP_FILE_DATE, at: cfg.SAP_UPLOADED_AT, by: cfg.SAP_UPLOADED_BY, d1: cfg.SAP_D1_CONFIRMED },
       pos: { name: cfg.POS_FILE_NAME, date: cfg.POS_FILE_DATE, at: cfg.POS_UPLOADED_AT, by: cfg.POS_UPLOADED_BY }
@@ -391,8 +398,23 @@ function apiGetState() {
         return c.level === 'WARN' && !c.pass && ackList_(cfg).indexOf(c.id) < 0;
       }) : []
     },
-    log: log.slice(1).slice(-50).reverse()
+    log: logView_(log, cfg.PROJECT_ID)
   };
+}
+
+/**
+ * Admin_Log สำหรับหน้า Admin (v2.5.0): แถวก่อน v2.5.0 ไม่มี Project_ID → ใช้รอบจาก OPEN_ROUND ล่าสุดก่อนแถวนั้น (อ่านอย่างเดียว ไม่เขียนกลับ)
+ * คืน { cur: 100 แถวล่าสุดของรอบปัจจุบัน, all: 100 แถวล่าสุดทุกรอบ, curCount, allCount } · แต่ละแถว [เวลา, ผู้ทำ, การกระทำ, เป้าหมาย, รายละเอียด, รอบ]
+ */
+function logView_(log, project) {
+  var cur = '', rows = log.slice(1).filter(function (r) { return r[0] !== '' || r[2] !== ''; }).map(function (r) {
+    var p = String(r[5] || '');
+    if (r[2] === 'OPEN_ROUND') cur = String(r[3] || '');
+    if (p) cur = p;
+    return [r[0], r[1], r[2], r[3], r[4], p || cur];
+  });
+  var mine = project ? rows.filter(function (r) { return r[5] === project; }) : rows;
+  return { cur: mine.slice(-100).reverse(), all: rows.slice(-100).reverse(), curCount: mine.length, allCount: rows.length, project: project || '' };
 }
 
 function ackList_(cfg) {
@@ -696,9 +718,158 @@ function apiReconcile() {
       ' · ดัชนีไม่ตรงชีต ' + idx.length + ' · ยอดตอนปิดไม่ตรงชีต ' + closeDiffs.length + (missing.length ? ' · ไม่มีในชีต Locations ' + missing.join(',') : '') +
       ' · โครงชีต: แถวว่าง ' + audit.blank + ' · เวลาหาย ' + audit.noTime + ' · Log_ID ซ้ำ ' + audit.dupIds + ' · Seq ' +
       audit.devices.map(function (x) { return x.dev + ' ' + x.min + '–' + x.max + (x.missing ? ' ขาด ' + x.missing : '') + (x.dup ? ' ซ้ำ ' + x.dup : ''); }).join(', '));
+    // เก็บผลไว้ตรวจเงื่อนไขปิดรอบ K4 (v2.5.0): ใช้ได้ถ้า Count_Log ไม่มีแถวเพิ่มหลังกระทบยอด
+    setConfig_({ LAST_RECONCILE: JSON.stringify({ at: res.at, ok: res.ok, project: project, lastRow: audit.lastRow, lines: lines }) });
     return res;
   });
 }
+
+// ---------- ปิดการนับ และเงื่อนไขปิดรอบ (เฟส 4 · v2.5.0) ----------
+//
+// COUNTING → "ปิดการนับ" → COUNT_CLOSED: เครื่องหยุดยิง / เปิด Location ใหม่ไม่ได้ แต่รายการค้างส่งยังเข้าได้ และส่งงาน / ปิด Location ที่ค้างได้
+// หน้า Admin ยังปรับยอด สรุปผล พิมพ์ใบเดินตรวจได้ · ต้องนับเพิ่ม → "เปิดการนับอีกครั้ง" (บังคับเหตุผล) · ทุกครั้งเลือกรหัสผู้ตรวจสอบ
+// เงื่อนไขปิดรอบ K1–K7 ใน v2.5.0 เป็นแผงดูอย่างเดียว (ปุ่มปิดรอบมาใน v2.5.1)
+
+var ROUND_STATUS_TH = { NONE: 'ยังไม่เปิดรอบ', SETUP: 'เตรียมรอบ', COUNTING: 'กำลังนับ', COUNT_CLOSED: 'ปิดการนับแล้ว', CLOSED: 'ปิดรอบแล้ว' };
+
+/** รหัสผู้ตรวจสอบที่ยังใช้งาน (Staff.Active ≠ N) · ไม่พบ = error */
+function staffMust_(code) {
+  var c = normStaff_(code), st = activeStaff_().filter(function (x) { return x[0] === c; })[0];
+  if (!st) throw new Error('เลือกรหัสผู้ตรวจสอบที่กด');
+  return st;
+}
+
+/**
+ * ตัวนับรายการที่เข้ามาระหว่างปิดการนับ: n = รับทั้งหมด · late = ยิงหลังเวลาปิด (เช่น เครื่องออฟไลน์ ยังไม่รู้ว่าปิดแล้ว)
+ * v = null ล้าง · v = {n, late, at} เพิ่ม · ไม่ส่ง = อ่าน
+ */
+function afterClose_(v) {
+  var p = PropertiesService.getScriptProperties();
+  if (v === null) { p.deleteProperty('AFTER_COUNT_CLOSE'); return null; }
+  var cur = {};
+  try { cur = JSON.parse(p.getProperty('AFTER_COUNT_CLOSE') || '{}'); } catch (e) { }
+  if (v) {
+    cur.n = (cur.n || 0) + (v.n || 0); cur.late = (cur.late || 0) + (v.late || 0); cur.last = v.at;
+    p.setProperty('AFTER_COUNT_CLOSE', JSON.stringify(cur));
+  }
+  return { n: cur.n || 0, late: cur.late || 0, last: cur.last || '' };
+}
+
+function apiCountClose(staff) {
+  return withLock_(function () {
+    var cfg = readConfig_(), st = cfg.ROUND_STATUS || 'NONE';
+    if (st === 'COUNT_CLOSED') throw new Error('รอบ ' + cfg.PROJECT_ID + ' ปิดการนับไปแล้ว');
+    if (st !== 'COUNTING') throw new Error('ปิดการนับได้เมื่อรอบกำลังนับ (ตอนนี้: ' + (ROUND_STATUS_TH[st] || st) + ')');
+    var s = staffMust_(staff), K = closeCheck_(false);
+    adminAct_('COUNT_CLOSE', cfg.PROJECT_ID, 'ผู้กด ' + s[0] + ' ' + s[1] + ' · ตอนกด: ' + K.items[0].short + ' · ' + K.items[2].short +
+      ' — เครื่องหยุดยิง รายการค้างส่งยังเข้าได้', function () {
+      setConfig_({ ROUND_STATUS: 'COUNT_CLOSED', COUNT_CLOSED_AT: now_(), COUNT_CLOSED_BY: s[0] });
+      afterClose_(null);
+    });
+    return { state: apiGetState(), check: closeCheck_(false) };
+  });
+}
+
+function apiCountReopen(staff, why) {
+  return withLock_(function () {
+    var cfg = readConfig_(), st = cfg.ROUND_STATUS || 'NONE';
+    if (st !== 'COUNT_CLOSED') throw new Error('เปิดการนับอีกครั้งได้เฉพาะตอนปิดการนับแล้ว (ตอนนี้: ' + (ROUND_STATUS_TH[st] || st) + ')');
+    why = String(why || '').trim();
+    if (!why) throw new Error('ใส่เหตุผลที่ต้องนับเพิ่ม');
+    var s = staffMust_(staff), A = afterClose_();
+    adminAct_('COUNT_REOPEN', cfg.PROJECT_ID, 'ผู้กด ' + s[0] + ' ' + s[1] + ' · เหตุผล: ' + why + ' · ปิดการนับเมื่อ ' + cfg.COUNT_CLOSED_AT +
+      (A.n ? ' · ระหว่างปิดรับ ' + A.n + ' รายการ (ยิงหลังปิด ' + A.late + ')' : ''), function () {
+      setConfig_({ ROUND_STATUS: 'COUNTING', COUNT_CLOSED_AT: '', COUNT_CLOSED_BY: '' });
+      afterClose_(null);
+    });
+    return { state: apiGetState(), check: closeCheck_(false) };
+  });
+}
+
+/** หน้า Admin: ตรวจเงื่อนไขปิดรอบ K1–K7 (ดูอย่างเดียว · คำนวณผลสรุปใหม่เทียบ K5 จึงใช้ล็อก) */
+function apiCloseCheck() {
+  return withLock_(function () {
+    if (!readConfig_().PROJECT_ID) throw new Error('ยังไม่ได้เปิดรอบนับ');
+    return closeCheck_(true);
+  });
+}
+
+/**
+ * เงื่อนไขปิดรอบ · full = คำนวณผลสรุปใหม่เทียบลายนิ้วมือ (K5) — false ใช้ตอนกดปิด/เปิดการนับ (เร็ว ไม่เทียบ K5)
+ * คืน { at, project, status, statusTh, closedAt, closedBy, after, full, ok, items:[{id, ok, title, detail, fix, short, list}] }
+ */
+function closeCheck_(full) {
+  var cfg = readConfig_(), project = cfg.PROJECT_ID, st = cfg.ROUND_STATUS || 'NONE', items = [];
+  function add(id, ok, title, detail, fix, short, list) {
+    items.push({ id: id, ok: !!ok, title: title, detail: detail || '', fix: ok ? '' : fix, short: short || '', list: list || [] });
+  }
+  // K1 / K2 จากชีต Locations
+  var lt = table_('Locations'), open = [], flags = [], total = 0;
+  lt.rows.forEach(function (r) {
+    var L = rowObj_(lt, r); if (!L.Location) return;
+    total++;
+    var s = String(L.Status || '');
+    if (!/ปิดแล้ว/.test(s)) open.push(L.Location + ' (' + (s || 'ไม่มีสถานะ') + (L.Owner ? ' · ' + L.Owner : '') + ')');
+    if (L.Flag_Check) flags.push(L.Location + ': ' + L.Flag_Check);
+  });
+  open.sort(natCmp_); flags.sort(natCmp_);
+  add('K1', total > 0 && !open.length, 'ทุก Location ปิดแล้ว ไม่มี พัก / กำลังนับ',
+    total ? (open.length ? 'ยังไม่ปิด ' + open.length + ' จาก ' + total + ' Location' : 'ปิดครบ ' + total + ' Location') : 'ยังไม่มี Location ในรอบนี้',
+    'ให้ผู้ดูแลกด "ปิด Location" ที่เครื่อง (ทำได้หลังปิดการนับ) · ผู้ช่วยค้างให้กด "ส่งงาน" หรือใช้ "ส่งงานแทน" ในแท็บเครื่อง TC21',
+    open.length ? 'Location ยังไม่ปิด ' + open.length : 'Location ปิดครบ ' + total, open.slice(0, 30));
+  add('K2', !flags.length, 'ไม่มีธง "ต้องตรวจซ้ำ" ค้าง', flags.length ? 'มีธง ' + flags.length + ' Location' : 'ไม่มีธง',
+    'ตรวจแล้วกด "ปิดธง" พร้อมเหตุผล (แท็บเครื่อง TC21) หรือเปิดการนับอีกครั้งให้ผู้ดูแลล้าง Location แล้วนับใหม่', '', flags.slice(0, 30));
+  // K3 ทุกเครื่องที่เปิดใช้และจับคู่อยู่ ค้างส่ง 0 ตามสัญญาณล่าสุด
+  var dt = table_('Devices'), devs = [];
+  dt.rows.forEach(function (r) { var d = rowObj_(dt, r); if (d.Device_ID && d.Active === 'Y' && d.Token_Hash) devs.push(String(d.Device_ID)); });
+  devs.sort(natCmp_);
+  var hb = heartbeats_(devs), bad = [], good = [];
+  devs.forEach(function (id) {
+    var h = hb[id], ago = h ? Math.max(0, Math.round((Date.now() - h.at) / 60000)) : null;
+    if (!h) bad.push(id + ': ไม่มีสัญญาณ');
+    else if (h.pending > 0) bad.push(id + ': ค้างส่ง ' + h.pending + ' รายการ (สัญญาณ ' + ago + ' นาทีที่แล้ว)');
+    else good.push(id + ': ค้าง 0 (สัญญาณ ' + ago + ' นาทีที่แล้ว)');
+  });
+  add('K3', !bad.length, 'ทุกเครื่องค้างส่ง 0 ตามสัญญาณล่าสุด',
+    devs.length ? (bad.length ? 'ไม่ผ่าน ' + bad.length + ' จาก ' + devs.length + ' เครื่อง' : 'ครบ ' + devs.length + ' เครื่อง') : 'ไม่มีเครื่องที่จับคู่อยู่',
+    'เปิดแอปบนเครื่องในจุดที่มี Wi-Fi (ส่งสัญญาณทุก 1 นาที) หรือ Export ไฟล์จากเครื่องแล้วนำเข้า · เครื่องที่ไม่ได้ใช้ในรอบนี้: "ยกเลิกเครื่อง" ในแท็บเครื่อง TC21',
+    bad.length ? 'เครื่องยังไม่พร้อม ' + bad.length + ' จาก ' + devs.length : 'เครื่องค้างส่ง 0 ครบ ' + devs.length, bad.concat(good));
+  // K4 กระทบยอดทั้งรอบครั้งล่าสุด: ตรงทั้งหมด · ทำหลังปิดการนับ · Count_Log ไม่มีแถวเพิ่มหลังจากนั้น
+  var R = null; try { R = JSON.parse(cfg.LAST_RECONCILE || 'null'); } catch (e) { }
+  var lastRow = SpreadsheetApp.getActive().getSheetByName('Count_Log').getLastRow(), k4 = '', k4ok = false;
+  if (!R || R.project !== project) k4 = 'ยังไม่ได้กระทบยอดในรอบนี้';
+  else if (!R.ok) k4 = 'กระทบยอด ' + R.at + ' พบจุดต่าง';
+  else if (Number(R.lastRow) !== lastRow) k4 = 'มีรายการเข้ามาหลังกระทบยอด ' + R.at + ' — ต้องกระทบยอดใหม่';
+  else if (!cfg.COUNT_CLOSED_AT) k4 = 'ตรงทั้งหมด ' + R.at + ' แต่ยังไม่ได้ปิดการนับ — ต้องกระทบยอดอีกครั้งหลังปิดการนับ';
+  else if (R.at < cfg.COUNT_CLOSED_AT) k4 = 'ตรงทั้งหมด ' + R.at + ' แต่ทำก่อนปิดการนับ — ต้องกระทบยอดใหม่หลังปิดการนับ';
+  else { k4ok = true; k4 = 'ตรงทั้งหมด ' + R.at; }
+  add('K4', k4ok, 'กระทบยอดทั้งรอบตรง หลังปิดการนับ (ดัชนี · ยอดตอนปิด · โครงชีต Count_Log)', k4,
+    'แท็บเครื่อง TC21 → "กระทบยอดทั้งรอบ" (หลังปิดการนับ และหลังเครื่องส่งครบ) · ถ้าพบจุดต่าง ดูแถวที่ระบบชี้');
+  // K5 ผลสรุปที่บันทึกล่าสุด = ตัวเลขตอนนี้ และบันทึกหลังปิดการนับ
+  var SV = null; try { SV = JSON.parse(cfg.SUMMARY_SAVED || 'null'); } catch (e) { }
+  if (SV && SV.project !== project) SV = null;
+  var K5T = 'ผลสรุปที่บันทึกล่าสุด = ตัวเลขตอนนี้ (บันทึกหลังปิดการนับ)';
+  var K5F = 'แท็บสรุปผลนับ → "สรุปผลและบันทึก" (หลังปิดการนับ ปรับยอดครั้งสุดท้าย และไฟล์ SAP ล่าสุด)';
+  if (!SV) add('K5', false, K5T, 'ยังไม่เคยกด "สรุปผลและบันทึก" ในรอบนี้', K5F);
+  else if (!full) add('K5', false, K5T, 'ยังไม่ได้เทียบตัวเลข (บันทึกล่าสุดครั้งที่ ' + SV.run + ' · ' + SV.at + ')', 'กด "ตรวจเงื่อนไข"');
+  else {
+    var nowSig = summarySig_(summary_(project, 'ตรวจเงื่อนไขปิดรอบ (หน้า Admin)'));
+    var afterCl = !!cfg.COUNT_CLOSED_AT && SV.at >= cfg.COUNT_CLOSED_AT;
+    add('K5', nowSig === SV.sig && afterCl, K5T,
+      nowSig !== SV.sig ? 'ตัวเลขเปลี่ยนหลังบันทึกครั้งที่ ' + SV.run + ' (' + SV.at + ')' :
+        !cfg.COUNT_CLOSED_AT ? 'ตรงกับครั้งที่ ' + SV.run + ' (' + SV.at + ') แต่ยังไม่ได้ปิดการนับ — ต้องบันทึกอีกครั้งหลังปิดการนับ' :
+        !afterCl ? 'ตรงกับครั้งที่ ' + SV.run + ' (' + SV.at + ') แต่บันทึกก่อนปิดการนับ' : 'ตรงกับครั้งที่ ' + SV.run + ' (' + SV.at + ')', K5F);
+  }
+  // K6 / K7
+  var w = adminLogWarn_();
+  add('K6', !w, 'ไม่มีคำเตือนบันทึก Admin_Log ค้าง', w ? 'บันทึกไม่สำเร็จ ' + w.n + ' ครั้ง ล่าสุด ' + w.last : 'ไม่มี',
+    'ตรวจรายการในชีต Loc_Checks (ADMIN_LOG_FAIL) แล้วกด "ตรวจแล้ว รับทราบ" ที่แถบแดงด้านบน');
+  add('K7', st === 'COUNT_CLOSED', 'สถานะ "ปิดการนับแล้ว"', (ROUND_STATUS_TH[st] || st) + (cfg.COUNT_CLOSED_AT ? ' · เมื่อ ' + cfg.COUNT_CLOSED_AT + ' โดย ' + cfg.COUNT_CLOSED_BY : ''),
+    'กด "ปิดการนับ" ก่อน');
+  return { at: now_(), project: project, status: st, statusTh: ROUND_STATUS_TH[st] || st, closedAt: cfg.COUNT_CLOSED_AT || '', closedBy: cfg.COUNT_CLOSED_BY || '',
+    after: st === 'COUNT_CLOSED' ? afterClose_() : null, full: !!full, ok: items.every(function (x) { return x.ok; }), items: items };
+}
+
 
 /** ยอดบนเซิร์ฟเวอร์ต่อ Location และต่อเครื่อง (จากดัชนี — ไม่อ่าน Count_Log ทั้งชีต) (v2.3.5) */
 function locTotalsForAdmin_(project, locs) {
@@ -1043,7 +1214,7 @@ function apiSummarySave() {
       if (r[0] === 'SUMMARY_SIG') prevSig = String(r[1]);
     });
     // ลายนิ้วมือของผล (v2.4.1): เหมือนครั้งก่อน = ตัวเลขทุก SKU ไม่เปลี่ยน แจ้งผู้ใช้ว่าบันทึกซ้ำ (ยังบันทึกให้ตามที่กด)
-    var sig = sha_(JSON.stringify([R.sap, T.book, T.final, R.skus.map(function (x) { return [x[0], x[2], x[5]]; }), R.unmapped, R.locs.closed, R.locs.total])).slice(0, 16);
+    var sig = summarySig_(R);
     var sapFile = R.sap.name + (R.sap.at ? ' (' + R.sap.at + ')' : '');
     adminAct_('SUMMARY_SAVE', project, 'ครั้งที่ ' + run + ' · ' + (R.complete ? 'นับครบ' : 'ยังนับไม่ครบ') + ' · บัญชี ' + T.book + ' นับ ' + T.final + ' ต่าง ' + T.diff +
       ' (' + (T.pct === null ? '-' : T.pct + '%') + ', ' + T.diffValue + ' บาท) · ' + R.skus.length + ' SKU · ไม่มีใน Master ' + T.unmapped + ' · ไฟล์ SAP ' + sapFile, function () {
@@ -1058,11 +1229,19 @@ function apiSummarySave() {
         ['SUMMARY_RUN', run, R.at], ['BOOK_QTY', T.book, R.at], ['FINAL_QTY', T.final, R.at], ['DIFF_QTY', T.diff, R.at],
         ['DIFF_VALUE', T.diffValue, R.at], ['SKUS_OVER', T.over, R.at], ['SKUS_SHORT', T.short, R.at], ['UNMAPPED', T.unmapped, R.at],
         ['LOCATIONS_CLOSED', R.locs.closed + '/' + R.locs.total, R.at], ['SAP_FILE', sapFile, R.at], ['SUMMARY_SIG', sig, R.at]]);
+      // ชีต Config เป็นข้อความ อ่านเวลา/ลายนิ้วมือกลับได้ตรงตามที่เขียน (Dash_Data อาจถูก Sheets แปลงเป็นวันที่) — ใช้ตรวจ K5 (v2.5.0)
+      setConfig_({ SUMMARY_SAVED: JSON.stringify({ project: project, run: run, at: R.at, sig: sig }) });
     });
     R.run = run; R.saved = saved; R.same = !!prevSig && prevSig === sig; R.prevAt = prevAt;
     R.lastSave = { run: run, at: R.at };
     return R;
   });
+}
+
+/** ลายนิ้วมือของผลสรุป (v2.4.1 · แยกเป็นฟังก์ชัน v2.5.0 ใช้ตรวจ K5) */
+function summarySig_(R) {
+  var T = R.totals;
+  return sha_(JSON.stringify([R.sap, T.book, T.final, R.skus.map(function (x) { return [x[0], x[2], x[5]]; }), R.unmapped, R.locs.closed, R.locs.total])).slice(0, 16);
 }
 
 /** ไล่ย้อน SKU: นับที่ Location ไหน เครื่องไหน ใครนับ เท่าไร */
