@@ -1267,7 +1267,7 @@
     modal({ title: 'ไปที่ Location', html: 'พิมพ์ชื่อ เช่น A12 (ใช้เมื่อป้ายหายหรือยิงไม่ได้)', input: true, inputmode: 'text', yes: 'ไป' }).then(function (v) {
       if (v === null) return; var loc = normLoc(v);
       if (!loc) { toast('รูปแบบต้องเป็นตัวอักษรโซน + เลข เช่น A12', true); return; }
-      if (knownLocs()[loc] || loc === S.loc) return openLocation(loc);
+      if (knownLocs()[loc] || loc === S.loc || countClosed()) return openLocation(loc);   // ปิดการนับแล้ว: ไม่ถามยืนยันชื่อใหม่ (เปิดไม่ได้อยู่แล้ว)
       confirmBox(loc + ' ยังไม่เคยมีในรอบนี้', 'ตรวจว่าพิมพ์ถูก: <span class="bignum">' + esc(loc) + '</span><br><span class="muted">ถ้าพิมพ์ผิด ยอดจะแยกไปอยู่ Location ใหม่</span>', 'ถูกต้อง เปิด ' + loc)
         .then(function (y) { if (y) openLocation(loc); });
     });

@@ -348,6 +348,9 @@ with sync_playwright() as p:
     scan('LOC:Z9', click=False)   # ยิงต่อได้เลยโดยไม่ต้องกดตกลง
     check(pg.is_visible('#result') and 'ปิดการนับแล้ว' in pg.inner_text('#resTitle') and pg.inner_text('#tbLoc') == 'C9', 'ยิงป้าย Location ใหม่ → ไม่เปิด ยังอยู่ C9')
     pg.click('#resOk'); pg.wait_for_timeout(200)
+    open_menu('typeloc'); pg.fill('#mInput', 'Z8'); pg.click('#mYes'); pg.wait_for_timeout(300)
+    check(pg.is_visible('#result') and 'ปิดการนับแล้ว' in pg.inner_text('#resTitle') and pg.inner_text('#tbLoc') == 'C9', 'พิมพ์ชื่อ Location ใหม่ → กล่อง "ปิดการนับแล้ว" ทันที (ไม่ถามยืนยันชื่อก่อน)')
+    pg.click('#resOk'); pg.wait_for_timeout(200)
     pg.click('#btnManual'); pg.wait_for_timeout(200)
     check(pg.is_visible('#result') and pg.locator('#v-manual.on').count() == 0, 'ปุ่มป้อนเอง → กล่อง "ปิดการนับแล้ว" ไม่เข้าหน้าป้อน')
     pg.click('#resOk'); pg.wait_for_timeout(200)
