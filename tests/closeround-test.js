@@ -45,8 +45,9 @@ console.log('\nปิดรอบ — รอบทดลอง 2026Q4-R1 นั�
 const E = setup('2026Q4-R1', 'PILOT');
 E.call('sync', { entries: [E.scan('A1', 3), E.scan('A1', 2)], events: [E.ev('OPEN', 'A1')] });
 E.call('sync', { entries: [], events: [E.ev('CLOSE', 'A1', { total: 5 })] });
-E.call('sync', { entries: [E.scan('A2', 4)], events: [E.ev('OPEN', 'A2')] });
-E.call('sync', { entries: [], events: [E.ev('CLOSE', 'A2', { total: 4 })] });
+const unk = E.scan('A2', 2); unk.barcode = '2999999999990'; unk.material = '';   // สินค้าที่ไม่มีในบัญชี 2 ชิ้น (v2.5.4: ผลต่างไม่นับรวม)
+E.call('sync', { entries: [E.scan('A2', 4), unk], events: [E.ev('OPEN', 'A2')] });
+E.call('sync', { entries: [], events: [E.ev('CLOSE', 'A2', { total: 6 })] });
 
 test('เปิดรอบต้องเลือกประเภท · บันทึก ROUND_TYPE และ OPEN_ROUND บอกประเภท', () => {
   assert.strictEqual(cfgOf(E).ROUND_TYPE, 'PILOT');
@@ -110,17 +111,21 @@ test('หลังปิดรอบ: CLOSED · ชีตงานว่าง (
 });
 test('Count_History: ยอดบัญชี / สุดท้าย / ต่าง · ลิงก์ + checksum · ครั้งที่บันทึกผล · จำนวนรายการ · ผู้ปิด · ประเภท PILOT', () => {
   const t = E.run('table_("Count_History")'), h = E.run('rowObj_(table_("Count_History"), table_("Count_History").rows[0])');
-  assert.ok(h.Project_ID === '2026Q4-R1' && h.Round_Type === 'PILOT' && h.Lines === '3' && h.Final_Run === '1' && /EMP-K/.test(h.Closed_By), JSON.stringify(h));
+  assert.ok(h.Project_ID === '2026Q4-R1' && h.Round_Type === 'PILOT' && h.Lines === '4' && h.Final_Run === '1' && /EMP-K/.test(h.Closed_By), JSON.stringify(h));
   assert.ok(/^Count_Log:[0-9a-f]{16}\|Adjustments:[0-9a-f]{16}\|Variance:[0-9a-f]{16}$/.test(h.Checksum), h.Checksum);
   assert.ok(h.Archive_ID && h.Archive_Link.indexOf(h.Archive_ID) >= 0);
-  assert.strictEqual(Number(h.Net_Count), 9);
+  assert.strictEqual(Number(h.Net_Count), 11);
+  // v2.5.4 (UAT G12-6): ผลต่างเท่ากับหน้าสรุปผล (ไม่รวมสินค้าที่ไม่มีในบัญชี) — เดิม Net − บัญชี ต่างกัน 2 ชิ้น
+  const sv = logs(E, 'SUMMARY_SAVE').slice(-1)[0][4].match(/ต่าง (-?[\d.]+)/)[1];
+  assert.strictEqual(Number(h.Diff_Qty), Number(sv), 'Diff_Qty ' + h.Diff_Qty + ' ≠ สรุปผล ' + sv);
+  assert.strictEqual(Number(h.Diff_Qty), Number(h.Net_Count) - Number(h.SAP_Qty) - 2);
   copy = E.env.books[h.Archive_ID];
   assert.ok(/^ARCHIVED · 2026Q4-R1 · รอบทดลอง · ปิด \d{4}-\d{2}-\d{2}$/.test(copy.name), copy.name);
   const hs = E.run('apiGetState()').history;
   assert.ok(hs.length === 1 && hs[0].project === '2026Q4-R1' && hs[0].typeTh === 'รอบทดลอง');
 });
-test('ไฟล์สำรอง: Count_Log ครบ 3 รายการ · Config = ARCHIVED · Admin_Log เฉพาะรอบนี้ · ทุกชีตตั้ง protect แบบเตือน', () => {
-  assert.strictEqual(copy.sheets.Count_Log.data.length, 4);
+test('ไฟล์สำรอง: Count_Log ครบ 4 รายการ · Config = ARCHIVED · Admin_Log เฉพาะรอบนี้ · ทุกชีตตั้ง protect แบบเตือน', () => {
+  assert.strictEqual(copy.sheets.Count_Log.data.length, 5);
   assert.ok(copy.sheets.Config.data.some(r => r[0] === 'ROUND_STATUS' && r[1] === 'ARCHIVED') && copy.sheets.Config.data.some(r => r[0] === 'ARCHIVED_TYPE' && r[1] === 'PILOT'));
   const al = copy.sheets.Admin_Log.data.slice(1);
   assert.ok(al.length > 3 && al.every(r => r[5] === '2026Q4-R1' || r[2] === 'OPEN_ROUND' && r[3] === '2026Q4-R1'), JSON.stringify(al.filter(r => r[5] !== '2026Q4-R1').slice(0, 3)));

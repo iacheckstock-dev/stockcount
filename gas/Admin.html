@@ -624,7 +624,7 @@ function closeRound(test) {
         body: '<div class="kv"><div>ประเภท</div><div>' + esc({ REAL: 'รอบจริง', PILOT: 'รอบทดลอง', TEST: 'รอบทดสอบ (ล้างข้อมูล)' }[C.type]) + '</div>' +
           '<div>ไฟล์สำรอง</div><div><a href="' + esc(C.url) + '" target="_blank">เปิดไฟล์สำรอง</a> <span class="muted">(ตรวจจำนวนแถว + checksum ผ่านแล้ว)</span></div>' +
           '<div>ยอด</div><div>บัญชี ' + nf(C.book) + ' · สุดท้าย ' + nf(C.final) + ' · ต่าง ' + sgn(C.diffQty) + ' ชิ้น (' + sgn(C.diffValue, 2) + ' บาท)</div>' +
-          '<div>Count_Log</div><div>' + nf(C.lines) + ' รายการ</div><div>checksum</div><div class="mono" style="font-size:12px">' + esc(C.checksum) + '</div></div>' +
+          '<div>Count_Log</div><div>' + nf(C.lines) + ' รายการ</div><div>checksum</div><div class="mono" style="font-size:12px;word-break:break-all">' + esc(C.checksum) + '</div></div>' +
           '<div class="muted" style="margin-top:8px">ชีตงานถูกล้างแล้ว · เปิดรอบใหม่ได้ที่การ์ด "รอบนับ" (รหัสใหม่)</div>' }, function () {});
     }, resume ? 'กำลังล้างชีตงานต่อ…' : 'กำลังปิดรอบ… สำรองไฟล์และตรวจไฟล์สำรอง อาจใช้เวลา 1–3 นาที ห้ามปิดหน้านี้');
   });

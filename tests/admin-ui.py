@@ -351,7 +351,7 @@ with sync_playwright() as p:
     check(not pg.is_disabled('#askOk'), 'พิมพ์ตรง + มีรหัสผู้ตรวจสอบ → กดได้')
     pg.screenshot(path='/tmp/admin-closeround-ask.png')
     after = json.loads(json.dumps(st['STATE'])); after['round'].update({'status': 'CLOSED', 'statusTh': 'ปิดรอบแล้ว'})
-    H = {'project': pid, 'countDate': '2026-11-20', 'book': 120, 'final': 118, 'diffQty': -2, 'diffValue': -350.5, 'diffItems': 2, 'edits': 1, 'url': 'https://example.invalid/a', 'checksum': 'Count_Log:abcd|Adjustments:ef01|Variance:2345',
+    H = {'project': pid, 'countDate': '2026-11-20', 'book': 120, 'final': 118, 'diffQty': -2, 'diffValue': -350.5, 'diffItems': 2, 'edits': 1, 'url': 'https://example.invalid/a', 'checksum': 'Count_Log:5ed397b96df8dfc8|Adjustments:7ef1e3b1da4df995|Variance:0123456789abcdef',
          'run': 3, 'lines': 99, 'at': '2026-11-20 18:00:00', 'by': 'EMP-K', 'type': 'PILOT', 'typeTh': 'รอบทดลอง'}
     after['history'] = [H]
     C = dict(H); C['type'] = 'PILOT'
@@ -359,7 +359,9 @@ with sync_playwright() as p:
     pg.click('#askOk'); pg.wait_for_timeout(150)
     check(['apiCloseRound', 'EMP-K', pid, False] in pg.evaluate('CALLS'), 'เรียก apiCloseRound(รหัสผู้ตรวจสอบ, คำยืนยัน, ไม่ใช่โหมดทดสอบ)')
     box = pg.inner_text('#askDlg')
-    check('ปิดรอบ ' + pid + ' แล้ว' in box and 'เปิดไฟล์สำรอง' in box and 'Count_Log:abcd' in box and 'รอบทดลอง' in box, 'ผลปิดรอบกลางจอ: ลิงก์ไฟล์สำรอง checksum ยอด')
+    check('ปิดรอบ ' + pid + ' แล้ว' in box and 'เปิดไฟล์สำรอง' in box and 'Count_Log:5ed397b96df8dfc8' in box and 'รอบทดลอง' in box, 'ผลปิดรอบกลางจอ: ลิงก์ไฟล์สำรอง checksum ยอด')
+    sw = pg.evaluate("(() => { const b = document.querySelector('#askBody'); return [b.scrollWidth, b.clientWidth]; })()")
+    check(sw[0] <= sw[1] + 1, 'กล่องผลปิดรอบไม่มีแถบเลื่อนแนวนอน (checksum ตัดบรรทัด · UAT G12-6): ' + str(sw))
     pg.screenshot(path='/tmp/admin-closeround-done.png')
     pg.click('#askOk')
     cb = pg.inner_text('#closeCard')

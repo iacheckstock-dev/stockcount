@@ -6,13 +6,13 @@
  * (API สำหรับ TC21 จะเพิ่มในเฟส 2 แยกต่างหาก และต้องใช้ device token)
  */
 
-var SCHEMA_VERSION = 10;   // 6 = v2.4.1 Variance.Barcode · 7 = v2.4.2 ชีต Adjustments · 8 = v2.5.0 Admin_Log.Project_ID · 9 = v2.5.2 Count_History คอลัมน์ปิดรอบ · 10 = v2.5.3 ซ่อม Config ซ้ำ
+var SCHEMA_VERSION = 11;   // 6 = v2.4.1 Variance.Barcode · 7 = v2.4.2 ชีต Adjustments · 8 = v2.5.0 Admin_Log.Project_ID · 9 = v2.5.2 Count_History คอลัมน์ปิดรอบ · 10 = v2.5.3 ซ่อม Config ซ้ำ · 11 = v2.5.4 สถานะอัปเกรดใน Script Properties (โครงสร้างชีตไม่เปลี่ยน — เลขขยับเพื่อให้อัปเกรดทำงานหนึ่งครั้งหลัง Deploy)
 
 /**
  * เวอร์ชันของระบบ (ใช้เลขเดียวทั้งแอป TC21 และเซิร์ฟเวอร์ ตาม Semantic Versioning MAJOR.MINOR.PATCH)
  * ต้องตรงกับ APP_VERSION ใน app/app.js และ appVersion ใน app/config.json — ดู CHANGELOG.md
  */
-var SYSTEM_VERSION = '2.5.3';
+var SYSTEM_VERSION = '2.5.4';
 
 var SHEETS = {
   Config: ['Key', 'Value', 'Note'],
@@ -174,9 +174,12 @@ function migrateHeader_(sh, header) {
   sh.getRange(1, start, 1, add.length).setValues([add]).setFontWeight('bold').setBackground('#f0efec');
 }
 
-function needSetup_() {
+function missingSheets_() {
   var ss = SpreadsheetApp.getActive();
-  if (Object.keys(SHEETS).some(function (n) { return !ss.getSheetByName(n); })) return true;
+  return Object.keys(SHEETS).some(function (n) { return !ss.getSheetByName(n); });
+}
+function needSetup_() {
+  if (missingSheets_()) return true;
   if (typeof REQ_ !== 'undefined' && REQ_) REQ_.cfg = null;   // อ่านใหม่จากชีต ไม่ใช้ค่าที่จำไว้ในคำขอนี้
   return Number(readConfig_().SCHEMA_VERSION || 0) < SCHEMA_VERSION;
 }
@@ -191,9 +194,14 @@ function ensureSetup_() {
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(60000)) throw new Error('ระบบกำลังอัปเกรดโครงสร้างชีต ลองใหม่อีกครั้งในไม่กี่วินาที');
   try {
-    if (!needSetup_()) return;
+    // v2.5.4 (UAT 12 · Executions 14:33:07 / 14:33:19): คำขอที่รอล็อกอ่านชีตซ้ำแล้วยังได้ SCHEMA_VERSION เก่า → อัปเกรดซ้ำ
+    // จึงตรวจสถานะ "อัปเกรดเสร็จ" จาก Script Properties (อ่านค่าล่าสุดเสมอ ไม่ผ่านชีต) ก่อน
+    var props = PropertiesService.getScriptProperties();
+    if (Number(props.getProperty('SCHEMA_DONE') || 0) >= SCHEMA_VERSION && !missingSheets_()) return;
+    if (!needSetup_()) { props.setProperty('SCHEMA_DONE', String(SCHEMA_VERSION)); return; }
     setupSheets();
     setConfig_({ SCHEMA_VERSION: SCHEMA_VERSION });
+    props.setProperty('SCHEMA_DONE', String(SCHEMA_VERSION));
   } finally { releaseLock_(lock); }
 }
 
@@ -974,7 +982,7 @@ function apiCloseRound(staff, confirm, test) {
     // 5) CLOSING → Count_History → ล้าง → CLOSED
     var state = {
       project: project, countDate: cfg.COUNT_DATE, type: type, archiveId: file.getId(), url: file.getUrl(), checksum: sumText_(sums),
-      book: T.book, final: T.final, diffQty: Math.round((T.final - T.book) * 1000) / 1000, diffValue: T.diffValue, diffItems: T.over + T.short,
+      book: T.book, final: T.final, diffQty: T.diff, diffValue: T.diffValue,   // v2.5.4: ตัวเลขเดียวกับหน้าสรุปผล (ไม่รวมสินค้าที่ไม่มีในบัญชี) — เดิม final − book diffItems: T.over + T.short,
       edits: T.adjLines, run: SV && SV.project === project ? SV.run : '', lines: sums.Count_Log.rows - 1, by: s[0] + ' ' + s[1] + ' (' + who_() + ')', history: false
     };
     setConfig_({ ROUND_STATUS: 'CLOSING', CLOSE_STATE: JSON.stringify(state) });
