@@ -274,6 +274,42 @@ with sync_playwright() as p:
     check(n == len(L['cur']) and 'รอบ 2026Q4' in pg.inner_text('#logInfo') and pg.locator('#logTbl tr >> nth=0').inner_text().split('\t')[-1] == 'รอบ', 'บันทึก Admin แสดงเฉพาะรอบนี้ + คอลัมน์รอบ: ' + pg.inner_text('#logInfo'))
     pg.check('#logAll'); pg.wait_for_timeout(30)
     check(pg.locator('#logTbl tr').count() - 1 == len(L['all']) and 'ทุกรอบ' in pg.inner_text('#logInfo'), 'ติ๊ก "แสดงทุกรอบ" → เห็นทุกรอบ')
+
+    print('v2.5.1: ตาราง Location กรอง/ค้นหา · ค้นหา SKU ทุกกลุ่ม · K1 แยกตามเครื่อง · ตัด "Error:"')
+    pg.click('#nav button[data-t=devices]') if pg.locator('#nav button[data-t=devices]').count() else None
+    pg.evaluate("st => { LOCF = 'todo'; $('locQ').value = ''; renderDevices(st); }", st)
+    L = st['locations']
+    todo = [l for l in L if l['Status'] != 'ปิดแล้ว' or l.get('Flag') or l.get('Last_Check') in ('MISMATCH', 'WAIT')]
+    closed_ok = [l for l in L if l not in todo]
+    sm = pg.inner_text('#locSum')
+    check(('ทั้งหมด %d' % len(L)) in sm and ('ปิดแล้ว %d' % sum(1 for l in L if l['Status'] == 'ปิดแล้ว')) in sm and 'มีธง' in sm and 'ยอดไม่ตรง' in sm, 'บรรทัดสรุปจำนวนตามสถานะ: ' + sm)
+    rows = lambda: pg.locator('#locTbl tr').count() - 1
+    check(rows() == len(todo) and ('ต้องทำต่อ %d' % len(todo)) in pg.inner_text('#locChips'), 'ค่าเริ่มต้น "ต้องทำต่อ" = ยังไม่ปิด / มีธง / ยอดไม่ตรง (%d จาก %d)' % (len(todo), len(L)))
+    pg.click('#locChips button:has-text("ปิดแล้ว")')
+    got = [t.split('\n')[0] for t in pg.locator('#locTbl tr td:first-child').all_inner_texts()]
+    check(sorted(got) == sorted(l['Location'] for l in closed_ok), '"ปิดแล้ว" = ปิดแล้วและไม่มีอะไรต้องทำ: ' + ', '.join(got))
+    pg.click('#locChips button:has-text("ทั้งหมด")'); check(rows() == len(L), '"ทั้งหมด" แสดงครบ %d' % len(L))
+    pg.click('#locChips button:has-text("ต้องทำต่อ")'); pg.fill('#locQ', 'p3')
+    check(rows() == 1 and pg.locator('#locTbl tr td:first-child').first.inner_text().startswith('P3'), 'ค้นหา "p3" เจอ P3 แม้อยู่นอกกลุ่ม "ต้องทำต่อ"')
+    pg.fill('#locQ', 'ZZ99'); check('ไม่พบ Location' in pg.inner_text('#locTbl'), 'ค้นหาไม่เจอ → บอกว่าไม่พบ')
+    pg.fill('#locQ', '')
+    pg.screenshot(path='/tmp/admin-loc.png')
+    # ค้นหา SKU ทุกกลุ่ม
+    pg.click('#nav button[data-t=summary]'); pg.evaluate("loadSummary()"); pg.wait_for_timeout(100)
+    m0 = pg.evaluate("SUM.skus.filter(function (r) { return r[6] === 0; })[0]")
+    pg.evaluate("SUMF = 'diff'; renderSum()") if pg.evaluate("typeof renderSum === 'function'") else pg.click('#sumBody button:has-text("ที่ต่างทั้งหมด")')
+    pg.fill('#sumQ', m0[0]); pg.wait_for_timeout(30)
+    check(pg.locator('#skuTbl tr').count() - 1 == 1 and m0[0] in pg.inner_text('#skuTbl') and 'ค้นหาทุกกลุ่ม' in pg.inner_text('#skuInfo'),
+          'กลุ่ม "ที่ต่างทั้งหมด" ค้นหา SKU ที่ต่าง 0 (' + m0[0] + ') → เจอ บอก "ค้นหาทุกกลุ่ม"')
+    pg.fill('#sumQ', ''); pg.wait_for_timeout(30)
+    check(m0[0] not in pg.inner_text('#skuTbl') and 'ค้นหาทุกกลุ่ม' not in pg.inner_text('#skuInfo'), 'ลบคำค้น → กลับไปใช้ตัวกรอง')
+    # K1 แยกบรรทัดตามเครื่อง
+    pg.click('#nav button[data-t=overview]'); pg.evaluate("K => { $('kList').innerHTML = kHtml(K); }", st['KCHECK'])
+    k1 = [x for x in st['KCHECK']['items'] if x['id'] == 'K1'][0]
+    check(pg.locator('#kList .klist tr').first.locator('.lst > div').count() == len(k1['list']) and all(' — ' in x for x in k1['list']), 'K1 หนึ่งบรรทัดต่อเครื่องผู้ดูแล: ' + ' | '.join(k1['list'])[:160])
+    pg.evaluate("errBox('Error: รหัสรอบต้องเป็นรูปแบบ 2026Q4')")
+    check(pg.inner_text('#errMsg') == 'รหัสรอบต้องเป็นรูปแบบ 2026Q4', 'กล่อง error ตัด "Error:" นำหน้าออก')
+    pg.click('#errOk')
     check(not dialogs, 'ไม่มี popup ของเบราว์เซอร์: ' + json.dumps(dialogs, ensure_ascii=False))
     b.close()
 print('\nผล: ผ่าน %d / ไม่ผ่าน %d' % (P, F))

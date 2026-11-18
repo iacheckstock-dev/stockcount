@@ -253,7 +253,12 @@
       <button class="btn sec" onclick="reconcile()" title="อ่าน Count_Log ทั้งชีต เทียบกับยอดที่ระบบใช้ และยอดตอนปิดทุก Location">กระทบยอดทั้งรอบ</button>
     </div>
     <div id="recon"></div>
-    <div class="scroll" style="max-height:300px"><table id="locTbl"></table></div>
+    <div class="row" style="margin:6px 0" id="locBar">
+      <span id="locChips"></span>
+      <input type="search" id="locQ" placeholder="ค้นหา Location เช่น C12" oninput="renderLocTbl()" style="width:180px">
+    </div>
+    <div class="muted" id="locSum" style="margin-bottom:4px"></div>
+    <div class="scroll" style="max-height:560px"><table id="locTbl"></table></div>
   </section>
 
   <!-- สรุปผลนับ (เฟส 3 · v2.4.0): ยอดรวมทั้งร้าน → ความครบ → ผลต่างราย SKU → ไล่ย้อน Location / เครื่อง / ผู้นับ -->
@@ -409,7 +414,7 @@ function busy(on, msg, sub) {
 
 function errBox(msg, title) {
   $('errTitle').textContent = title || 'ทำไม่สำเร็จ';
-  $('errMsg').textContent = String(msg || 'เกิดข้อผิดพลาด');
+  $('errMsg').textContent = String(msg || 'เกิดข้อผิดพลาด').replace(/^(Error|Exception|TypeError|ReferenceError):\s*/, '');   // v2.5.1 ตัดคำนำหน้าจาก Apps Script
   $('errDlg').classList.add('on');
   setTimeout(function () { $('errOk').focus(); }, 30);
 }
@@ -542,7 +547,7 @@ function kHtml(K) {
       (K.after.late ? ' · <b>ยิงหลังเวลาปิด ' + K.after.late + ' รายการ</b> (เครื่องยังไม่รู้ว่าปิด เช่น ออฟไลน์) — ดูรายละเอียดใน บันทึก Admin (SYNC_AFTER_COUNT_CLOSE)' : ' (ค้างส่งจากก่อนปิด)') + '</div>' : '') +
     '<table class="klist">' + K.items.map(function (x) {
       return '<tr><td class="k">' + esc(x.id) + '</td><td class="r ' + (x.ok ? 'y' : 'x') + '">' + (x.ok ? '✓' : '✗') + '</td><td><b>' + esc(x.title) + '</b><div>' + esc(x.detail) + '</div>' +
-        (x.list && x.list.length ? '<div class="lst">' + x.list.map(esc).join(' · ') + '</div>' : '') + (x.fix ? '<div class="fix">ทำอย่างไร: ' + esc(x.fix) + '</div>' : '') + '</td></tr>';
+        (x.list && x.list.length ? '<div class="lst">' + x.list.map(function (l) { return '<div>' + esc(l) + '</div>'; }).join('') + '</div>' : '') + (x.fix ? '<div class="fix">ทำอย่างไร: ' + esc(x.fix) + '</div>' : '') + '</td></tr>';
     }).join('') + '</table></div>';
 }
 function closeCheck() {
@@ -825,8 +830,9 @@ function renderSummary(R) {
 function sumRows() {
   var q = (($('sumQ') || {}).value || '').trim().toLowerCase();
   if (SUMF === 'unmapped') return SUM.unmapped.filter(function (u) { return !q || u[0].toLowerCase().indexOf(q) >= 0; });
+  // v2.5.1 (UAT G10-4): พิมพ์ค้นหา = หาทุก SKU ไม่สนตัวกรองกลุ่ม (เดิมหาเฉพาะกลุ่มที่เลือก ทำให้ดูเหมือนหาไม่เจอ)
   return SUM.skus.filter(function (r) {
-    var ok = SUMF === 'all' || (SUMF === 'diff' && r[6] !== 0) || (SUMF === 'short' && r[6] < 0) || (SUMF === 'over' && r[6] > 0) ||
+    var ok = !!q || SUMF === 'all' || (SUMF === 'diff' && r[6] !== 0) || (SUMF === 'short' && r[6] < 0) || (SUMF === 'over' && r[6] > 0) ||
       (SUMF === 'match' && r[6] === 0) || (SUMF === 'special' && (r[9] || r[10] || r[11])) || (SUMF === 'adj' && r[15] > 0);
     return ok && (!q || String(r[0]).toLowerCase().indexOf(q) >= 0 || String(r[1]).toLowerCase().indexOf(q) >= 0 || (r[14] || []).some(function (b) { return b.indexOf(q) >= 0; }));
   });
@@ -846,7 +852,9 @@ function renderSkus() {
           '</td><td>' + esc(r[1]) + '</td><td class="n">' + nf(r[3]) + '</td><td class="n">' + (r[4] ? sgn(r[4]) : '') +
           '</td><td class="n">' + nf(r[5]) + '</td><td class="n">' + nf(r[2]) + '</td><td class="n ' + cls(r[6]) + '"><b>' + sgn(r[6]) + '</b>' + (r[16] ? '<br><span class="pill warn" title="ปรับยอดแล้วเท่ายอดบัญชีพอดี — ให้ผู้ตรวจทานดู">ปรับเท่าบัญชี</span>' : '') + '</td><td class="n ' + cls(r[8]) + '">' + sgn(r[8], 2) + '</td><td class="locs">' + esc(locStr(r[13])) + '</td><td>' + (sp ? '<span class="pill info">' + esc(sp) + '</span>' : '') + '</td></tr>';
       }).join('');
-    $('skuInfo').textContent = rows.length + ' SKU' + (rows.length > MAX ? ' — แสดง ' + MAX + ' แรก (เรียงตามมูลค่าผลต่าง) ค้นหาเพื่อดูตัวอื่น' : ' · เรียงตามมูลค่าผลต่าง');
+    var q = (($('sumQ') || {}).value || '').trim();
+    $('skuInfo').textContent = rows.length + ' SKU' + (q ? ' · ค้นหาทุกกลุ่ม (ไม่ใช้ตัวกรองด้านบน) — ลบคำค้นเพื่อกลับไปใช้ตัวกรอง' : '') +
+      (rows.length > MAX ? ' — แสดง ' + MAX + ' แรก (เรียงตามมูลค่าผลต่าง) ค้นหาเพื่อดูตัวอื่น' : ' · เรียงตามมูลค่าผลต่าง');
   }
   $('skuTbl').innerHTML = h;
 }
@@ -1111,12 +1119,38 @@ function renderDevices(d) {
         '</td><td>' + pair + '</td><td>' + (x.active ? '<button class="btn sec" onclick="pairCode(\'' + x.id + '\')">' + (x.paired ? 'จับคู่ใหม่' : 'สร้างรหัสจับคู่') + '</button> ' : '') +
         (x.active ? '<button class="btn sec" onclick="setActive(\'' + x.id + '\', false)">ยกเลิกเครื่อง</button>' : '<button class="btn sec" onclick="setActive(\'' + x.id + '\', true)">เปิดใช้</button>') + '</td></tr>';
     }).join('');
+  renderLocTbl();
+  renderLabelLinks();
+}
+
+// ตาราง Location (v2.5.1): สรุปจำนวนตามสถานะ · กรอง "ต้องทำต่อ" (ค่าเริ่มต้น) / ปิดแล้ว / ทั้งหมด · ค้นหาชื่อ — รอบจริงราว 300 Location
+var LOCF = 'todo';
+function locTodo(l, T) {
+  var ct = l.Close_Total === '' || l.Close_Total === undefined || l.Close_Total === null ? '' : Number(l.Close_Total);
+  return l.Status !== 'ปิดแล้ว' || !!l.Flag || l.Last_Check === 'MISMATCH' || l.Last_Check === 'WAIT' || (ct !== '' && ct !== (T[l.Location] || { qty: 0 }).qty);
+}
+function renderLocTbl() {
+  var d = DEV; if (!d) return;
   // Location: ผู้ดูแล / ผู้ช่วย / ธงตรวจซ้ำ — หัวหน้าทีมส่งงานแทนหรือโอนการดูแลได้ (บันทึกผู้กดและเหตุผล)
   var STATE = { COUNTING: 'กำลังนับ', PAUSED: 'พัก', SUBMITTED: 'ส่งงานแล้ว', CLOSED: 'ปิดแล้ว' };
   var byLoc = {};
   (d.members || []).forEach(function (m) { (byLoc[m.location] = byLoc[m.location] || []).push(m); });
-  var locs = d.locations.slice().sort(function (a, b) { return (b.Flag ? 1 : 0) - (a.Flag ? 1 : 0) || String(a.Location).localeCompare(String(b.Location), 'en', { numeric: true }); });
   var TOT = d.locTotals || {}, CHK = d.locChecks || {};
+  var all = d.locations.slice().sort(function (a, b) { return (b.Flag ? 1 : 0) - (a.Flag ? 1 : 0) || (locTodo(b, TOT) ? 1 : 0) - (locTodo(a, TOT) ? 1 : 0) || String(a.Location).localeCompare(String(b.Location), 'en', { numeric: true }); });
+  var cnt = {}, todo = 0, flag = 0, bad = 0;
+  all.forEach(function (l) { cnt[l.Status || 'ไม่มีสถานะ'] = (cnt[l.Status || 'ไม่มีสถานะ'] || 0) + 1; if (locTodo(l, TOT)) todo++; if (l.Flag) flag++; if (l.Last_Check === 'MISMATCH') bad++; });
+  var order = ['ปิดแล้ว', 'กำลังนับ', 'พัก', 'ส่งงานแล้ว'];
+  $('locSum').innerHTML = 'ทั้งหมด <b>' + all.length + '</b> · ' + order.concat(Object.keys(cnt).filter(function (k) { return order.indexOf(k) < 0; })).filter(function (k) { return cnt[k]; })
+    .map(function (k) { return esc(k) + ' <b>' + cnt[k] + '</b>'; }).join(' · ') + ' · มีธง <b' + (flag ? ' style="color:var(--bad)"' : '') + '>' + flag + '</b> · ยอดไม่ตรง <b' + (bad ? ' style="color:var(--bad)"' : '') + '>' + bad + '</b>';
+  $('locChips').innerHTML = [['todo', 'ต้องทำต่อ ' + todo], ['closed', 'ปิดแล้ว ' + (cnt['ปิดแล้ว'] || 0)], ['all', 'ทั้งหมด ' + all.length]].map(function (c) {
+    return '<button class="btn ' + (LOCF === c[0] ? '' : 'sec') + '" onclick="LOCF=\'' + c[0] + '\';renderLocTbl()">' + c[1] + '</button>';
+  }).join(' ');
+  var q = (($('locQ') || {}).value || '').trim().toUpperCase();
+  // ค้นหา = หาทุก Location (ไม่ใช้ตัวกรอง) · ไม่ค้นหา = ตามตัวกรอง
+  var locs = all.filter(function (l) {
+    if (q) return String(l.Location).toUpperCase().indexOf(q) >= 0;
+    return LOCF === 'all' || (LOCF === 'todo' ? locTodo(l, TOT) : l.Status === 'ปิดแล้ว' && !locTodo(l, TOT));
+  });
   var n0 = function (v) { return Number(v || 0).toLocaleString('en-US', { maximumFractionDigits: 3 }); };
   $('locTbl').innerHTML = '<tr><th>Location</th><th>สถานะ</th><th>ผู้ดูแล</th><th>เครื่องที่ร่วมนับ</th><th class="n">ยอดเซิร์ฟเวอร์</th><th class="n">ยอดตอนปิด</th><th>ต้องตรวจซ้ำ</th><th>ปิดเมื่อ</th><th>ตรวจยอดกับเครื่อง</th><th class="n">แก้</th><th></th></tr>' +
     (locs.length ? locs.map(function (l) {
@@ -1146,8 +1180,8 @@ function renderDevices(d) {
         (l.Flag_Check && ready ? '<div class="okline">✓ ปิดใหม่แล้ว: ทุกเครื่องส่งงาน · ยอดตอนปิด ' + n0(ct) + ' = เซิร์ฟเวอร์ ' + n0(T.qty) + ' — ตรวจแล้วกดปิดธงได้</div>' : '') +
         (l.Flag_Check ? '<div><button class="btn sec" onclick="resolveFlag(\'' + esc(l.Location) + '\')">ปิดธง</button></div>' : '') + '</td><td>' + esc(l.Closed_Time) + '</td><td>' + m +
         '</td><td class="n">' + esc(l.Edits) + '</td><td><button class="btn sec" onclick="transferLoc(\'' + esc(l.Location) + '\')">โอนการดูแล</button></td></tr>';
-    }).join('') : '<tr><td colspan="11" class="muted">ยังไม่มี Location</td></tr>');
-  renderLabelLinks();
+    }).join('') : '<tr><td colspan="11" class="muted">' + (!all.length ? 'ยังไม่มี Location' : q ? 'ไม่พบ Location "' + esc(q) + '"' :
+      LOCF === 'todo' ? '✓ ไม่มี Location ที่ต้องทำต่อ — ทุก Location ปิดแล้ว ไม่มีธง ยอดตรง' : 'ไม่มีรายการในกลุ่มนี้') + '</td></tr>');
 }
 function renderLabelLinks() {
   if (!DEV) return;

@@ -1158,9 +1158,33 @@ console.log('\nปิดการนับ / เงื่อนไขปิด�
     const R = K(false), open = run('apiDevicesState()').locations.filter(l => !/ปิดแล้ว/.test(l.Status));
     const k1 = item(R, 'K1');
     assert.strictEqual(k1.ok, open.length === 0);
-    open.slice(0, 30).forEach(l => assert.ok(k1.list.some(x => x.indexOf(l.Location + ' (') === 0), l.Location));
+    // v2.5.1: แยกบรรทัดตามเครื่องผู้ดูแล "TC21-01 · EMP-K ชื่อ — พัก 2: A1, A3 · กำลังนับ 1: B2" แสดงครบทุกตัว
+    const names = l => l.split(' — ')[1].split(' · ').flatMap(p => p.split(': ')[1].split(', '));
+    assert.strictEqual(k1.list.map(names).flat().length, open.length, JSON.stringify(k1.list));
+    open.forEach(l => {
+      const line = k1.list.find(x => names(x).indexOf(String(l.Location)) >= 0);
+      assert.ok(line, l.Location);
+      assert.ok(l.Owner ? line.indexOf(l.Owner.split(' ')[0]) === 0 : line.indexOf('ไม่มีผู้ดูแล') === 0, line + ' / ' + l.Owner);
+      assert.ok(line.indexOf(l.Status + ' ') >= 0, line + ' / ' + l.Status);
+    });
     const flagged = run('apiDevicesState()').locations.filter(l => l.Flag_Check);
     assert.strictEqual(item(R, 'K2').ok, flagged.length === 0);
+  });
+  test('v2.5.1 K3: สัญญาณล่าสุดมาก่อนปิดการนับ (เช่น ปิด Wi-Fi ไว้) → ✗ "ยังไม่ได้ติดต่อหลังปิดการนับ"', () => {
+    const c = cfg().COUNT_CLOSED_AT;
+    run('setConfig_({ COUNT_CLOSED_AT: "2099-01-01 00:00:00" })');
+    const k3 = item(K(false), 'K3');
+    assert.ok(!k3.ok && k3.list.some(x => /^TC21-01: ยังไม่ได้ติดต่อหลังปิดการนับ \(สัญญาณล่าสุด \d\d:\d\d ก่อนปิด 00:00\)/.test(x)), JSON.stringify(k3.list));
+    run('setConfig_({ COUNT_CLOSED_AT: _c })', { _c: c });
+  });
+  test('v2.5.1 K4/K5: ไม่มีผลใน Config (ทำก่อนอัปเดต) → บอกครั้งล่าสุดจาก Admin_Log ไม่ใช่ "ยังไม่เคย"', () => {
+    const R0 = cfg().LAST_RECONCILE, S0 = cfg().SUMMARY_SAVED;
+    run('setConfig_({ LAST_RECONCILE: "", SUMMARY_SAVED: "" })');
+    const R = K(false), rec = AL.data.filter(r => r[2] === 'RECONCILE' && r[3] === '2026Q4').slice(-1)[0], sv = AL.data.filter(r => r[2] === 'SUMMARY_SAVE').slice(-1)[0];
+    assert.ok(item(R, 'K4').detail.indexOf('กระทบยอดล่าสุด ' + rec[0]) === 0, item(R, 'K4').detail);
+    assert.ok(new RegExp('^บันทึกล่าสุด ' + sv[0] + ' ครั้งที่ \\d+ ').test(item(R, 'K5').detail), item(R, 'K5').detail);
+    assert.strictEqual(run('lastLogOf_("NO_SUCH", "2026Q4")'), '');
+    run('setConfig_({ LAST_RECONCILE: _r, SUMMARY_SAVED: _s })', { _r: R0, _s: S0 });
   });
   test('เปิดการนับอีกครั้ง: ต้องมีเหตุผลและผู้ตรวจสอบ → COUNTING · ล้างเวลาปิด · บันทึก COUNT_REOPEN พร้อมเหตุผลและจำนวนที่รับระหว่างปิด', () => {
     assert.throws(() => run('apiCountReopen("EMP-K", "  ")'), /เหตุผล/);

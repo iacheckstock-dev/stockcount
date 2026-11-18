@@ -12,7 +12,7 @@ var SCHEMA_VERSION = 8;   // 6 = v2.4.1 Variance.Barcode · 7 = v2.4.2 ชีต
  * เวอร์ชันของระบบ (ใช้เลขเดียวทั้งแอป TC21 และเซิร์ฟเวอร์ ตาม Semantic Versioning MAJOR.MINOR.PATCH)
  * ต้องตรงกับ APP_VERSION ใน app/app.js และ appVersion ใน app/config.json — ดู CHANGELOG.md
  */
-var SYSTEM_VERSION = '2.5.0';
+var SYSTEM_VERSION = '2.5.1';
 
 var SHEETS = {
   Config: ['Key', 'Value', 'Note'],
@@ -214,6 +214,10 @@ function who_() {
 
 function now_() {
   return Utilities.formatDate(new Date(), 'Asia/Bangkok', 'yyyy-MM-dd HH:mm:ss');
+}
+/** เวลา (ms) → รูปแบบเดียวกับ now_() เทียบเป็นข้อความได้ (v2.5.1) */
+function ts_(ms) {
+  return Utilities.formatDate(new Date(ms), 'Asia/Bangkok', 'yyyy-MM-dd HH:mm:ss');
 }
 
 /**
@@ -786,6 +790,18 @@ function apiCountReopen(staff, why) {
   });
 }
 
+/** เวลาของแถว Admin_Log ล่าสุดที่เป็น action นี้ของรอบนี้ (ใช้บอกครั้งล่าสุดในเงื่อนไข K4/K5 · v2.5.1) */
+function lastLogOf_(action, project) {
+  var log = readRaw_('Admin_Log');
+  for (var i = log.length - 1; i > 0; i--) {
+    if (log[i][2] === action && String(log[i][3]) === String(project)) {
+      var m = String(log[i][4] || '').match(/^ครั้งที่ \d+/);
+      return String(log[i][0]) + (m ? ' ' + m[0] : '');
+    }
+  }
+  return '';
+}
+
 /** หน้า Admin: ตรวจเงื่อนไขปิดรอบ K1–K7 (ดูอย่างเดียว · คำนวณผลสรุปใหม่เทียบ K5 จึงใช้ล็อก) */
 function apiCloseCheck() {
   return withLock_(function () {
@@ -804,40 +820,62 @@ function closeCheck_(full) {
     items.push({ id: id, ok: !!ok, title: title, detail: detail || '', fix: ok ? '' : fix, short: short || '', list: list || [] });
   }
   // K1 / K2 จากชีต Locations
-  var lt = table_('Locations'), open = [], flags = [], total = 0;
+  var lt = table_('Locations'), open = [], flags = [], total = 0, groups = {};
   lt.rows.forEach(function (r) {
     var L = rowObj_(lt, r); if (!L.Location) return;
     total++;
-    var s = String(L.Status || '');
-    if (!/ปิดแล้ว/.test(s)) open.push(L.Location + ' (' + (s || 'ไม่มีสถานะ') + (L.Owner ? ' · ' + L.Owner : '') + ')');
+    var s = String(L.Status || '') || 'ไม่มีสถานะ';
+    if (!/ปิดแล้ว/.test(s)) {
+      open.push(L.Location);
+      // v2.5.1: แยกตามเครื่องผู้ดูแล (คนถือเครื่องนั้นต้องไปกดปิด) แล้วแยกตามสถานะ · แสดงครบทุกตัว
+      var op = String(L.Owner || '').split(' '), dv = op[0] || '';
+      var g = groups[dv] = groups[dv] || { st: {}, staff: [] };
+      if (op[1] && g.staff.indexOf(op[1]) < 0) g.staff.push(op[1]);
+      (g.st[s] = g.st[s] || []).push(String(L.Location));
+    }
     if (L.Flag_Check) flags.push(L.Location + ': ' + L.Flag_Check);
   });
-  open.sort(natCmp_); flags.sort(natCmp_);
+  flags.sort(natCmp_);
+  var names = {};
+  activeStaff_().forEach(function (x) { names[x[0]] = x[1]; });
+  var k1list = Object.keys(groups).sort(function (a, b) { return a ? (b ? natCmp_(a, b) : -1) : 1; }).map(function (o) {
+    var g = groups[o], who = o ? o + (g.staff.length ? ' · ' + g.staff.sort().map(function (c) { return c + (names[c] ? ' ' + names[c] : ''); }).join(', ') : '') : 'ไม่มีผู้ดูแล';
+    return who + ' — ' + Object.keys(g.st).sort().map(function (st) { return st + ' ' + g.st[st].length + ': ' + g.st[st].sort(natCmp_).join(', '); }).join(' · ');
+  });
   add('K1', total > 0 && !open.length, 'ทุก Location ปิดแล้ว ไม่มี พัก / กำลังนับ',
-    total ? (open.length ? 'ยังไม่ปิด ' + open.length + ' จาก ' + total + ' Location' : 'ปิดครบ ' + total + ' Location') : 'ยังไม่มี Location ในรอบนี้',
+    total ? (open.length ? 'ยังไม่ปิด ' + open.length + ' จาก ' + total + ' Location · แยกตามเครื่องผู้ดูแล' : 'ปิดครบ ' + total + ' Location') : 'ยังไม่มี Location ในรอบนี้',
     'ให้ผู้ดูแลกด "ปิด Location" ที่เครื่อง (ทำได้หลังปิดการนับ) · ผู้ช่วยค้างให้กด "ส่งงาน" หรือใช้ "ส่งงานแทน" ในแท็บเครื่อง TC21',
-    open.length ? 'Location ยังไม่ปิด ' + open.length : 'Location ปิดครบ ' + total, open.slice(0, 30));
+    open.length ? 'Location ยังไม่ปิด ' + open.length : 'Location ปิดครบ ' + total, k1list);
   add('K2', !flags.length, 'ไม่มีธง "ต้องตรวจซ้ำ" ค้าง', flags.length ? 'มีธง ' + flags.length + ' Location' : 'ไม่มีธง',
     'ตรวจแล้วกด "ปิดธง" พร้อมเหตุผล (แท็บเครื่อง TC21) หรือเปิดการนับอีกครั้งให้ผู้ดูแลล้าง Location แล้วนับใหม่', '', flags.slice(0, 30));
   // K3 ทุกเครื่องที่เปิดใช้และจับคู่อยู่ ค้างส่ง 0 ตามสัญญาณล่าสุด
   var dt = table_('Devices'), devs = [];
   dt.rows.forEach(function (r) { var d = rowObj_(dt, r); if (d.Device_ID && d.Active === 'Y' && d.Token_Hash) devs.push(String(d.Device_ID)); });
   devs.sort(natCmp_);
-  var hb = heartbeats_(devs), bad = [], good = [];
+  // v2.5.1 (UAT G10-6): นับเฉพาะสัญญาณที่ส่งมา "หลังปิดการนับ" — เครื่องได้รับสถานะปิดในคำตอบครั้งนั้น ยิงเพิ่มไม่ได้อีก
+  // สัญญาณก่อนปิด (เช่น ปิด Wi-Fi ไว้) ไม่นับ เพราะเครื่องอาจยังยิงต่อแบบออฟไลน์ได้
+  var hb = heartbeats_(devs), bad = [], good = [], closedAt = cfg.COUNT_CLOSED_AT || '';
   devs.forEach(function (id) {
-    var h = hb[id], ago = h ? Math.max(0, Math.round((Date.now() - h.at) / 60000)) : null;
+    var h = hb[id], ago = h ? Math.max(0, Math.round((Date.now() - h.at) / 60000)) : null, at = h ? ts_(h.at) : '';
     if (!h) bad.push(id + ': ไม่มีสัญญาณ');
     else if (h.pending > 0) bad.push(id + ': ค้างส่ง ' + h.pending + ' รายการ (สัญญาณ ' + ago + ' นาทีที่แล้ว)');
-    else good.push(id + ': ค้าง 0 (สัญญาณ ' + ago + ' นาทีที่แล้ว)');
+    else if (!closedAt) good.push(id + ': ค้าง 0 (สัญญาณ ' + ago + ' นาทีที่แล้ว · ยังไม่ได้ปิดการนับ)');
+    else if (at < closedAt) bad.push(id + ': ยังไม่ได้ติดต่อหลังปิดการนับ (สัญญาณล่าสุด ' + at.slice(11, 16) + ' ก่อนปิด ' + closedAt.slice(11, 16) + ')');
+    else good.push(id + ': ค้าง 0 (สัญญาณ ' + ago + ' นาทีที่แล้ว หลังปิดการนับ)');
   });
-  add('K3', !bad.length, 'ทุกเครื่องค้างส่ง 0 ตามสัญญาณล่าสุด',
-    devs.length ? (bad.length ? 'ไม่ผ่าน ' + bad.length + ' จาก ' + devs.length + ' เครื่อง' : 'ครบ ' + devs.length + ' เครื่อง') : 'ไม่มีเครื่องที่จับคู่อยู่',
+  var k3ok = !bad.length && !!closedAt;
+  add('K3', k3ok, 'ทุกเครื่องค้างส่ง 0 ตามสัญญาณหลังปิดการนับ',
+    devs.length ? (bad.length ? 'ไม่ผ่าน ' + bad.length + ' จาก ' + devs.length + ' เครื่อง' : !closedAt ? 'ค้าง 0 ครบ ' + devs.length + ' เครื่อง แต่ยังไม่ได้ปิดการนับ — ตรวจจริงหลังปิด' : 'ครบ ' + devs.length + ' เครื่อง') : 'ไม่มีเครื่องที่จับคู่อยู่',
+    !closedAt && !bad.length ? 'กด "ปิดการนับ" แล้วรอให้ทุกเครื่องส่งสัญญาณ (ไม่เกิน 1 นาที)' :
     'เปิดแอปบนเครื่องในจุดที่มี Wi-Fi (ส่งสัญญาณทุก 1 นาที) หรือ Export ไฟล์จากเครื่องแล้วนำเข้า · เครื่องที่ไม่ได้ใช้ในรอบนี้: "ยกเลิกเครื่อง" ในแท็บเครื่อง TC21',
     bad.length ? 'เครื่องยังไม่พร้อม ' + bad.length + ' จาก ' + devs.length : 'เครื่องค้างส่ง 0 ครบ ' + devs.length, bad.concat(good));
   // K4 กระทบยอดทั้งรอบครั้งล่าสุด: ตรงทั้งหมด · ทำหลังปิดการนับ · Count_Log ไม่มีแถวเพิ่มหลังจากนั้น
   var R = null; try { R = JSON.parse(cfg.LAST_RECONCILE || 'null'); } catch (e) { }
   var lastRow = SpreadsheetApp.getActive().getSheetByName('Count_Log').getLastRow(), k4 = '', k4ok = false;
-  if (!R || R.project !== project) k4 = 'ยังไม่ได้กระทบยอดในรอบนี้';
+  if (!R || R.project !== project) {
+    var lastRec = lastLogOf_('RECONCILE', project);
+    k4 = lastRec ? 'กระทบยอดล่าสุด ' + lastRec + ' (ก่อนอัปเดตระบบ / ก่อนปิดการนับ) — ต้องกระทบยอดใหม่หลังปิดการนับ' : 'ยังไม่เคยกระทบยอดในรอบนี้';
+  }
   else if (!R.ok) k4 = 'กระทบยอด ' + R.at + ' พบจุดต่าง';
   else if (Number(R.lastRow) !== lastRow) k4 = 'มีรายการเข้ามาหลังกระทบยอด ' + R.at + ' — ต้องกระทบยอดใหม่';
   else if (!cfg.COUNT_CLOSED_AT) k4 = 'ตรงทั้งหมด ' + R.at + ' แต่ยังไม่ได้ปิดการนับ — ต้องกระทบยอดอีกครั้งหลังปิดการนับ';
@@ -850,7 +888,10 @@ function closeCheck_(full) {
   if (SV && SV.project !== project) SV = null;
   var K5T = 'ผลสรุปที่บันทึกล่าสุด = ตัวเลขตอนนี้ (บันทึกหลังปิดการนับ)';
   var K5F = 'แท็บสรุปผลนับ → "สรุปผลและบันทึก" (หลังปิดการนับ ปรับยอดครั้งสุดท้าย และไฟล์ SAP ล่าสุด)';
-  if (!SV) add('K5', false, K5T, 'ยังไม่เคยกด "สรุปผลและบันทึก" ในรอบนี้', K5F);
+  if (!SV) {
+    var lastSave = lastLogOf_('SUMMARY_SAVE', project);
+    add('K5', false, K5T, lastSave ? 'บันทึกล่าสุด ' + lastSave + ' (ก่อนอัปเดตระบบ / ก่อนปิดการนับ) — ต้องบันทึกใหม่หลังปิดการนับ' : 'ยังไม่เคยกด "สรุปผลและบันทึก" ในรอบนี้', K5F);
+  }
   else if (!full) add('K5', false, K5T, 'ยังไม่ได้เทียบตัวเลข (บันทึกล่าสุดครั้งที่ ' + SV.run + ' · ' + SV.at + ')', 'กด "ตรวจเงื่อนไข"');
   else {
     var nowSig = summarySig_(summary_(project, 'ตรวจเงื่อนไขปิดรอบ (หน้า Admin)'));

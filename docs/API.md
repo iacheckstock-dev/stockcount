@@ -210,6 +210,7 @@ sequenceDiagram
 - รายการที่รับระหว่างปิด → นับใน Script Properties `AFTER_COUNT_CLOSE` และบันทึก `SYNC_AFTER_COUNT_CLOSE` · รายการที่ `scanTime` ≥ `COUNT_CLOSED_AT` นับเป็น "ยิงหลังเวลาปิด" (เครื่องยังไม่รู้ว่าปิด เช่น ออฟไลน์)
 - แอป: รู้สถานะจาก bootstrap / sync / hello (จำใน `boot.project.status` ใช้ตอนออฟไลน์) · ปิดแล้ว → กล่องกลางจอ "ปิดการนับแล้ว" · ไม่รับการยิงสินค้า ป้อนเอง ยกเลิกล่าสุด แก้ / ล้าง / ย้อนยอด และเปิด Location ใหม่ · ยังกลับเข้า Location ที่เครื่องนี้ พัก / กำลังนับ อยู่ได้ เพื่อกด "ปิด Location" / "ส่งงาน" · ค้นหา SKU ได้
 - หน้า Admin: `apiCountClose(staff)` · `apiCountReopen(staff, why)` · `apiCloseCheck()` (K1–K7 ดูอย่างเดียว)
+- K3 (v2.5.1): heartbeat ต้องมาหลัง `COUNT_CLOSED_AT` (เทียบเวลาเป็นข้อความรูปแบบเดียวกับ `now_()`) — เครื่องได้สถานะปิดในคำตอบครั้งนั้น จึงยิงเพิ่มไม่ได้อีก
 
 ## unpair (v2.2.2)
 คำขอ: `{ staff }` → `{ ok }` · ล้าง Token_Hash/Pair_Code ของเครื่อง ลบ heartbeat และบันทึก `DEVICE_UNPAIRED` ใน Admin_Log
