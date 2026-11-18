@@ -212,6 +212,13 @@ sequenceDiagram
 - หน้า Admin: `apiCountClose(staff)` · `apiCountReopen(staff, why)` · `apiCloseCheck()` (K1–K7 ดูอย่างเดียว)
 - K3 (v2.5.1): heartbeat ต้องมาหลัง `COUNT_CLOSED_AT` (เทียบเวลาเป็นข้อความรูปแบบเดียวกับ `now_()`) — เครื่องได้สถานะปิดในคำตอบครั้งนั้น จึงยิงเพิ่มไม่ได้อีก
 
+## ปิดรอบ (v2.5.2)
+- `ROUND_STATUS = CLOSING / CLOSED`: `sync` กักรายการไว้ใน Quarantine (ไม่เข้า Count_Log) · คำตอบมี `round` บอกสถานะ
+- แอป: รู้สถานะแล้วขึ้นกล่องกลางจอ "ปิดรอบแล้ว" · ยิงไม่ได้ทุกอย่าง (เหมือนปิดการนับ) · รอเปิดรอบใหม่ แล้ว ⋮ → ตรวจความพร้อมใหม่
+- หน้า Admin: `apiOpenRound(projectId, countDate, roundType)` (`REAL` / `PILOT` บังคับ · รหัสที่อยู่ใน Count_History ใช้ซ้ำไม่ได้) · `apiCloseCheckFast()` (K1–K7 ไม่คำนวณผลสรุปใหม่ · การ์ดเรียกเอง) · `apiCloseRound(staff, confirm, test)` (`confirm` ต้องเท่ากับรหัสรอบ หรือ `ล้างข้อมูลทดสอบ <รอบ>` ในโหมดทดสอบ · `CLOSING` = ทำต่อจากที่ค้าง) → `{ state, closed }` · `apiVerifyArchive(projectId)` → `{ ok, rows:[{sheet, rows, ok}], cfgOk, url, at }`
+- `apiGetState()` เพิ่ม `round.type / typeTh / testAllowed / archived / archivedType / closeType` และ `history` (Count_History ล่าสุดก่อน)
+- ไฟล์สำรอง (`ARCHIVED`): ทุกคำสั่งที่เขียนข้อมูล (withLock_ / logAdmin_) ถูกปฏิเสธ
+
 ## unpair (v2.2.2)
 คำขอ: `{ staff }` → `{ ok }` · ล้าง Token_Hash/Pair_Code ของเครื่อง ลบ heartbeat และบันทึก `DEVICE_UNPAIRED` ใน Admin_Log
 - แอปยอมให้กดได้เมื่อไม่มีรายการและเหตุการณ์ค้างส่งเท่านั้น

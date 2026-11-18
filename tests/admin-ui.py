@@ -18,7 +18,10 @@ window.google = { script: { run: (function mk(ok, bad) {
     if (k === 'withFailureHandler') return function (f) { return mk(ok, f); };
     return function () { CALLS.push([k].concat([].slice.call(arguments)));
       if (window.FAIL && window.FAIL[k]) { var m = window.FAIL[k]; setTimeout(function () { bad && bad({ message: m }); }, 0); return; }
-      if (k === 'apiCloseCheck') { setTimeout(function () { ok && ok(window.ST.KCHECK); }, 0); return; }
+      if (k === 'apiCloseCheck') { setTimeout(function () { ok && ok(window.KFULL || window.ST.KCHECK); }, 0); return; }
+      if (k === 'apiCloseCheckFast') { setTimeout(function () { ok && ok(window.KFAST || Object.assign({}, window.ST.KCHECK, { full: false })); }, 0); return; }
+      if (k === 'apiCloseRound') { setTimeout(function () { ok && ok(window.CLOSEROUND); }, 0); return; }
+      if (k === 'apiVerifyArchive') { setTimeout(function () { ok && ok(window.VERIFY); }, 0); return; }
       if (k === 'apiCountClose' || k === 'apiCountReopen') { setTimeout(function () { ok && ok(window.CLOSERES); }, 0); return; }
       var r = k === 'apiReconcile' ? window.RECON : k === 'apiSummary' ? window.ST.SUMMARY : k === 'apiSummarySave' ? Object.assign({}, window.ST.SUMMARY, { run: 3, saved: 9, same: !!window.SAME, prevAt: '2026-11-16 10:58:15', lastSave: { run: 3, at: window.ST.SUMMARY.at } }) : k === 'apiAdjust' || k === 'apiAdjustReverse' ? Object.assign({}, window.ST.SUMMARY, { adjDone: { id: 'ADJ-0099', material: 'A112101UT0550XK', name: 'SHIRT', qty: -1, before: 10, after: 9, book: 52, reversed: k === 'apiAdjustReverse' ? 'ADJ-0001' : '' } }) : k === 'apiSkuDetail' ? window.ST.SKU_DETAIL : k === 'apiDevicesState' || k.indexOf('apiLoc') === 0 || k === 'apiPairCode' ? window.ST : {};
       setTimeout(function () { ok && ok(r); }, 0); };
@@ -251,7 +254,7 @@ with sync_playwright() as p:
     check('ปิดการนับแล้ว' in cb and 'EMP-K' in cb and pg.is_visible('#closeBox button:has-text("เปิดการนับอีกครั้ง")') and 'ปิดการนับแล้ว' in pg.inner_text('#roundTag'), 'การ์ดเปลี่ยนเป็น "ปิดการนับแล้ว" + ปุ่ม "เปิดการนับอีกครั้ง"')
     check('K7' in pg.inner_text('#kList') and 'ยังไม่ได้เทียบตัวเลข K5' in pg.inner_text('#kList'), 'หลังกดปิดแสดงเงื่อนไขทันที (แบบเร็ว ยังไม่เทียบ K5)')
     # ตรวจเงื่อนไขปิดรอบ (ผลจริงจาก gas-env)
-    pg.click('text=ตรวจเงื่อนไขปิดรอบ'); pg.wait_for_timeout(150)
+    pg.click('#kBox button:has-text("ตรวจเงื่อนไขปิดรอบ")'); pg.wait_for_timeout(150)
     kl = pg.inner_text('#kList'); K = st['KCHECK']
     rows = pg.locator('#kList .klist tr').count()
     check(rows == 7 and all(x['id'] in kl and x['title'][:12] in kl for x in K['items']), 'แผงเงื่อนไขแสดง K1–K7 ครบ 7 แถว')
@@ -310,6 +313,99 @@ with sync_playwright() as p:
     pg.evaluate("errBox('Error: รหัสรอบต้องเป็นรูปแบบ 2026Q4')")
     check(pg.inner_text('#errMsg') == 'รหัสรอบต้องเป็นรูปแบบ 2026Q4', 'กล่อง error ตัด "Error:" นำหน้าออก')
     pg.click('#errOk')
+
+    print('v2.5.2: ขั้นตอนปิดรอบในการ์ด · ปิดรอบ (พิมพ์ยืนยัน) · โหมดทดสอบ · ค้าง CLOSING · รอบที่ปิดแล้ว · ไฟล์สำรอง · ประเภทรอบ · ตาราง Location')
+    pg.evaluate("st => { setState(st); }", st['STATE'])
+    check(pg.locator('#rtype option').count() == 3, 'เปิดรอบ: มีช่องเลือกประเภท รอบจริง / รอบทดลอง')
+    pg.evaluate("CALLS.length = 0; $('rtype').value = ''; openRound()"); pg.wait_for_timeout(50)
+    check(pg.is_visible('#errDlg') and 'ประเภทรอบ' in pg.inner_text('#errMsg') and not pg.evaluate('CALLS').__len__(), 'ไม่เลือกประเภท → กล่องแจ้ง ไม่เรียกเซิร์ฟเวอร์')
+    pg.click('#errOk')
+    pg.select_option('#rtype', 'PILOT'); pg.evaluate("openRound()"); pg.wait_for_timeout(50)
+    c = [x for x in pg.evaluate('CALLS') if x[0] == 'apiOpenRound']
+    check(c and c[0][3] == 'PILOT', 'เรียก apiOpenRound(รหัส, วันนับ, "PILOT")')
+    check(st['STATE']['round']['typeTh'] in pg.inner_text('#roundTag'), 'ป้ายรอบบอกประเภท: ' + pg.inner_text('#roundTag'))
+    # ปิดการนับแล้ว: ขั้นตอน 1–6 · ข้อมูลจริงจาก gas-env (ยังไม่ผ่านบางข้อ) → ปุ่มปิดรอบกดไม่ได้
+    cc = json.loads(json.dumps(closed)); cc['round']['testAllowed'] = False
+    pg.evaluate("x => { window.KFAST = null; window.KFULL = null; KCHK = null; setState(x); }", cc); pg.wait_for_timeout(100)
+    steps = pg.locator('#stepBox table.steps tr')
+    check(steps.count() == 6 and 'ตรวจอีกครั้ง' in pg.inner_text('#stepBox') and 'กระทบยอดทั้งรอบ' in pg.inner_text('#stepBox'), 'การ์ดปิดการนับแล้ว: ขั้นตอน 1–6 พร้อมปุ่มในแต่ละข้อ')
+    check(['apiCloseCheckFast'] in pg.evaluate('CALLS'), 'เปิดหน้า → ตรวจแบบเร็วให้เอง')
+    check(pg.is_disabled('#stepBox button:has-text("ปิดรอบ")'), 'ยังไม่ผ่านทุกข้อ (แบบเร็ว) → ปุ่ม "ปิดรอบ" กดไม่ได้')
+    check(not pg.locator('#stepBox button:has-text("ล้างข้อมูลทดสอบ")').count(), 'รอบที่ไม่ใช่ 2026Q4 → ไม่มีปุ่มล้างข้อมูลทดสอบ')
+    pg.screenshot(path='/tmp/admin-steps.png', full_page=False)
+    # ผ่านทุกข้อแบบเต็ม → ปุ่มปิดรอบกดได้
+    allok = json.loads(json.dumps(st['KCHECK'])); allok.update({'full': True, 'ok': True})
+    for x in allok['items']: x['ok'] = True
+    pg.evaluate("K => { window.KFULL = K; window.KFAST = Object.assign({}, K, { full: false }); }", allok)
+    pg.click('#stepBox button:has-text("ตรวจเงื่อนไข")'); pg.wait_for_timeout(100)
+    check(pg.locator('#stepBox td.r.y').count() == 6 and not pg.is_disabled('#stepBox button:has-text("ปิดรอบ")'), 'ตรวจแบบเต็มผ่าน → ✓ ครบ 6 ข้อ ปุ่ม "ปิดรอบ" กดได้')
+    pg.evaluate("fastCheck()"); pg.wait_for_timeout(100)
+    check(not pg.is_disabled('#stepBox button:has-text("ปิดรอบ")'), 'ตรวจแบบเร็วซ้ำ (Count_Log ไม่เปลี่ยน) → ผลแบบเต็มยังใช้ได้')
+    # ปิดรอบ: พิมพ์รหัสรอบให้ตรง + รหัสผู้ตรวจสอบ
+    pid = cc['round']['projectId']
+    pg.evaluate('CALLS.length = 0'); pg.click('#stepBox button:has-text("ปิดรอบ")'); pg.wait_for_timeout(50)
+    check(pg.is_visible('#askDlg') and ('ปิดรอบ ' + pid) in pg.inner_text('#askTitle') and 'ล้างชีตงาน' in pg.inner_text('#askBody') and pg.is_visible('#askStaff') and pg.is_visible('#askWhy'), 'กด "ปิดรอบ" → กล่องอธิบายขั้นตอน + ช่องพิมพ์ยืนยัน + รหัสผู้ตรวจสอบ')
+    pg.fill('#askWhy', pid + 'x'); pg.wait_for_timeout(30)
+    check(pg.is_disabled('#askOk') and ('พิมพ์ให้ตรง: ' + pid) in pg.inner_text('#askNeed'), 'พิมพ์ไม่ตรง → กดไม่ได้ + ตัวแดงบอกคำที่ต้องพิมพ์')
+    pg.fill('#askWhy', pid); pg.wait_for_timeout(30)
+    check(not pg.is_disabled('#askOk'), 'พิมพ์ตรง + มีรหัสผู้ตรวจสอบ → กดได้')
+    pg.screenshot(path='/tmp/admin-closeround-ask.png')
+    after = json.loads(json.dumps(st['STATE'])); after['round'].update({'status': 'CLOSED', 'statusTh': 'ปิดรอบแล้ว'})
+    H = {'project': pid, 'countDate': '2026-11-20', 'book': 120, 'final': 118, 'diffQty': -2, 'diffValue': -350.5, 'diffItems': 2, 'edits': 1, 'url': 'https://example.invalid/a', 'checksum': 'Count_Log:abcd|Adjustments:ef01|Variance:2345',
+         'run': 3, 'lines': 99, 'at': '2026-11-20 18:00:00', 'by': 'EMP-K', 'type': 'PILOT', 'typeTh': 'รอบทดลอง'}
+    after['history'] = [H]
+    C = dict(H); C['type'] = 'PILOT'
+    pg.evaluate("x => { window.CLOSEROUND = x; }", {'state': after, 'closed': C})
+    pg.click('#askOk'); pg.wait_for_timeout(150)
+    check(['apiCloseRound', 'EMP-K', pid, False] in pg.evaluate('CALLS'), 'เรียก apiCloseRound(รหัสผู้ตรวจสอบ, คำยืนยัน, ไม่ใช่โหมดทดสอบ)')
+    box = pg.inner_text('#askDlg')
+    check('ปิดรอบ ' + pid + ' แล้ว' in box and 'เปิดไฟล์สำรอง' in box and 'Count_Log:abcd' in box and 'รอบทดลอง' in box, 'ผลปิดรอบกลางจอ: ลิงก์ไฟล์สำรอง checksum ยอด')
+    pg.screenshot(path='/tmp/admin-closeround-done.png')
+    pg.click('#askOk')
+    cb = pg.inner_text('#closeCard')
+    check('ปิดรอบแล้ว' in cb and 'เปิดไฟล์สำรอง' in cb and 'รหัสรอบใหม่' in cb, 'การ์ดหลังปิดรอบ: ลิงก์ไฟล์สำรอง + บอกให้เปิดรอบใหม่ด้วยรหัสใหม่')
+    hb = pg.inner_text('#histBox')
+    check(pid in hb and 'รอบทดลอง' in hb and '-2' in hb and pg.locator('#histBox button:has-text("ตรวจไฟล์สำรอง")').count() == 1, 'การ์ด "รอบที่ปิดแล้ว" แสดงรอบ ประเภท ผลต่าง และปุ่มตรวจไฟล์สำรอง')
+    pg.evaluate("x => { window.VERIFY = x; }", {'project': pid, 'ok': False, 'cfgOk': True, 'url': 'https://example.invalid/a', 'at': '2026-11-21 09:00:00',
+        'rows': [{'sheet': 'Count_Log', 'ok': False, 'rows': 99}, {'sheet': 'Adjustments', 'ok': True, 'rows': 1}, {'sheet': 'Variance', 'ok': True, 'rows': 40}]})
+    pg.evaluate('CALLS.length = 0'); pg.click('#histBox button:has-text("ตรวจไฟล์สำรอง")'); pg.wait_for_timeout(100)
+    vb = pg.inner_text('#askDlg')
+    check(['apiVerifyArchive', pid] in pg.evaluate('CALLS') and 'ไม่ตรง' in pg.inner_text('#askTitle') and 'ถูกแก้หลังปิดรอบ' in vb and 'ARCHIVE_CHECK' in vb, 'ตรวจไฟล์สำรองที่ถูกแก้ → ✗ บอกชีตที่ไม่ตรง')
+    pg.screenshot(path='/tmp/admin-verify.png'); pg.click('#askOk')
+    # โหมดทดสอบ 2026Q4: ปุ่มล้างข้อมูลทดสอบ ใช้ได้เมื่อ K3 K6 K7 ผ่าน (K1 K2 K4 K5 ไม่ผ่านก็ได้)
+    tq = json.loads(json.dumps(closed)); tq['round']['testAllowed'] = True
+    kt = json.loads(json.dumps(st['KCHECK'])); kt['full'] = False
+    for x in kt['items']: x['ok'] = x['id'] in ('K3', 'K6', 'K7')
+    kt['ok'] = False
+    pg.evaluate("x => { window.KFAST = x[1]; window.KFULL = null; KCHK = null; setState(x[0]); }", [tq, kt]); pg.wait_for_timeout(100)
+    check(pg.is_disabled('#stepBox button:has-text("ปิดรอบ") >> nth=0') and not pg.is_disabled('#stepBox button:has-text("ล้างข้อมูลทดสอบ")'), 'โหมดทดสอบ: K1 ไม่ผ่าน → ปุ่มปิดรอบกดไม่ได้ แต่ "ล้างข้อมูลทดสอบ" กดได้')
+    pg.screenshot(path='/tmp/admin-testmode.png')
+    pg.evaluate('CALLS.length = 0'); pg.click('#stepBox button:has-text("ล้างข้อมูลทดสอบ")'); pg.wait_for_timeout(50)
+    must = 'ล้างข้อมูลทดสอบ ' + tq['round']['projectId']
+    pg.fill('#askWhy', must); pg.evaluate("x => { window.CLOSEROUND = x; }", {'state': after, 'closed': dict(C, type='TEST')}); pg.click('#askOk'); pg.wait_for_timeout(150)
+    check(['apiCloseRound', 'EMP-K', must, True] in pg.evaluate('CALLS'), 'เรียก apiCloseRound(…, "' + must + '", โหมดทดสอบ)')
+    pg.click('#askOk')
+    # ค้าง CLOSING → ปุ่มปิดรอบต่อ (ส่งโหมดตาม CLOSE_STATE)
+    cl = json.loads(json.dumps(closed)); cl['round'].update({'status': 'CLOSING', 'statusTh': 'กำลังปิดรอบ (ค้าง)', 'closeType': 'TEST'})
+    pg.evaluate("x => { setState(x); }", cl)
+    check('ค้างกลางทาง' in pg.inner_text('#closeCard') and pg.is_visible('#closeBox button:has-text("ปิดรอบต่อ")'), 'สถานะ CLOSING → การ์ดแจ้งค้าง + ปุ่ม "ปิดรอบต่อ"')
+    pg.evaluate('CALLS.length = 0'); pg.click('#closeBox button:has-text("ปิดรอบต่อ")'); pg.fill('#askWhy', must); pg.click('#askOk'); pg.wait_for_timeout(150)
+    check(['apiCloseRound', 'EMP-K', must, True] in pg.evaluate('CALLS'), 'ปิดรอบต่อ → เรียกด้วยโหมดเดิม (ทดสอบ)')
+    pg.click('#askOk')
+    # ไฟล์สำรอง: แถบแดงบนสุด
+    ar = json.loads(json.dumps(after)); ar['round'].update({'status': 'ARCHIVED', 'archived': True, 'archivedType': 'PILOT'})
+    pg.evaluate("x => { setState(x); }", ar)
+    check(pg.is_visible('#archBanner') and 'ดูได้อย่างเดียว' in pg.inner_text('#archBanner') and 'รอบทดลอง' in pg.inner_text('#archBanner'), 'เปิดไฟล์สำรอง → แถบแดง "ดูได้อย่างเดียว": ' + pg.inner_text('#archBanner'))
+    pg.evaluate("x => { setState(x); }", st['STATE'])
+    check(not pg.is_visible('#archBanner'), 'ไฟล์ปกติ → ไม่มีแถบ')
+    # ตาราง Location ความกว้างคอลัมน์ตายตัว (UAT G11)
+    pg.click('#nav button[data-t=devices]')
+    pg.evaluate("st => { LOCF = 'all'; renderDevices(st); }", st)
+    check(pg.locator('#locTbl col').count() == 11 and pg.evaluate("getComputedStyle($('locTbl')).tableLayout") == 'fixed', 'ตาราง Location: 11 คอลัมน์ ความกว้างตายตัว (table-layout fixed)')
+    w = pg.evaluate("[].map.call(document.querySelectorAll('#locTbl tr:nth-child(2) td'), function (t) { return Math.round(t.getBoundingClientRect().width); })")
+    pg.evaluate("st => { LOCF = 'todo'; renderDevices(st); }", st)
+    w2 = pg.evaluate("[].map.call(document.querySelectorAll('#locTbl tr:nth-child(2) td'), function (t) { return Math.round(t.getBoundingClientRect().width); })")
+    check(w == w2 and min(w) > 0, 'สลับตัวกรองแล้วความกว้างคอลัมน์เท่าเดิม: ' + str(w))
     check(not dialogs, 'ไม่มี popup ของเบราว์เซอร์: ' + json.dumps(dialogs, ensure_ascii=False))
     b.close()
 print('\nผล: ผ่าน %d / ไม่ผ่าน %d' % (P, F))

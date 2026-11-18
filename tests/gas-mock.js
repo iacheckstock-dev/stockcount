@@ -11,7 +11,7 @@ let s;
 run('setupSheets()');
 assert.ok(!sheets['ชีต1'], 'ลบชีตว่างเริ่มต้น');
 assert.strictEqual(Object.keys(sheets).length, Object.keys(run("SHEETS")).length);
-s = run('apiOpenRound("2026q4", "2026-11-04")');
+s = run('apiOpenRound("2026q4", "2026-11-04", "PILOT")');
 assert.strictEqual(s.round.projectId, '2026Q4');
 s = run('apiUpload("POS", _pos, { fileName: "Stock_Shop_POS.xls", fileDate: "2026-11-04" })');
 assert.ok(s.master.hasPos && !s.master.hasSap);
@@ -49,7 +49,7 @@ assert.ok(!s.master.canApprove, 'ยังไม่เปิดรอบ อน�
 if (process.env.DUMP_EMPTY) fs.writeFileSync(process.env.DUMP_EMPTY, JSON.stringify({ state: s, compare: [] }));
 assert.strictEqual(sheets.Barcode_Map.data.length, 1);
 assert.ok(sheets.Admin_Log.data.some(r => r[2] === 'RESET_ROUND'));
-s = run('apiOpenRound("2026Q4", "2026-11-04")');
+s = run('apiOpenRound("2026Q4", "2026-11-04", "PILOT")');
 s = run('apiUpload("POS", _pos, { fileName: "Stock_Shop_POS.xls", fileDate: "2026-11-04" })');
 assert.strictEqual(s.master.deviceCount, 2330);
 run('setConfig_({ ROUND_STATUS: "COUNTING" })');

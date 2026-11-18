@@ -15,7 +15,7 @@ const env = createEnv();
 const { sap, pos } = loadSamples(env.ctx.Core);
 const run = (c, v) => env.run(c, Object.assign({ _sap: sap, _pos: pos }, v || {}));
 run('setupSheets()');
-run('apiOpenRound("2026Q4", "2026-11-04")');
+run('apiOpenRound("2026Q4", "2026-11-04", "PILOT")');
 run('apiUpload("POS", _pos, { fileName: "pos.xls", fileDate: "2026-11-04" })');
 run('apiUpload("SAP", _sap, { fileName: "sap.xls", fileDate: "2026-11-04", d1Confirmed: true })');
 const st = run('apiGetState()');
@@ -231,7 +231,7 @@ console.log('\nย้ายข้อมูลจากรุ่นก่อน')
 test('ข้อมูลรอบที่นับด้วย v2.1.1 (ไม่มี Loc_Members) → Open_By เป็นผู้ดูแล เครื่องอื่นเป็นผู้ช่วยส่งงานแล้ว', () => {
   const e2 = createEnv();
   const r2 = (c, v) => e2.run(c, Object.assign({ _sap: sap, _pos: pos }, v || {}));
-  r2('setupSheets()'); r2('apiOpenRound("2026Q4", "2026-11-04")');
+  r2('setupSheets()'); r2('apiOpenRound("2026Q4", "2026-11-04", "PILOT")');
   r2('apiSeedDevices(2, "TC21")');
   const log = e2.sheets.Count_Log;
   log.data.push(['TC21-01-000001', '2026Q4', 'TC21-01', '1', 'EMP-C', 'C1', BC1, MAT1, '3', 'SCAN'], ['TC21-02-000001', '2026Q4', 'TC21-02', '1', 'EMP-K', 'C1', BC1, MAT1, '2', 'SCAN']);
@@ -1078,7 +1078,7 @@ console.log('\nปิดการนับ / เงื่อนไขปิด�
     assert.throws(() => run('apiCountClose("EMP-K")'), /ปิดการนับไปแล้ว/);
   });
   test('เปิดรอบใหม่ระหว่างปิดการนับไม่ได้ (ต้องปิดรอบก่อน)', () => {
-    assert.throws(() => run('apiOpenRound("2027Q1", "2027-01-05")'), /ปิดรอบก่อน/);
+    assert.throws(() => run('apiOpenRound("2027Q1", "2027-01-05", "REAL")'), /ปิดรอบก่อน/);
   });
   test('เครื่องรู้สถานะ: hello / sync ตอบ round = COUNT_CLOSED · bootstrap ก็เป็น COUNT_CLOSED', () => {
     const h = O.call('hello', { pending: 0, location: '' });

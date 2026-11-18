@@ -12,7 +12,7 @@ const env = createEnv();
 const { sap, pos } = loadSamples(env.ctx.Core);
 const run = (c, v) => env.run(c, Object.assign({ _sap: sap, _pos: pos }, v || {}));
 run('setupSheets()');
-run('apiOpenRound("2026Q4", "2026-11-04")');
+run('apiOpenRound("2026Q4", "2026-11-04", "PILOT")');
 run('apiUpload("POS", _pos, { fileName: "pos.xls", fileDate: "2026-11-04" })');
 run('apiUpload("SAP", _sap, { fileName: "sap.xls", fileDate: "2026-11-04", d1Confirmed: true })');
 const st = run('apiGetState()');
@@ -21,7 +21,7 @@ env.sheets.Staff.data.push(['EMP-NU', 'นุ่น', 'ผู้ตรวจส�
 run('apiSeedDevices(5, "TC21")');
 
 let offline = false;
-let appVersion = '2.5.1';
+let appVersion = '2.5.2';
 let slowMs = 0;
 let apiDelay = { ms: 0, action: '' };   // จำลองเซิร์ฟเวอร์ช้า (GAS จริงตอบ 1–5 วินาที) v2.2.6
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'application/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.webmanifest': 'application/manifest+json' };
@@ -57,6 +57,7 @@ http.createServer((req, res) => {
       if (url.pathname === '/debug/reupload-sap') { run('apiUpload("SAP", _sap, { fileName: "sap2.xls", fileDate: "2026-11-04", d1Confirmed: true })'); return send(200, { ok: true }); }
       if (url.pathname === '/debug/countclose') return send(200, run('apiCountClose(_s)', { _s: url.searchParams.get('staff') || 'EMP-NU' }).check);
       if (url.pathname === '/debug/countreopen') return send(200, run('apiCountReopen(_s, _w)', { _s: url.searchParams.get('staff') || 'EMP-NU', _w: url.searchParams.get('why') || 'e2e' }).check);
+      if (url.pathname === '/debug/roundstatus') { run('setConfig_({ ROUND_STATUS: _v })', { _v: url.searchParams.get('v') }); return send(200, { ok: true }); }   // v2.5.2 จำลองรอบปิดแล้ว (ปิดรอบจริงทดสอบใน closeround-test)
       if (url.pathname === '/debug/closecheck') return send(200, run('apiCloseCheck()'));
       if (url.pathname === '/debug/version') { appVersion = url.searchParams.get('v'); return send(200, { appVersion }); }
       if (url.pathname === '/app/config.json') return send(200, { apiUrl: 'http://localhost:' + PORT + '/api', appVersion });

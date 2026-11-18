@@ -45,7 +45,9 @@
 | SCHEMA_VERSION | เวอร์ชันโครงสร้างชีต ต่ำกว่าโค้ด = อัปเกรดอัตโนมัติ |
 | PROJECT_ID | รหัสรอบนับ เช่น `2026Q4` |
 | COUNT_DATE | วันนับ (yyyy-mm-dd) เทียบกับยอด SAP สิ้นวันก่อนหน้า (D−1) |
-| ROUND_STATUS | `NONE` → `SETUP` → `COUNTING` (เมื่อได้รายการแรก) → `COUNT_CLOSED` (กด "ปิดการนับ" · v2.5.0) ⇄ `COUNTING` (กด "เปิดการนับอีกครั้ง") → `CLOSED` (v2.5.1) |
+| ROUND_STATUS | `NONE` → `SETUP` → `COUNTING` (เมื่อได้รายการแรก) → `COUNT_CLOSED` (กด "ปิดการนับ" · v2.5.0) ⇄ `COUNTING` (กด "เปิดการนับอีกครั้ง") → `CLOSING` (ปิดรอบค้างกลางทาง ทำต่อได้) → `CLOSED` (v2.5.2) · `ARCHIVED` = ไฟล์สำรองของรอบที่ปิดแล้ว (ดูอย่างเดียว) |
+| ROUND_TYPE | ประเภทรอบ `REAL` รอบจริง / `PILOT` รอบทดลอง — เลือกตอนเปิดรอบ (v2.5.2) · ปิดรอบในโหมดทดสอบ (เฉพาะรหัส `2026Q4` ที่เขียนในโค้ด) บันทึกเป็น `TEST` |
+| CLOSE_STATE | ข้อมูลระหว่างปิดรอบ (JSON) ใช้ทำต่อเมื่อค้างหลังไฟล์สำรองตรวจผ่าน · ว่าง = ไม่มีค้าง (v2.5.2) |
 | COUNT_CLOSED_AT / _BY | เวลาและรหัสผู้ตรวจสอบที่กดปิดการนับ (v2.5.0) · ว่างเมื่อเปิดการนับอีกครั้ง |
 | LAST_RECONCILE | ผลกระทบยอดทั้งรอบครั้งล่าสุด (JSON: at, ok, project, lastRow, lines) — เงื่อนไขปิดรอบ K4 (v2.5.0) |
 | SUMMARY_SAVED | ผลสรุปที่บันทึกล่าสุด (JSON: project, run, at, sig) — เงื่อนไขปิดรอบ K5 (v2.5.0) |
@@ -247,7 +249,12 @@
 ตัวเลขภาพรวมของการบันทึกครั้งล่าสุด: `SUMMARY_RUN` `BOOK_QTY` `FINAL_QTY` `DIFF_QTY` `DIFF_VALUE` `SKUS_OVER` `SKUS_SHORT` `UNMAPPED` `LOCATIONS_CLOSED` `SAP_FILE` `SUMMARY_SIG` (v2.4.1 ลายนิ้วมือของผล ใช้บอกว่าบันทึกครั้งนี้ตัวเลขเหมือนครั้งก่อน)
 
 ### Count_History — สรุปรอบที่ปิดแล้ว 🔒
-`Project_ID` · `Count_Date` · `SAP_Qty` · `Net_Count` · `Diff_Qty` · `Diff_Value` · `Diff_Items` · `Edits` · `Archive_Link` · `Checksum`
+`Project_ID` · `Count_Date` · `SAP_Qty` · `Net_Count` · `Diff_Qty` · `Diff_Value` · `Diff_Items` · `Edits` · `Archive_Link` · `Checksum` · `Final_Run` · `Lines` · `Closed_At` · `Closed_By` · `Round_Type` · `Archive_ID` (6 คอลัมน์หลังเพิ่มใน v2.5.2)
+
+เขียนตอนปิดรอบ 1 แถวต่อรอบ (ไม่ล้าง) · `Checksum` = ลายนิ้วมือของ Count_Log / Adjustments / Variance ในไฟล์สำรอง (`Count_Log:xxxx|Adjustments:xxxx|Variance:xxxx`) ใช้ปุ่ม "ตรวจไฟล์สำรอง" เทียบว่าไฟล์สำรองถูกแก้หลังปิดรอบหรือไม่ · รหัสรอบที่มีในชีตนี้แล้ว เปิดรอบซ้ำไม่ได้
+
+**ปิดรอบ (v2.5.2)** — สำเนาทั้งไฟล์ไปโฟลเดอร์ `Archive` ใต้ DRIVE_FOLDER_ID ชื่อ `ARCHIVED · <รอบ> [· รอบทดลอง] · ปิด <วันที่>` · ในไฟล์สำรอง: Admin_Log เหลือเฉพาะแถวของรอบนั้น · สถานะ `ARCHIVED` · ทุกชีตป้องกันแบบเตือน · เปิดดูใน Google Sheets หรือ File → Download → Microsoft Excel ได้
+หลังไฟล์สำรองตรวจผ่าน ไฟล์หลักล้าง: Count_Log · Adjustments · Variance · Dash_Data · Locations · Loc_Members · Loc_Checks · Device_Checks · Quarantine · SAP_Snapshot · POS_Snapshot · Barcode_Map · Map_Decisions · SAP_POS_Compare · Master_Check · Device_Master · Import_Files และค่า Config ของรอบ · **เก็บไว้:** Staff · Devices · Count_History · Admin_Log · ไฟล์ใน Drive
 
 ## ตรวจสอบ
 
@@ -260,4 +267,5 @@
 | Project_ID | รหัสรอบตอนบันทึก (v2.5.0) · แถวก่อน v2.5.0 ว่าง — หน้า Admin ใช้รอบจาก `OPEN_ROUND` ก่อนหน้า (อ่านอย่างเดียว ไม่เขียนกลับ) |
 
 **Admin_Log เก็บต่อเนื่องข้ามรอบ ไม่ล้างตอนปิดรอบ** (ตัดสิน Q2 เฟส 4 · 17 พ.ย.) — หน้า Admin → บันทึก Admin แสดงเฉพาะรอบปัจจุบัน ติ๊ก "แสดงทุกรอบ" เพื่อดูทั้งหมด · ตอนปิดรอบ (v2.5.1) ไฟล์สำรองเก็บเฉพาะแถวของรอบนั้น
+Action ที่เพิ่มใน v2.5.2: `CLOSE_ROUND_START` (ผู้กด + ประเภท + ยอดแต่ละชีตก่อนสำรอง — บันทึกก่อนทำ) · `ARCHIVE_VERIFY` / `ARCHIVE_VERIFY_FAILED` (ผลตรวจไฟล์สำรอง: จำนวนแถวทุกชีต + checksum) · `CLOSE_ROUND_CLEAR` (ล้างชีตงาน) · `CLOSE_ROUND` (ปิดรอบเสร็จ + ลิงก์ไฟล์สำรอง) · `ARCHIVE_CHECK` (กด "ตรวจไฟล์สำรอง" ภายหลัง)
 Action ที่เพิ่มใน v2.5.0: `COUNT_CLOSE` (ผู้กด + จำนวน Location ที่ยังไม่ปิด / เครื่องที่ยังไม่พร้อมตอนกด) · `COUNT_REOPEN` (ผู้กด + เหตุผล + จำนวนรายการที่รับระหว่างปิด) · `SYNC_AFTER_COUNT_CLOSE` (รับรายการระหว่างปิดการนับ · แยกจำนวนที่ยิงหลังเวลาปิด)

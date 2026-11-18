@@ -6,13 +6,13 @@
  * (API สำหรับ TC21 จะเพิ่มในเฟส 2 แยกต่างหาก และต้องใช้ device token)
  */
 
-var SCHEMA_VERSION = 8;   // 6 = v2.4.1 Variance.Barcode · 7 = v2.4.2 ชีต Adjustments · 8 = v2.5.0 Admin_Log.Project_ID
+var SCHEMA_VERSION = 9;   // 6 = v2.4.1 Variance.Barcode · 7 = v2.4.2 ชีต Adjustments · 8 = v2.5.0 Admin_Log.Project_ID · 9 = v2.5.2 Count_History คอลัมน์ปิดรอบ
 
 /**
  * เวอร์ชันของระบบ (ใช้เลขเดียวทั้งแอป TC21 และเซิร์ฟเวอร์ ตาม Semantic Versioning MAJOR.MINOR.PATCH)
  * ต้องตรงกับ APP_VERSION ใน app/app.js และ appVersion ใน app/config.json — ดู CHANGELOG.md
  */
-var SYSTEM_VERSION = '2.5.1';
+var SYSTEM_VERSION = '2.5.2';
 
 var SHEETS = {
   Config: ['Key', 'Value', 'Note'],
@@ -42,8 +42,9 @@ var SHEETS = {
     'Entry_Type', 'Ref_ID', 'Reason', 'Note', 'Scan_Time', 'Received_Time', 'Source', 'Entered_By', 'Requested_By', 'Basis'],
   Import_Files: ['Time', 'File_Name', 'Checksum', 'Lines', 'Existing', 'Added', 'By'],
   Dash_Data: ['Key', 'Value', 'Updated_At'],
+  // v2.5.2: Final_Run = ผลสรุปครั้งที่ใช้ · Lines = รายการใน Count_Log · Round_Type = REAL / PILOT / TEST · Archive_ID = ไฟล์สำรอง
   Count_History: ['Project_ID', 'Count_Date', 'SAP_Qty', 'Net_Count', 'Diff_Qty', 'Diff_Value', 'Diff_Items', 'Edits',
-    'Archive_Link', 'Checksum'],
+    'Archive_Link', 'Checksum', 'Final_Run', 'Lines', 'Closed_At', 'Closed_By', 'Round_Type', 'Archive_ID'],
   // Project_ID (v2.5.0): รหัสรอบของแต่ละแถว — Admin_Log เก็บต่อเนื่องข้ามรอบ (ตัดสิน Q2 เฟส 4) หน้า Admin แสดงเฉพาะรอบปัจจุบัน
   Admin_Log: ['Time', 'By', 'Action', 'Target', 'Detail', 'Project_ID'],
   // ผลสรุปราย SKU ทุกครั้งที่กด "สรุปผลและบันทึก" (v2.4.0) — เก็บต่อท้าย ไม่เขียนทับ
@@ -91,7 +92,9 @@ var CONFIG_DEFAULTS = [
   ['COUNT_CLOSED_AT', '', 'เวลากด "ปิดการนับ" (v2.5.0) · ว่าง = ยังไม่ปิด หรือเปิดการนับอีกครั้งแล้ว'],
   ['COUNT_CLOSED_BY', '', 'รหัสผู้ตรวจสอบที่กดปิดการนับ'],
   ['LAST_RECONCILE', '', 'ผลกระทบยอดทั้งรอบครั้งล่าสุด (JSON) — ใช้ตรวจเงื่อนไขปิดรอบ K4'],
-  ['SUMMARY_SAVED', '', 'ผลสรุปที่บันทึกล่าสุด (JSON: project, run, at, sig) — ใช้ตรวจเงื่อนไขปิดรอบ K5']
+  ['SUMMARY_SAVED', '', 'ผลสรุปที่บันทึกล่าสุด (JSON: project, run, at, sig) — ใช้ตรวจเงื่อนไขปิดรอบ K5'],
+  ['ROUND_TYPE', '', 'ประเภทรอบ REAL = รอบจริง · PILOT = รอบทดลอง (เลือกตอนเปิดรอบ · v2.5.2)'],
+  ['CLOSE_STATE', '', 'ข้อมูลระหว่างปิดรอบ (JSON) — ใช้ทำต่อเมื่อปิดรอบค้างกลางทาง · ว่าง = ไม่มีค้าง']
 ];
 
 // ---------- เมนูและหน้า Admin ----------
@@ -228,6 +231,7 @@ function ts_(ms) {
 function logAdmin_(action, target, detail) {
   var sh = SpreadsheetApp.getActive().getSheetByName('Admin_Log');
   if (!sh) throw new Error('ไม่พบชีต Admin_Log — บันทึกการกระทำไม่ได้');
+  if (archived_()) throw new Error('นี่คือไฟล์สำรองของรอบที่ปิดแล้ว — ดูได้อย่างเดียว');
   var row = [now_(), who_(), action, String(target || ''), String(detail || ''), readConfig_().PROJECT_ID || ''];
   var r = appendRows_(sh, [row]);
   SpreadsheetApp.flush();
@@ -281,6 +285,8 @@ function apiAckLogWarn() {
 }
 
 function withLock_(fn) {
+  // v2.5.2: ไฟล์สำรอง (ARCHIVED) ดูอย่างเดียว — ทุกปุ่มที่เขียนข้อมูลใช้ withLock_ จึงกันที่นี่จุดเดียว
+  if (archived_()) throw new Error('นี่คือไฟล์สำรองของรอบที่ปิดแล้ว — ดูได้อย่างเดียว แก้ไขไม่ได้');
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(30000)) throw new Error('มีคนกำลังบันทึกข้อมูลอยู่ ลองใหม่อีกครั้ง');
   try { return fn(); } finally { releaseLock_(lock); }
@@ -381,7 +387,14 @@ function apiGetState() {
     logWarn: adminLogWarn_(),
     spreadsheetUrl: SpreadsheetApp.getActive().getUrl(),
     round: { projectId: cfg.PROJECT_ID, countDate: cfg.COUNT_DATE, status: cfg.ROUND_STATUS || 'NONE',
-      statusTh: ROUND_STATUS_TH[cfg.ROUND_STATUS || 'NONE'] || cfg.ROUND_STATUS, closedAt: cfg.COUNT_CLOSED_AT || '', closedBy: cfg.COUNT_CLOSED_BY || '' },
+      statusTh: ROUND_STATUS_TH[cfg.ROUND_STATUS || 'NONE'] || cfg.ROUND_STATUS, closedAt: cfg.COUNT_CLOSED_AT || '', closedBy: cfg.COUNT_CLOSED_BY || '',
+      type: cfg.ROUND_TYPE || '', typeTh: ROUND_TYPE_TH[cfg.ROUND_TYPE] || '', testAllowed: TEST_ROUND_IDS.indexOf(cfg.PROJECT_ID) >= 0,
+      archived: cfg.ROUND_STATUS === 'ARCHIVED', archivedType: cfg.ARCHIVED_TYPE || '',
+      closeType: (function () { try { return (JSON.parse(cfg.CLOSE_STATE || 'null') || {}).type || ''; } catch (e) { return ''; } })() },
+    history: historyRows_().map(function (h) {
+      return { project: h.Project_ID, countDate: h.Count_Date, book: h.SAP_Qty, final: h.Net_Count, diffQty: h.Diff_Qty, diffValue: h.Diff_Value, diffItems: h.Diff_Items,
+        edits: h.Edits, url: h.Archive_Link, checksum: h.Checksum, run: h.Final_Run, lines: h.Lines, at: h.Closed_At, by: h.Closed_By, type: h.Round_Type || '', typeTh: ROUND_TYPE_TH[h.Round_Type] || '' };
+    }),
     staff: activeStaff_(),
     files: {
       sap: { name: cfg.SAP_FILE_NAME, date: cfg.SAP_FILE_DATE, at: cfg.SAP_UPLOADED_AT, by: cfg.SAP_UPLOADED_BY, d1: cfg.SAP_D1_CONFIRMED },
@@ -418,7 +431,9 @@ function logView_(log, project) {
     return [r[0], r[1], r[2], r[3], r[4], p || cur];
   });
   var mine = project ? rows.filter(function (r) { return r[5] === project; }) : rows;
-  return { cur: mine.slice(-100).reverse(), all: rows.slice(-100).reverse(), curCount: mine.length, allCount: rows.length, project: project || '' };
+  // rowsProject: รอบของแต่ละแถว ตามลำดับแถวในชีต (รวมแถวว่าง) — ใช้ตัด Admin_Log ในไฟล์สำรอง (v2.5.2)
+  var c2 = '', rowsProject = log.slice(1).map(function (r) { if (r[2] === 'OPEN_ROUND') c2 = String(r[3] || ''); if (r[5]) c2 = String(r[5]); return r[0] !== '' || r[2] !== '' ? c2 : ''; });
+  return { cur: mine.slice(-100).reverse(), all: rows.slice(-100).reverse(), curCount: mine.length, allCount: rows.length, project: project || '', rowsProject: rowsProject };
 }
 
 function ackList_(cfg) {
@@ -457,20 +472,24 @@ function apiGetCompare() {
   return m.compare;
 }
 
-function apiOpenRound(projectId, countDate) {
+function apiOpenRound(projectId, countDate, roundType) {
   return withLock_(function () {
     projectId = String(projectId || '').trim().toUpperCase();
     countDate = String(countDate || '').trim();
     if (!/^\d{4}Q[1-4](-R\d+)?$/.test(projectId)) throw new Error('รหัสรอบต้องเป็นรูปแบบ 2026Q4 หรือ 2026Q4-R1');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(countDate)) throw new Error('วันนับไม่ถูกต้อง');
+    // v2.5.2: เลือกประเภทรอบทุกครั้ง · รหัสที่ปิดรอบไปแล้วใช้ซ้ำไม่ได้ (เครื่องแยกข้อมูลตามรหัสรอบ — ซ้ำ = ข้อมูลเก่าปน)
+    roundType = String(roundType || '').toUpperCase();
+    if (roundType !== 'REAL' && roundType !== 'PILOT') throw new Error('เลือกประเภทรอบ: รอบจริง หรือ รอบทดลอง');
+    if (historyRows_().some(function (h) { return h.Project_ID === projectId; })) throw new Error('รหัสรอบ ' + projectId + ' ปิดรอบไปแล้ว ใช้ซ้ำไม่ได้ — ใช้รหัสใหม่ เช่น ' + projectId.replace(/-R\d+$/, '') + '-R' + (Number((projectId.match(/-R(\d+)$/) || [0, 0])[1]) + 1));
     var cfg = readConfig_();
     var st = cfg.ROUND_STATUS || 'NONE';
     if (st !== 'NONE' && st !== 'SETUP' && st !== 'CLOSED') {
       throw new Error('รอบ ' + cfg.PROJECT_ID + ' อยู่ในสถานะ ' + st + ' ต้องปิดรอบก่อนจึงเปิดรอบใหม่ได้');
     }
-    setConfig_({ PROJECT_ID: projectId, COUNT_DATE: countDate, ROUND_STATUS: 'SETUP' });
+    setConfig_({ PROJECT_ID: projectId, COUNT_DATE: countDate, ROUND_STATUS: 'SETUP', ROUND_TYPE: roundType });
     lxReset_();   // ดัชนี Count_Log ของรอบเดิมไม่ใช้ต่อ (v2.3.5)
-    logAdmin_('OPEN_ROUND', projectId, 'วันนับ ' + countDate + (st === 'SETUP' && cfg.PROJECT_ID ? ' (แก้จาก ' + cfg.PROJECT_ID + ' ' + cfg.COUNT_DATE + ')' : ''));
+    logAdmin_('OPEN_ROUND', projectId, ROUND_TYPE_TH[roundType] + ' · วันนับ ' + countDate + (st === 'SETUP' && cfg.PROJECT_ID ? ' (แก้จาก ' + cfg.PROJECT_ID + ' ' + cfg.COUNT_DATE + ')' : ''));
     return apiGetState();
   });
 }
@@ -732,9 +751,9 @@ function apiReconcile() {
 //
 // COUNTING → "ปิดการนับ" → COUNT_CLOSED: เครื่องหยุดยิง / เปิด Location ใหม่ไม่ได้ แต่รายการค้างส่งยังเข้าได้ และส่งงาน / ปิด Location ที่ค้างได้
 // หน้า Admin ยังปรับยอด สรุปผล พิมพ์ใบเดินตรวจได้ · ต้องนับเพิ่ม → "เปิดการนับอีกครั้ง" (บังคับเหตุผล) · ทุกครั้งเลือกรหัสผู้ตรวจสอบ
-// เงื่อนไขปิดรอบ K1–K7 ใน v2.5.0 เป็นแผงดูอย่างเดียว (ปุ่มปิดรอบมาใน v2.5.1)
+// เงื่อนไขปิดรอบ K1–K7: v2.5.0 แผงดูอย่างเดียว · v2.5.2 ปุ่มปิดรอบใช้ closeCheck_(true) ตรวจซ้ำในล็อกก่อนสำรอง
 
-var ROUND_STATUS_TH = { NONE: 'ยังไม่เปิดรอบ', SETUP: 'เตรียมรอบ', COUNTING: 'กำลังนับ', COUNT_CLOSED: 'ปิดการนับแล้ว', CLOSED: 'ปิดรอบแล้ว' };
+var ROUND_STATUS_TH = { NONE: 'ยังไม่เปิดรอบ', SETUP: 'เตรียมรอบ', COUNTING: 'กำลังนับ', COUNT_CLOSED: 'ปิดการนับแล้ว', CLOSING: 'กำลังปิดรอบ (ค้าง)', CLOSED: 'ปิดรอบแล้ว', ARCHIVED: 'ไฟล์สำรอง (ดูอย่างเดียว)' };
 
 /** รหัสผู้ตรวจสอบที่ยังใช้งาน (Staff.Active ≠ N) · ไม่พบ = error */
 function staffMust_(code) {
@@ -790,6 +809,187 @@ function apiCountReopen(staff, why) {
   });
 }
 
+// ---------- ปิดรอบ: สำรอง → ตรวจไฟล์สำรอง → Count_History → ล้างชีตงาน (เฟส 4 · v2.5.2) ----------
+//
+// ขั้นตอน (บันทึก Admin_Log ก่อนทุกขั้น · ขั้นไหนไม่ผ่านหยุดทันที):
+//   1 ตรวจ K1–K7 แบบเต็มในล็อก (โหมดรอบทดสอบ: K3 K6 K7)   2 สำเนาไฟล์ทั้งไฟล์ไป Archive/
+//   3 จัดไฟล์สำเนา: Admin_Log เฉพาะรอบนั้น · Config = ARCHIVED · protect แบบเตือน
+//   4 ตรวจไฟล์สำเนา: จำนวนแถวทุกชีต + checksum Count_Log / Adjustments / Variance — ไม่ตรง = หยุด ไม่ล้าง
+//   5 สถานะ CLOSING (เก็บ CLOSE_STATE) → Count_History 1 แถว → ล้างชีตงาน → CLOSED · Admin_Log CLOSE_ROUND
+// หลุดกลางทางหลังขั้น 5 (เช่น หมดเวลา 6 นาที): กด "ปิดรอบ" อีกครั้ง = ทำต่อจาก CLOSE_STATE ไม่สำรองซ้ำ
+
+/** รหัสรอบที่ใช้ "โหมดรอบทดสอบ" ได้ (ข้าม K1 K2 K4 K5) — ล้างข้อมูลทดสอบก่อนใช้งานจริง · แก้ได้เฉพาะในโค้ด (ตรวจย้อนหลังจาก GitHub) */
+var TEST_ROUND_IDS = ['2026Q4'];
+var ROUND_TYPE_TH = { REAL: 'รอบจริง', PILOT: 'รอบทดลอง', TEST: 'รอบทดสอบ (ล้างข้อมูล)' };
+/** ชีตงานที่ล้างตอนปิดรอบ (อยู่ครบในไฟล์สำรอง) · เก็บไว้: Config Staff Devices Count_History Admin_Log */
+var CLOSE_CLEAR_TABLES = ['Count_Log', 'Adjustments', 'Variance', 'Dash_Data', 'Locations', 'Loc_Members', 'Loc_Checks', 'Device_Checks',
+  'Quarantine', 'Barcode_Map', 'Map_Decisions', 'SAP_POS_Compare', 'Master_Check', 'Device_Master', 'Import_Files'];
+var CLOSE_CLEAR_RAW = ['SAP_Snapshot', 'POS_Snapshot'];
+var CLOSE_SUM_SHEETS = ['Count_Log', 'Adjustments', 'Variance'];
+var CLOSE_CONFIG_KEYS = RESET_CONFIG_KEYS.filter(function (k) { return k !== 'PROJECT_ID' && k !== 'COUNT_DATE'; })
+  .concat(['COUNT_CLOSED_AT', 'COUNT_CLOSED_BY', 'LAST_RECONCILE', 'SUMMARY_SAVED', 'CLOSE_STATE']);
+
+function archived_(cfg) { return (cfg || readConfig_()).ROUND_STATUS === 'ARCHIVED'; }
+
+/** checksum ของทั้งชีต (ค่าที่แสดง) อ่านทีละ 2,000 แถว — ใช้ได้กับไฟล์ใดก็ได้ */
+function sheetSum_(book, name) {
+  var sh = book.getSheetByName(name);
+  if (!sh) return { rows: -1, sum: '' };
+  var n = sh.getLastRow(), w = sh.getLastColumn(), parts = [];
+  for (var r = 1; r <= n; r += 2000) {
+    var k = Math.min(2000, n - r + 1);
+    parts.push(sha_(JSON.stringify(sh.getRange(r, 1, k, w).getDisplayValues())));
+  }
+  return { rows: n, sum: sha_(n + ':' + w + ':' + parts.join('')).slice(0, 16) };
+}
+function sumText_(sums) { return CLOSE_SUM_SHEETS.map(function (n) { return n + ':' + sums[n].sum; }).join('|'); }
+
+/** เขียน Config ในไฟล์ใดก็ได้ (ใช้กับไฟล์สำเนา) */
+function setConfigIn_(book, obj) {
+  var sh = book.getSheetByName('Config');
+  var keys = sh.getLastRow() > 1 ? sh.getRange(2, 1, sh.getLastRow() - 1, 1).getDisplayValues().map(function (r) { return r[0]; }) : [];
+  Object.keys(obj).forEach(function (k) {
+    var i = keys.indexOf(k), v = String(obj[k] === null || obj[k] === undefined ? '' : obj[k]);
+    if (i >= 0) sh.getRange(i + 2, 2).setValue(v);
+    else { appendRows_(sh, [[k, v, '']]); keys.push(k); }
+  });
+}
+
+function archiveFolder_() {
+  var root = DriveApp.getFolderById(readConfig_().DRIVE_FOLDER_ID);
+  var it = root.getFoldersByName('Archive');
+  return it.hasNext() ? it.next() : root.createFolder('Archive');
+}
+
+/** Count_History เป็น object · ล่าสุดก่อน */
+function historyRows_() {
+  var t = table_('Count_History');
+  return t.rows.map(function (r) { return rowObj_(t, r); }).filter(function (h) { return h.Project_ID; }).reverse();
+}
+
+/**
+ * ปิดรอบ · staff = รหัสผู้ตรวจสอบ · confirm = พิมพ์ยืนยัน (รอบปกติ = รหัสรอบ · โหมดทดสอบ = "ล้างข้อมูลทดสอบ <รหัสรอบ>") · test = โหมดรอบทดสอบ
+ * คืน { state, history, verify }
+ */
+function apiCloseRound(staff, confirm, test) {
+  return withLock_(function () {
+    var cfg = readConfig_(), project = cfg.PROJECT_ID, st = cfg.ROUND_STATUS || 'NONE';
+    var s = staffMust_(staff);
+    test = !!test;
+    var want = test ? 'ล้างข้อมูลทดสอบ ' + project : project;
+    if (String(confirm || '').trim() !== want) throw new Error('พิมพ์ยืนยันไม่ตรง — ต้องพิมพ์ "' + want + '"');
+    if (st === 'CLOSING') return closeFinish_(s, 'ทำต่อจากที่ค้าง');
+    if (st !== 'COUNT_CLOSED') throw new Error('ปิดรอบได้เมื่อ "ปิดการนับแล้ว" (ตอนนี้: ' + (ROUND_STATUS_TH[st] || st) + ')');
+    if (test && TEST_ROUND_IDS.indexOf(project) < 0) throw new Error('โหมดรอบทดสอบใช้ได้เฉพาะรอบ ' + TEST_ROUND_IDS.join(', '));
+    var type = test ? 'TEST' : (cfg.ROUND_TYPE === 'PILOT' ? 'PILOT' : 'REAL');
+
+    // 1) เงื่อนไข — ตรวจใหม่ในล็อก ไม่เชื่อผลบนหน้าจอ
+    var K = closeCheck_(true), need = test ? ['K3', 'K6', 'K7'] : ['K1', 'K2', 'K3', 'K4', 'K5', 'K6', 'K7'];
+    var bad = K.items.filter(function (x) { return need.indexOf(x.id) >= 0 && !x.ok; });
+    if (bad.length) throw new Error('ยังปิดรอบไม่ได้ — ไม่ผ่าน ' + bad.map(function (x) { return x.id + ' ' + x.title + ': ' + x.detail; }).join(' · '));
+    var R = summary_(project, 'ปิดรอบ'), T = R.totals;
+    var SV = null; try { SV = JSON.parse(cfg.SUMMARY_SAVED || 'null'); } catch (e) { }
+
+    var ss = SpreadsheetApp.getActive();
+    var name = 'ARCHIVED · ' + project + (type === 'REAL' ? '' : ' · ' + ROUND_TYPE_TH[type]) + ' · ปิด ' + now_().slice(0, 10);
+    var file = null, sums = {};
+    adminAct_('CLOSE_ROUND_START', project, 'ผู้กด ' + s[0] + ' ' + s[1] + ' · ' + ROUND_TYPE_TH[type] + (test ? ' (ข้าม K1 K2 K4 K5)' : ' · K1–K7 ผ่าน') +
+      ' · เริ่มสำรองไฟล์', function () {
+      // 2) สำเนาทั้งไฟล์ — flush ก่อน ให้สำเนามีทุกแถวที่เพิ่งเขียน (รวมแถว CLOSE_ROUND_START)
+      SpreadsheetApp.flush();
+      CLOSE_SUM_SHEETS.forEach(function (n) { sums[n] = sheetSum_(ss, n); });
+      file = DriveApp.getFileById(ss.getId()).makeCopy(name, archiveFolder_());
+    });
+
+    // 3) จัดไฟล์สำเนา
+    var copy = SpreadsheetApp.openById(file.getId());
+    var logRows = ss.getSheetByName('Admin_Log').getDataRange().getDisplayValues();
+    var all = logView_(logRows, '');
+    var keep = [logRows[0]].concat(logRows.slice(1).filter(function (r, i) { return all.rowsProject[i] === project; }));
+    var cl = copy.getSheetByName('Admin_Log');
+    cl.clearContents();
+    cl.getRange(1, 1, keep.length, keep[0].length).setValues(keep);
+    setConfigIn_(copy, { ROUND_STATUS: 'ARCHIVED', ARCHIVED_AT: now_(), ARCHIVED_BY: s[0], ARCHIVED_TYPE: type });
+    copy.getSheets().forEach(function (sh) {
+      if (!sh.getProtections(SpreadsheetApp.ProtectionType.SHEET).length) sh.protect().setDescription('ไฟล์สำรอง — ห้ามแก้').setWarningOnly(true);
+    });
+    SpreadsheetApp.flush();
+
+    // 4) ตรวจไฟล์สำเนา
+    var diffs = [];
+    ss.getSheets().forEach(function (sh) {
+      var n = sh.getName(), c = copy.getSheetByName(n);
+      if (n === 'Admin_Log') { if (!c || c.getLastRow() !== keep.length) diffs.push('Admin_Log ' + (c ? c.getLastRow() : '-') + ' ≠ ' + keep.length); return; }
+      if (n === 'Config') return;   // สำเนาตั้งค่า ARCHIVED แล้ว ต่างโดยตั้งใจ
+      if (!c) { diffs.push(n + ' ไม่มีในสำเนา'); return; }
+      if (c.getLastRow() !== sh.getLastRow()) diffs.push(n + ' ' + c.getLastRow() + ' ≠ ' + sh.getLastRow() + ' แถว');
+    });
+    CLOSE_SUM_SHEETS.forEach(function (n) { var c = sheetSum_(copy, n); if (c.sum !== sums[n].sum) diffs.push(n + ' checksum ไม่ตรง'); });
+    if (diffs.length) {
+      try { file.setName(name + ' · ตรวจไม่ผ่าน'); } catch (e) { }
+      logAdmin_('ARCHIVE_VERIFY_FAILED', project, diffs.join(' · ') + ' — ไม่ล้างชีตใด ๆ · ' + file.getUrl());
+      throw new Error('ตรวจไฟล์สำรองไม่ผ่าน (' + diffs.join(' · ') + ') — ระบบไม่ได้ล้างอะไร ไฟล์ทำงานอยู่ครบ');
+    }
+    var checks = ss.getSheets().length;
+    logAdmin_('ARCHIVE_VERIFY', project, 'ตรวจไฟล์สำรองผ่าน · ' + checks + ' ชีต จำนวนแถวตรง · Admin_Log ของรอบ ' + (keep.length - 1) + ' แถว · ' +
+      sumText_(sums) + ' · ' + file.getUrl());
+
+    // 5) CLOSING → Count_History → ล้าง → CLOSED
+    var state = {
+      project: project, countDate: cfg.COUNT_DATE, type: type, archiveId: file.getId(), url: file.getUrl(), checksum: sumText_(sums),
+      book: T.book, final: T.final, diffQty: Math.round((T.final - T.book) * 1000) / 1000, diffValue: T.diffValue, diffItems: T.over + T.short,
+      edits: T.adjLines, run: SV && SV.project === project ? SV.run : '', lines: sums.Count_Log.rows - 1, by: s[0] + ' ' + s[1] + ' (' + who_() + ')', history: false
+    };
+    setConfig_({ ROUND_STATUS: 'CLOSING', CLOSE_STATE: JSON.stringify(state) });
+    return closeFinish_(s, '');
+  });
+}
+
+/** ส่วนท้ายของการปิดรอบ (ทำซ้ำได้): Count_History → ล้างชีตงาน → CLOSED */
+function closeFinish_(s, note) {
+  var cfg = readConfig_(), C = JSON.parse(cfg.CLOSE_STATE || 'null');
+  if (!C || C.project !== cfg.PROJECT_ID) throw new Error('ไม่พบข้อมูลการปิดรอบที่ค้าง (CLOSE_STATE) — ติดต่อผู้ดูแลระบบ ห้ามแก้ชีตเอง');
+  var at = now_();
+  if (!C.history) {
+    appendRows_(SpreadsheetApp.getActive().getSheetByName('Count_History'), [[C.project, C.countDate, C.book, C.final, C.diffQty, C.diffValue, C.diffItems, C.edits,
+      C.url, C.checksum, C.run, C.lines, at, C.by, C.type, C.archiveId]]);
+    C.history = true;
+    setConfig_({ CLOSE_STATE: JSON.stringify(C) });
+  }
+  adminAct_('CLOSE_ROUND_CLEAR', C.project, (note ? note + ' · ' : '') + 'ล้างชีตงาน ' + CLOSE_CLEAR_TABLES.concat(CLOSE_CLEAR_RAW).join(', ') + ' (อยู่ครบในไฟล์สำรอง)', function () {
+    CLOSE_CLEAR_TABLES.forEach(function (n) { writeTable_(n, SHEETS[n], []); });
+    CLOSE_CLEAR_RAW.forEach(function (n) { var sh = SpreadsheetApp.getActive().getSheetByName(n); if (sh) sh.clearContents(); });
+    lxReset_();
+    afterClose_(null);
+    var blank = {};
+    CLOSE_CONFIG_KEYS.forEach(function (k) { blank[k] = ''; });
+    blank.ROUND_STATUS = 'CLOSED';
+    setConfig_(blank);
+  });
+  logAdmin_('CLOSE_ROUND', C.project, ROUND_TYPE_TH[C.type] + ' · ปิดรอบเสร็จ · ผู้กด ' + (s ? s[0] + ' ' + s[1] : C.by) + ' · ไฟล์สำรอง ' + C.url + ' · ' + C.checksum +
+    ' · บัญชี ' + C.book + ' สุดท้าย ' + C.final + ' ต่าง ' + C.diffQty + ' (' + C.diffValue + ' บาท) · Count_Log ' + C.lines + ' รายการ');
+  return { state: apiGetState(), closed: C };
+}
+
+/** ตรวจไฟล์สำรองย้อนหลัง: คำนวณ checksum ของไฟล์สำรองใหม่ เทียบกับที่เก็บใน Count_History */
+function apiVerifyArchive(projectId) {
+  return withLock_(function () {
+    var h = historyRows_().filter(function (x) { return x.Project_ID === projectId; })[0];
+    if (!h) throw new Error('ไม่พบรอบ ' + projectId + ' ใน Count_History');
+    var copy;
+    try { copy = SpreadsheetApp.openById(h.Archive_ID); } catch (e) { throw new Error('เปิดไฟล์สำรองไม่ได้ (ถูกลบ / ย้าย / ไม่มีสิทธิ์): ' + h.Archive_Link); }
+    var want = {};
+    String(h.Checksum).split('|').forEach(function (p) { var kv = p.split(':'); want[kv[0]] = kv[1]; });
+    var rows = CLOSE_SUM_SHEETS.map(function (n) { var c = sheetSum_(copy, n); return { sheet: n, ok: c.sum === want[n], rows: c.rows }; });
+    var cfgOk = false;
+    try { var cs = copy.getSheetByName('Config').getDataRange().getDisplayValues(); cfgOk = cs.some(function (r) { return r[0] === 'ROUND_STATUS' && r[1] === 'ARCHIVED'; }); } catch (e) { }
+    var ok = rows.every(function (r) { return r.ok; }) && cfgOk;
+    logAdmin_('ARCHIVE_CHECK', projectId, (ok ? 'ไฟล์สำรองตรงกับตอนปิดรอบ' : 'ไฟล์สำรองไม่ตรง — ถูกแก้หลังปิดรอบ') + ' · ' +
+      rows.map(function (r) { return r.sheet + (r.ok ? ' ✓' : ' ✗'); }).join(' · ') + (cfgOk ? '' : ' · Config ไม่ใช่ ARCHIVED'));
+    return { project: projectId, ok: ok, rows: rows, cfgOk: cfgOk, url: h.Archive_Link, at: now_() };
+  });
+}
+
 /** เวลาของแถว Admin_Log ล่าสุดที่เป็น action นี้ของรอบนี้ (ใช้บอกครั้งล่าสุดในเงื่อนไข K4/K5 · v2.5.1) */
 function lastLogOf_(action, project) {
   var log = readRaw_('Admin_Log');
@@ -800,6 +1000,12 @@ function lastLogOf_(action, project) {
     }
   }
   return '';
+}
+
+/** หน้า Admin: ตรวจเงื่อนไขแบบเร็ว (ไม่คำนวณผลสรุปใหม่ · ไม่ใช้ล็อก) — การ์ดเรียกเองทุกครั้งที่เปิดหน้าตอนปิดการนับแล้ว (v2.5.2) */
+function apiCloseCheckFast() {
+  if (!readConfig_().PROJECT_ID) throw new Error('ยังไม่ได้เปิดรอบนับ');
+  return closeCheck_(false);
 }
 
 /** หน้า Admin: ตรวจเงื่อนไขปิดรอบ K1–K7 (ดูอย่างเดียว · คำนวณผลสรุปใหม่เทียบ K5 จึงใช้ล็อก) */

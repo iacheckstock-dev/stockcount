@@ -23,6 +23,7 @@ function createEnv() {
       // dropWrites: จำลองชีตที่เขียนแล้วไม่ติด (UAT 12 พ.ย.: Admin_Log มี filter อยู่ appendRow เงียบหาย)
       appendRow: row => { tally('writes', name); if (!sh.dropWrites) sh.data.push(row.map(String)); },
       getProtections: () => sh.prot,
+      getDataRange: () => sh.getRange(1, 1, Math.max(1, sh.getLastRow()), Math.max(1, sh.getLastColumn())),
       protect: () => { const p = { setDescription: () => p, setWarningOnly: () => p }; sh.prot.push(p); return p; },
       getRange: (a, b, c, d) => {
         let r0, c0, nr, nc;
@@ -61,19 +62,50 @@ function createEnv() {
     return sh;
   }
 
+  // ไฟล์ Sheets จำลอง (v2.5.2: สำเนาไฟล์ตอนปิดรอบ — makeCopy / openById)
+  const books = {};
+  function makeBook(id, name, sheets) {
+    const b = {
+      sheets, id, name,
+      getSheetByName: n => sheets[n] || null,
+      insertSheet: n => (sheets[n] = makeSheet(n)),
+      getSheets: () => Object.values(sheets),
+      deleteSheet: s => { delete sheets[s.name]; },
+      getName: () => b.name, getId: () => id, getUrl: () => 'https://example/sheet/' + id
+    };
+    books[id] = b;
+    return b;
+  }
   const sheets = {};
-  const ss = {
-    getSheetByName: n => sheets[n] || null,
-    insertSheet: n => (sheets[n] = makeSheet(n)),
-    getSheets: () => Object.values(sheets),
-    deleteSheet: s => { delete sheets[s.name]; },
-    getName: () => 'TEST', getUrl: () => 'https://example/sheet'
-  };
+  const ss = makeBook('SS1', 'TEST', sheets);
   sheets['ชีต1'] = makeSheet('ชีต1');
+  const folders = {};
+  const folder = (id, name) => folders[id] || (folders[id] = {
+    id, name, files: [], getId: () => id,
+    createFile: (n, c) => { ctx._files.push(n); },
+    getFoldersByName: n => { const f = Object.values(folders).filter(x => x.parent === id && x.name === n); let i = 0; return { hasNext: () => i < f.length, next: () => f[i++] }; },
+    createFolder: n => { const f = folder(id + '/' + n, n); f.parent = id; return f; }
+  });
+  const driveFile = id => ({
+    getId: () => id, getUrl: () => 'https://example/sheet/' + id, getName: () => books[id].name, setName: n => { books[id].name = n; },
+    makeCopy: (name, fold) => {
+      if (copyCfg.fail) throw new Error(copyCfg.fail);
+      const nid = 'COPY' + (Object.keys(books).length);
+      const sh2 = {};
+      Object.values(books[id].sheets).forEach(x => {
+        const c = makeSheet(x.name); c.data = x.data.map(r => r.slice()); c.maxRows = x.maxRows; c.maxCols = x.maxCols; c.prot = x.prot.slice(); sh2[x.name] = c;
+      });
+      makeBook(nid, name, sh2);
+      if (copyCfg.tamper) copyCfg.tamper(books[nid]);
+      (fold.files = fold.files || []).push(nid);
+      return driveFile(nid);
+    }
+  });
+  const copyCfg = {};
 
   const ctx = {
     console,
-    SpreadsheetApp: { getActive: () => ss, getUi: () => { throw new Error('no ui'); }, ProtectionType: { SHEET: 'SHEET' }, flush: () => { lockTrace.push('flush'); tally('writes', 'flush'); } },
+    SpreadsheetApp: { getActive: () => ss, openById: id => { if (!books[id]) throw new Error('not found ' + id); return books[id]; }, getUi: () => { throw new Error('no ui'); }, ProtectionType: { SHEET: 'SHEET' }, flush: () => { lockTrace.push('flush'); tally('writes', 'flush'); } },
     Session: { getActiveUser: () => ({ getEmail: () => 'admin@test' }), getEffectiveUser: () => ({ getEmail: () => 'admin@test' }) },
     LockService: { getDocumentLock: () => ({ tryLock: () => { lockTrace.push('lock'); stats.inLock = true; return true; }, releaseLock: () => { lockTrace.push('release'); stats.inLock = false; } }) },
     Utilities: {
@@ -82,8 +114,9 @@ function createEnv() {
       DigestAlgorithm: { SHA_256: 'SHA_256' }, Charset: { UTF_8: 'UTF_8' }
     },
     DriveApp: {
-      createFolder: () => ({ getId: () => 'FOLDER1' }),
-      getFolderById: () => ({ createFile: (n, c) => { ctx._files.push(n); } })
+      createFolder: () => folder('FOLDER1', 'TEST_Files'),
+      getFolderById: id => folder(id, id),
+      getFileById: id => { if (!books[id]) throw new Error('no file ' + id); return driveFile(id); }
     },
     MimeType: { CSV: 'text/csv' }, HtmlService: {}, _files: []
   };
@@ -113,7 +146,7 @@ function createEnv() {
   for (const f of ['Core.gs', 'Code.gs', 'Api.gs']) vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'gas', f), 'utf8'), ctx, { filename: f });
   const run = (code, vars) => vm.runInContext(code, Object.assign(ctx, vars || {}));
   const post = body => JSON.parse(run('doPost(_req).getContent()', { _req: { postData: { contents: JSON.stringify(body) } } }));
-  return { ctx, sheets, run, post, lockTrace, stats, cacheCfg };
+  return { ctx, sheets, run, post, lockTrace, stats, cacheCfg, books, copyCfg, folders };
 }
 
 function loadSamples(Core) {

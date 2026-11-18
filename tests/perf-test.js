@@ -13,7 +13,7 @@ const env = createEnv();
 const { sap, pos } = loadSamples(env.ctx.Core);
 const run = (c, v) => env.run(c, Object.assign({ _sap: sap, _pos: pos }, v || {}));
 run('setupSheets()');
-run('apiOpenRound("2026Q4", "2026-11-04")');
+run('apiOpenRound("2026Q4", "2026-11-04", "PILOT")');
 run('apiUpload("POS", _pos, { fileName: "pos.xls", fileDate: "2026-11-04" })');
 run('apiUpload("SAP", _sap, { fileName: "sap.xls", fileDate: "2026-11-04", d1Confirmed: true })');
 const st = run('apiGetState()');

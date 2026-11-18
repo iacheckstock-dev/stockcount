@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2.5.1';
+  var APP_VERSION = '2.5.2';
   var QTY_CONFIRM = 150;      // จำนวนที่ป้อนเองเกินนี้ต้องยืนยันอีกครั้ง
   var QTY_MAX_DIGITS = 5;     // ยาวกว่านี้ = น่าจะยิงบาร์โค้ดเข้าช่องจำนวน
   var INFO_EVERY = 15000;     // ถามสถานะผู้ช่วย/ผู้ดูแลระหว่างนับร่วมกัน
@@ -141,9 +141,12 @@
   // ---------- ปิดการนับ (v2.5.0) ----------
   // สถานะรอบล่าสุดที่รู้ เก็บใน S.boot.project.status (จำในเครื่อง ใช้ตอนออฟไลน์ได้) · อัปเดตจาก bootstrap / sync / hello
   function roundStatus() { return (S.boot && S.boot.project && S.boot.project.status) || ''; }
-  function countClosed() { return roundStatus() === 'COUNT_CLOSED'; }
+  // v2.5.2: ปิดรอบแล้ว (CLOSING / CLOSED) ก็ยิงไม่ได้เช่นกัน — รายการที่หลุดส่งไป เซิร์ฟเวอร์กักไว้ใน Quarantine
+  function roundEnded() { var st = roundStatus(); return st === 'CLOSING' || st === 'CLOSED'; }
+  function countClosed() { return roundStatus() === 'COUNT_CLOSED' || roundEnded(); }
   function closedBox() {
     SOUND.bad();
+    if (roundEnded()) return result(false, 'ปิดรอบแล้ว — ไม่บันทึก', 'รอบ ' + ((S.boot && S.boot.project.id) || '') + ' ปิดรอบแล้ว\nรอเปิดรอบใหม่ แล้วกด ⋮ → ตรวจความพร้อมใหม่', { scanCloses: true });
     return result(false, 'ปิดการนับแล้ว — ไม่บันทึก', 'ยิงสินค้า เปิด Location ใหม่ และแก้ยอดไม่ได้\n' +
       'Location ที่ยังเปิดอยู่: ผู้ดูแลกด "ปิด Location" · ผู้ช่วยกด "ส่งงาน"\nค้นหา SKU ได้ที่เมนู ⋮\nต้องนับเพิ่ม: แจ้งทีมให้กด "เปิดการนับอีกครั้ง" ในหน้า Admin', { scanCloses: true });
   }
@@ -163,6 +166,9 @@
         (S.loc ? '<br>• ' + esc(S.loc) + ' ยังเปิดอยู่: ' + (isHelper(S.loc) ? 'กด "ส่งงาน"' : 'ตรวจยอดแล้วกด "ปิด Location"') : '') + '<br>• ค้นหา SKU ได้ที่เมนู ⋮';
       if ($('modal').classList.contains('hidden')) modal({ title: 'ปิดการนับแล้ว', html: html, yes: 'รับทราบ', noCancel: true });
       else toast('ปิดการนับแล้ว — ยิงไม่ได้', true);
+    } else if (st === 'CLOSED' || st === 'CLOSING') {
+      SOUND.warn();
+      if ($('modal').classList.contains('hidden')) modal({ title: 'ปิดรอบแล้ว', html: 'รอบ ' + esc(S.boot.project.id) + ' ปิดรอบแล้ว<br>• ยิงไม่ได้<br>• รอเปิดรอบใหม่ แล้วกด ⋮ → ตรวจความพร้อมใหม่', yes: 'รับทราบ', noCancel: true });
     } else if (prev === 'COUNT_CLOSED' && st === 'COUNTING') {
       SOUND.ok();
       result(true, 'เปิดการนับอีกครั้งแล้ว', 'ยิงต่อได้ตามปกติ');
@@ -705,6 +711,7 @@
     else if (S.lastErr === 'BAD_TOKEN' || S.lastErr === 'DEVICE_DISABLED' || S.lastErr === 'UNKNOWN_DEVICE') { msg = 'เครื่องนี้ถูกยกเลิกหรือต้องจับคู่ใหม่ ข้อมูลในเครื่องไม่หาย ให้ Export ไฟล์ แล้วแจ้งหัวหน้าทีม'; bad = true; }
     else if (oldest && Date.now() - oldest > STALE_MIN * 60000) { msg = 'มีรายการค้างส่งเกิน ' + STALE_MIN + ' นาที — ไปจุดที่มี Wi-Fi หรือ Export ไฟล์'; bad = true; }
     else if (rejected) { msg = 'มี ' + rejected + ' รายการที่เซิร์ฟเวอร์ไม่รับ ดูที่หน้าสถานะ'; bad = true; }
+    else if (roundEnded()) { msg = 'ปิดรอบแล้ว — ยิงไม่ได้ · รอเปิดรอบใหม่'; bad = true; }
     else if (countClosed()) { msg = 'ปิดการนับแล้ว — ยิงไม่ได้ · ส่งงาน / ปิด Location ที่ค้างได้ · ค้นหา SKU ได้ที่ ⋮'; bad = true; }
     else if (S.masterChanged) msg = 'หัวหน้าทีมอนุมัติรายการบาร์โค้ดชุดใหม่ ไปที่สถานะ → ตรวจความพร้อมใหม่ เพื่อโหลด';
     else if (S.recountBanner && S.view === 'count') msg = S.recountBanner;

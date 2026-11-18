@@ -80,7 +80,7 @@ with sync_playwright() as p:
     pg.wait_for_function("/พร้อมนับ ✓/.test(document.querySelector('#readyHead').textContent)", timeout=10000)
     shot('03-ready-pass')
     check(pg.is_visible('#btnStart'), 'ผ่านทุกข้อ ขึ้นปุ่มเริ่มนับ')
-    check('แอป 2.5.1 · เซิร์ฟเวอร์ 2.5.1' in pg.inner_text('#readyList'), 'แสดงเวอร์ชันแอปและเซิร์ฟเวอร์ตรงกัน')
+    check('แอป 2.5.2 · เซิร์ฟเวอร์ 2.5.2' in pg.inner_text('#readyList'), 'แสดงเวอร์ชันแอปและเซิร์ฟเวอร์ตรงกัน')
     pg.click('#btnStart'); pg.wait_for_selector('#v-count.on')
     check('นุ่น' in pg.inner_text('#tbStaff'), 'เข้างานเป็น นุ่น')
 
@@ -194,7 +194,7 @@ with sync_playwright() as p:
     check('9.9.9' in pg.inner_text('#readyList'), 'มีเวอร์ชันใหม่ → ขึ้น ✗ พร้อมปุ่ม "อัปเดตแอปตอนนี้"')
     shot('11-update')
     pg.click('#btnUpdate'); pg.wait_for_load_state('load'); pg.wait_for_timeout(1500)
-    get('/debug/version?v=2.5.1')
+    get('/debug/version?v=2.5.2')
     pg.wait_for_selector('.view.on', timeout=10000)
     check('รายการ 38' in pg.inner_text('#syncText'), 'หลังกดอัปเดต แอปโหลดใหม่ ข้อมูลในเครื่องยังครบ 38 รายการ')
 
@@ -373,6 +373,20 @@ with sync_playwright() as p:
     n1 = len(log_rows()); scan(BC1)
     pg.wait_for_function("/ค้าง 0/.test(document.querySelector('#syncText').textContent)", timeout=15000)
     check(len(log_rows()) == n1 + 1, 'ยิงที่ Z9 ได้ตามปกติ และส่งถึงเซิร์ฟเวอร์')
+
+    print('ปิดรอบแล้ว (v2.5.2)')
+    get('/debug/roundstatus?v=CLOSED')
+    n2 = len(log_rows()); scan(BC1)   # เครื่องยังไม่รู้ → ส่งแล้วเซิร์ฟเวอร์กักไว้ + ตอบสถานะ CLOSED
+    pg.wait_for_selector('#modal:not(.hidden)', timeout=10000)
+    check('ปิดรอบแล้ว' in pg.inner_text('#mTitle') and 'รอเปิดรอบใหม่' in pg.inner_text('#mBody'), 'เครื่องรู้จากคำตอบ → กล่องกลางจอ "ปิดรอบแล้ว": ' + pg.inner_text('#mBody').replace('\n', ' '))
+    shot('20-round-closed')
+    pg.click('#mYes'); pg.wait_for_timeout(300)
+    check('ปิดรอบแล้ว' in pg.inner_text('#banner'), 'แถบบนจอ: ' + pg.inner_text('#banner'))
+    check(len(log_rows()) == n2, 'รายการที่หลุดส่งหลังปิดรอบ ไม่เข้า Count_Log (เซิร์ฟเวอร์กักใน Quarantine)')
+    scan(BC1)
+    check(pg.is_visible('#result') and 'ปิดรอบแล้ว' in pg.inner_text('#resTitle'), 'ยิงสินค้า → กล่อง ✕ "ปิดรอบแล้ว — ไม่บันทึก"')
+    pg.click('#resOk'); pg.wait_for_timeout(200)
+    get('/debug/roundstatus?v=COUNTING')
     check(not errors, 'ไม่มี JavaScript error: ' + '; '.join(errors[:3]))
     b.close()
 print(f'\nE2E ผ่าน {ok} ข้อ')
