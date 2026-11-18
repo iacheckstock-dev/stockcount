@@ -6,13 +6,13 @@
  * (API สำหรับ TC21 จะเพิ่มในเฟส 2 แยกต่างหาก และต้องใช้ device token)
  */
 
-var SCHEMA_VERSION = 9;   // 6 = v2.4.1 Variance.Barcode · 7 = v2.4.2 ชีต Adjustments · 8 = v2.5.0 Admin_Log.Project_ID · 9 = v2.5.2 Count_History คอลัมน์ปิดรอบ
+var SCHEMA_VERSION = 10;   // 6 = v2.4.1 Variance.Barcode · 7 = v2.4.2 ชีต Adjustments · 8 = v2.5.0 Admin_Log.Project_ID · 9 = v2.5.2 Count_History คอลัมน์ปิดรอบ · 10 = v2.5.3 ซ่อม Config ซ้ำ
 
 /**
  * เวอร์ชันของระบบ (ใช้เลขเดียวทั้งแอป TC21 และเซิร์ฟเวอร์ ตาม Semantic Versioning MAJOR.MINOR.PATCH)
  * ต้องตรงกับ APP_VERSION ใน app/app.js และ appVersion ใน app/config.json — ดู CHANGELOG.md
  */
-var SYSTEM_VERSION = '2.5.2';
+var SYSTEM_VERSION = '2.5.3';
 
 var SHEETS = {
   Config: ['Key', 'Value', 'Note'],
@@ -139,6 +139,7 @@ function setupSheets() {
     }
   });
   var cfg = ss.getSheetByName('Config');
+  dedupeConfig_(cfg);
   var existing = readConfig_();
   var add = CONFIG_DEFAULTS.filter(function (r) { return !(r[0] in existing); });
   if (add.length) cfg.getRange(cfg.getLastRow() + 1, 1, add.length, 3).setValues(add);
@@ -173,14 +174,50 @@ function migrateHeader_(sh, header) {
   sh.getRange(1, start, 1, add.length).setValues([add]).setFontWeight('bold').setBackground('#f0efec');
 }
 
-function ensureSetup_() {
+function needSetup_() {
   var ss = SpreadsheetApp.getActive();
-  var missing = Object.keys(SHEETS).some(function (n) { return !ss.getSheetByName(n); });
-  var cfg = readConfig_();
-  if (missing || Number(cfg.SCHEMA_VERSION || 0) < SCHEMA_VERSION) {
+  if (Object.keys(SHEETS).some(function (n) { return !ss.getSheetByName(n); })) return true;
+  if (typeof REQ_ !== 'undefined' && REQ_) REQ_.cfg = null;   // อ่านใหม่จากชีต ไม่ใช้ค่าที่จำไว้ในคำขอนี้
+  return Number(readConfig_().SCHEMA_VERSION || 0) < SCHEMA_VERSION;
+}
+
+/**
+ * อัปเกรดโครงสร้างชีตหลัง Deploy เวอร์ชันใหม่ — ทำได้ทีละคำขอ (v2.5.3)
+ * เดิม (v2.5.2 · 18 พ.ย. 13:06) TC21 2 เครื่องส่งคำขอพร้อมกันหลัง Deploy → ทั้งคู่เห็นว่ายังไม่อัปเกรด → อัปเกรดซ้ำ
+ * → Config มี ROUND_TYPE / CLOSE_STATE ซ้ำ 2 แถว · ตอนนี้: ล็อกก่อน แล้วตรวจซ้ำในล็อก คำขอที่ตามมาเห็นว่าอัปเกรดแล้วก็ข้าม
+ */
+function ensureSetup_() {
+  if (!needSetup_()) return;
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(60000)) throw new Error('ระบบกำลังอัปเกรดโครงสร้างชีต ลองใหม่อีกครั้งในไม่กี่วินาที');
+  try {
+    if (!needSetup_()) return;
     setupSheets();
     setConfig_({ SCHEMA_VERSION: SCHEMA_VERSION });
-  }
+  } finally { releaseLock_(lock); }
+}
+
+/**
+ * ซ่อม Config ที่ชื่อซ้ำ (v2.5.3): เก็บแถวแรกของแต่ละชื่อ · ถ้าแถวแรกว่างแต่แถวที่ซ้ำมีค่า ย้ายค่ามาแถวแรก · ลบแถวที่ซ้ำ
+ * บันทึก Admin_Log CONFIG_DEDUP — ไม่มีซ้ำ = ไม่ทำอะไร
+ */
+function dedupeConfig_(sh) {
+  var n = sh.getLastRow();
+  if (n < 3) return [];
+  var rows = sh.getRange(2, 1, n - 1, 2).getDisplayValues(), first = {}, drop = [], fixed = [];
+  rows.forEach(function (r, i) {
+    var k = r[0];
+    if (!k) return;
+    if (!(k in first)) { first[k] = i; return; }
+    var f = first[k];
+    if (rows[f][1] === '' && r[1] !== '') { sh.getRange(f + 2, 2).setValue(r[1]); rows[f][1] = r[1]; fixed.push(k); }
+    drop.push(i);
+  });
+  if (!drop.length) return [];
+  for (var j = drop.length - 1; j >= 0; j--) sh.deleteRow(drop[j] + 2);
+  var keys = drop.map(function (i) { return rows[i][0]; });
+  logAdmin_('CONFIG_DEDUP', 'Config', 'ลบแถวชื่อซ้ำ ' + drop.length + ' แถว: ' + keys.join(', ') + (fixed.length ? ' · ย้ายค่าจากแถวที่ซ้ำ: ' + fixed.join(', ') : ' · แถวที่ลบไม่มีค่า'));
+  return keys;
 }
 
 // ---------- Config / Log ----------
@@ -193,7 +230,7 @@ function readConfig_() {
   if (!sh) return out;
   var n = sh.getLastRow();
   if (n >= 2) sh.getRange(2, 1, n - 1, 2).getDisplayValues().forEach(function (r) {
-    if (r[0]) out[r[0]] = r[1];
+    if (r[0] && !(r[0] in out)) out[r[0]] = r[1];   // v2.5.3: ชื่อซ้ำ ใช้แถวแรก — ตรงกับ setConfig_ ที่เขียนแถวแรก
   });
   if (typeof REQ_ !== 'undefined' && REQ_) REQ_.cfg = Object.assign({}, out);
   return out;

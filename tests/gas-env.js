@@ -20,6 +20,7 @@ function createEnv() {
       getMaxRows: () => { tally('meta', name); return sh.maxRows; }, getMaxColumns: () => sh.maxCols,
       insertRowsAfter: (a, n) => { sh.maxRows += n; }, insertColumnsAfter: (a, n) => { sh.maxCols += n; },
       setFrozenRows: () => {}, clearContents: () => { sh.data = []; },
+      deleteRow: r => { tally('writes', name); sh.data.splice(r - 1, 1); sh.maxRows--; },
       // dropWrites: จำลองชีตที่เขียนแล้วไม่ติด (UAT 12 พ.ย.: Admin_Log มี filter อยู่ appendRow เงียบหาย)
       appendRow: row => { tally('writes', name); if (!sh.dropWrites) sh.data.push(row.map(String)); },
       getProtections: () => sh.prot,
