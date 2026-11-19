@@ -864,7 +864,7 @@
     if (S.view === 'ready' || !isReady()) {
       SOUND.bad();
       if (S.view !== 'ready') show('ready');
-      if (isReady()) toast('กด "เริ่มนับ" ก่อน', true);   // อยู่หน้าตรวจความพร้อมที่ผ่านแล้ว — แค่เตือน
+      if (isReady()) result(false, 'ยังไม่ได้กด "เริ่มนับ" — ไม่บันทึก', 'ตรวจความพร้อมผ่านแล้ว · กดปุ่ม "เริ่มนับ" ก่อน แล้วยิงใหม่', { scanCloses: true });
       else result(false, 'ยังยิงไม่ได้ — ไม่บันทึก', 'ตรวจความพร้อมยังไม่ผ่าน — แก้ข้อ ✗ ก่อน' + (S.dwOk && S.staff ? '' : '\nยิงบัตรผู้ตรวจสอบ (EMP:) ก่อน'), { scanCloses: true });
       return;
     }
