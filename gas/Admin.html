@@ -33,6 +33,10 @@
   input[type=text], input[type=date], input[type=search], select { font:inherit; padding:6px 8px; border:1px solid var(--line); border-radius:6px; }
   table { border-collapse:collapse; width:100%; font-size:13px; }
   th, td { text-align:left; padding:5px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  tr:hover > td { background:#eef4fb; }   /* v2.5.6: ไฮไลต์แถวที่ชี้ */
+  table.logt { table-layout:fixed; }
+  table.logt td { overflow-wrap:anywhere; }
+  table.logt td:first-child, table.logt td:last-child { white-space:nowrap; }
   th { background:var(--soft); position:sticky; top:0; font-weight:600; }
   td.n { text-align:right; font-variant-numeric: tabular-nums; }
   .mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size:12px; }
@@ -136,8 +140,8 @@
   <button data-t="conflicts">ขัดแย้ง<span class="badge" id="confBadge" style="display:none"></span></button>
   <button data-t="compare">เทียบ SAP กับ POS</button>
   <button data-t="devices">เครื่อง TC21</button>
-  <button data-t="staff">พนักงาน</button>
   <button data-t="summary">สรุปผลนับ</button>
+  <button data-t="staff">พนักงาน</button>
   <button data-t="log">บันทึก Admin</button>
 </nav>
 <main>
@@ -305,8 +309,14 @@
 
   <!-- บันทึก -->
   <section id="log">
-    <div class="row"><label><input type="checkbox" id="logAll" onchange="renderLog()"> แสดงทุกรอบ</label> <span class="muted" id="logInfo"></span></div>
-    <div class="scroll"><table id="logTbl"></table></div>
+    <div class="row">
+      <label>รอบ <select id="logRound" onchange="logQuery(0)"></select></label>
+      <input type="text" id="logQ" placeholder="ค้นคำ เช่น STAFF_ · TC21-01 · T9062" style="width:240px" onkeydown="if(event.key==='Enter')logQuery(0)">
+      <button class="btn sec" onclick="logQuery(0)">ค้น</button>
+      <span class="muted" id="logInfo"></span>
+    </div>
+    <div class="scroll"><table id="logTbl" class="logt"><colgroup><col style="width:150px"><col style="width:190px"><col style="width:170px"><col style="width:200px"><col><col style="width:110px"></colgroup></table></div>
+    <div class="row" style="margin-top:8px"><button class="btn sec" id="logMore" style="display:none" onclick="logQuery(LOGQ.offset + LOGQ.rows.length, true)">แสดงเพิ่ม</button></div>
   </section>
 </main>
 <div id="trDlg" class="dlg"><div class="box">
@@ -469,6 +479,13 @@ document.querySelectorAll('#nav button').forEach(function (b) {
 });
 
 function load() { call('apiGetState', [], render); }
+// v2.5.6: ระหว่าง "เตรียมรอบ" ถามสถานะทุก 30 วินาที (เบา: อ่าน Config อย่างเดียว) — เครื่องส่งรายการแรกแล้ว หัวหน้าเปลี่ยนเป็น "กำลังนับ" เอง ไม่ต้องปิดเปิดหน้า
+setInterval(function () {
+  if (!S || !S.round || S.round.status !== 'SETUP' || document.hidden || $('busy').style.display === 'flex') return;
+  google.script.run.withSuccessHandler(function (x) {
+    if (x && S && S.round && (x.status !== S.round.status || x.projectId !== S.round.projectId)) { load(); toast('สถานะรอบเปลี่ยนเป็น ' + (x.statusTh || x.status)); }
+  }).withFailureHandler(function () {}).apiRoundStatus();
+}, 30000);
 function showLogWarn(w) {
   var el = $('logWarn');
   if (!w) { el.style.display = 'none'; return; }
@@ -549,14 +566,37 @@ function render(s) {
   renderClose(s);
   renderHistory(s);
 }
-/** บันทึก Admin (v2.5.0): ค่าเริ่มต้นแสดงเฉพาะรอบปัจจุบัน · Admin_Log เก็บต่อเนื่องทุกรอบ */
+/**
+ * บันทึก Admin: ค่าเริ่มต้นแสดงรอบปัจจุบัน (มากับ apiGetState ไม่ต้องถามซ้ำ) · Admin_Log เก็บต่อเนื่องทุกรอบ
+ * v2.5.6: เลือกรอบ / ทุกรอบ · ค้นคำ · แสดงเพิ่มทีละ 100 (apiAdminLog) · ความกว้างคอลัมน์คงที่ทุกมุมมอง
+ */
+var LOGQ = null;
 function renderLog() {
   var L = S && S.log; if (!L) return;
-  var all = $('logAll').checked, list = all ? L.all : L.cur;
-  $('logInfo').textContent = all ? 'ทุกรอบ ' + L.allCount + ' รายการ (แสดงล่าสุด ' + list.length + ')' :
-    'รอบ ' + (L.project || '-') + ' ' + L.curCount + ' รายการ (แสดงล่าสุด ' + list.length + ') · ทั้งชีต ' + L.allCount + ' รายการ';
-  $('logTbl').innerHTML = '<tr><th>เวลา</th><th>ผู้ทำ</th><th>การกระทำ</th><th>สิ่งที่ถูกกระทำ</th><th>รายละเอียด</th><th>รอบ</th></tr>' +
-    list.map(function (l) { return '<tr>' + l.map(function (c) { return '<td>' + esc(c) + '</td>'; }).join('') + '</tr>'; }).join('');
+  var sel = $('logRound'), keep = sel.value;
+  sel.innerHTML = (L.rounds || []).map(function (x) { return '<option value="' + esc(x.p) + '">' + esc(x.p) + (x.p === L.project ? ' (รอบปัจจุบัน)' : '') + ' · ' + x.n + '</option>'; }).join('') +
+    '<option value="*">ทุกรอบ · ' + L.allCount + '</option>';
+  if (!(L.rounds || []).some(function (x) { return x.p === L.project; }) && L.project) sel.insertAdjacentHTML('afterbegin', '<option value="' + esc(L.project) + '">' + esc(L.project) + ' (รอบปัจจุบัน) · 0</option>');
+  if (LOGQ && (LOGQ.round !== (L.project || '*') || LOGQ.q)) { sel.value = keep || LOGQ.round; return; }   // กำลังดูรอบอื่น/ค้นอยู่ — ไม่ทับ
+  sel.value = L.project || '*';
+  LOGQ = { round: sel.value, q: '', offset: 0, rows: L.project ? L.cur : L.all, total: L.project ? L.curCount : L.allCount };
+  drawLog();
+}
+function logQuery(offset, more) {
+  var round = $('logRound').value, q = $('logQ').value.trim();
+  call('apiAdminLog', [round, q, offset], function (d) {
+    LOGQ = { round: d.round, q: d.q, offset: more ? LOGQ.offset : d.offset, rows: more ? LOGQ.rows.concat(d.rows) : d.rows, total: d.total };
+    drawLog();
+  }, 'กำลังโหลดบันทึก…');
+}
+function drawLog() {
+  var Q = LOGQ, head = $('logTbl').querySelector('colgroup').outerHTML;
+  $('logInfo').textContent = (Q.round === '*' ? 'ทุกรอบ' : 'รอบ ' + Q.round) + (Q.q ? ' · ค้น "' + Q.q + '"' : '') + ' · ' + nf(Q.total) + ' รายการ · แสดง ' + nf(Q.rows.length);
+  $('logTbl').innerHTML = head + '<tr><th>เวลา</th><th>ผู้ทำ</th><th>การกระทำ</th><th>สิ่งที่ถูกกระทำ</th><th>รายละเอียด</th><th>รอบ</th></tr>' +
+    (Q.rows.length ? Q.rows.map(function (l) { return '<tr>' + l.map(function (c) { return '<td>' + esc(c) + '</td>'; }).join('') + '</tr>'; }).join('') :
+      '<tr><td colspan="6" class="muted">ไม่พบรายการ</td></tr>');
+  $('logMore').style.display = Q.rows.length < Q.total ? '' : 'none';
+  $('logMore').textContent = 'แสดงเพิ่ม (เหลือ ' + nf(Q.total - Q.rows.length) + ')';
 }
 
 // ---------- ปิดการนับ / เงื่อนไขปิดรอบ (เฟส 4 · v2.5.0) ----------
@@ -644,9 +684,19 @@ function closeRound(test) {
     }, resume ? 'กำลังล้างชีตงานต่อ…' : 'กำลังปิดรอบ… สำรองไฟล์และตรวจไฟล์สำรอง อาจใช้เวลา 1–3 นาที ห้ามปิดหน้านี้');
   });
 }
+// v2.5.6: แสดง 5 รอบล่าสุด · "ดูทั้งหมด" แล้วกรองตามปี / ประเภท
+var HIST_ALL = false;
 function renderHistory(s) {
-  var H = s.history || [];
-  $('histBox').innerHTML = H.length ? '<div class="scroll"><table class="hist"><tr><th>รอบ</th><th>ประเภท</th><th>วันนับ</th><th>ปิดเมื่อ / โดย</th><th class="n">บัญชี</th><th class="n">สุดท้าย</th><th class="n">ต่าง (ชิ้น)</th>' +
+  var all = s.history || [], H = all, yr = $('histYear') ? $('histYear').value : '', ty = $('histType') ? $('histType').value : '';
+  if (HIST_ALL) H = all.filter(function (h) { return (!yr || String(h.countDate).slice(0, 4) === yr) && (!ty || h.type === ty); });
+  else H = all.slice(0, 5);
+  var years = []; all.forEach(function (h) { var y = String(h.countDate).slice(0, 4); if (y && years.indexOf(y) < 0) years.push(y); });
+  var bar = all.length > 5 || HIST_ALL ? '<div class="row" style="margin-bottom:6px">' +
+    (HIST_ALL ? '<label>ปี <select id="histYear" onchange="renderHistory(S)"><option value="">ทั้งหมด</option>' + years.map(function (y) { return '<option' + (y === yr ? ' selected' : '') + '>' + y + '</option>'; }).join('') + '</select></label>' +
+      '<label>ประเภท <select id="histType" onchange="renderHistory(S)"><option value="">ทั้งหมด</option>' + [['REAL', 'รอบจริง'], ['PILOT', 'รอบทดลอง'], ['TEST', 'รอบทดสอบ']].map(function (t) { return '<option value="' + t[0] + '"' + (t[0] === ty ? ' selected' : '') + '>' + t[1] + '</option>'; }).join('') + '</select></label>' +
+      '<span class="muted">' + H.length + ' จาก ' + all.length + ' รอบ</span> <button class="btn sec" onclick="HIST_ALL=false;renderHistory(S)">ย่อ (5 รอบล่าสุด)</button>' :
+      '<span class="muted">แสดง 5 รอบล่าสุด</span> <button class="btn sec" onclick="HIST_ALL=true;renderHistory(S)">ดูทั้งหมด (' + all.length + ' รอบ)</button>') + '</div>' : '';
+  $('histBox').innerHTML = all.length ? bar + (H.length ? '' : '<div class="muted">ไม่มีรอบตามที่เลือก</div>') + '<div class="scroll"><table class="hist"><tr><th>รอบ</th><th>ประเภท</th><th>วันนับ</th><th>ปิดเมื่อ / โดย</th><th class="n">บัญชี</th><th class="n">สุดท้าย</th><th class="n">ต่าง (ชิ้น)</th>' +
     '<th class="n">ต่าง (บาท)</th><th class="n">รายการ</th><th>ไฟล์สำรอง</th><th></th></tr>' + H.map(function (h) {
       return '<tr><td><b>' + esc(h.project) + '</b></td><td>' + (h.type === 'REAL' ? '<span class="pill ok">รอบจริง</span>' : '<span class="pill warn">' + esc(h.typeTh || h.type) + '</span>') + '</td><td>' + esc(h.countDate) +
         '</td><td class="wrap">' + esc(h.at) + '<div class="muted">' + esc(h.by) + '</div></td><td class="n">' + nf(h.book) + '</td><td class="n">' + nf(h.final) + '</td><td class="n ' + cls(Number(h.diffQty)) + '">' + sgn(Number(h.diffQty)) +
@@ -690,6 +740,15 @@ function countReopen() {
     call('apiCountReopen', [st, why], function (r) { KCHK = r.check; setState(r.state); closeDoneBox(r.check, false); }, 'กำลังเปิดการนับอีกครั้ง…');
   });
 }
+// v2.5.6: อนุมัติแล้วบอกขั้นต่อไป + สถานะจะเปลี่ยนเมื่อไร (UAT 14: อนุมัติแล้วสถานะยัง "เตรียมรอบ" ทำให้สงสัย)
+function approveDoneBox(s) {
+  var r = s.round, setup = r.status === 'SETUP';
+  ask({ title: '✓ อนุมัติ Master แล้ว', ok: 'ปิด', noCancel: true,
+    body: '<div>รายการบาร์โค้ด ' + fmt((s.master.approved && s.master.approved.count) || s.master.deviceCount || 0) + ' รายการ พร้อมส่งลงเครื่อง</div>' +
+      '<div style="margin-top:6px"><b>ขั้นต่อไป:</b> ทุกเครื่อง ⋮ → ตรวจความพร้อมใหม่ (เครื่องโหลดรายการใหม่เอง) → แท็บ เครื่อง TC21 คอลัมน์ "พร้อมรอบนี้" ต้อง ✓</div>' +
+      (setup ? '<div style="margin-top:6px">สถานะยังเป็น <b>เตรียมรอบ</b> — จะเปลี่ยนเป็น <b>กำลังนับ</b> เองเมื่อเครื่องส่งรายการแรก (หน้านี้เปลี่ยนตามเองภายใน 30 วินาที)</div>' : '') }, function () {});
+}
+
 function closeDoneBox(K, closed) {
   var k1 = K.items[0], k3 = K.items[2];
   ask({ title: closed ? '✓ ปิดการนับแล้ว' : '✓ เปิดการนับอีกครั้งแล้ว', ok: 'ปิด', noCancel: true,
@@ -763,7 +822,7 @@ function ackNew() {
 function approve() {
   var ids = []; document.querySelectorAll('.ack').forEach(function (x) { if (x.checked) ids.push(x.value); });
   ask({ title: 'อนุมัติ Master', body: '<div>อนุมัติ Master นี้ให้เครื่องโหลดใช้งาน?</div>', ok: 'อนุมัติ' }, function () {
-    call('apiApprove', [S.master.hash, ids], function (s) { setState(s); toast('อนุมัติแล้ว'); }, 'กำลังอนุมัติ Master…');
+    call('apiApprove', [S.master.hash, ids], function (s) { setState(s); approveDoneBox(s); }, 'กำลังอนุมัติ Master…');
   });
 }
 
@@ -1247,16 +1306,33 @@ function renderStaff(d) {
 }
 function staffForm(x, add) {
   return '<div class="kv">' +
-    '<div>รหัส</div><div>' + (add ? '<input type="text" id="sfCode" maxlength="12" placeholder="เช่น T9062 · TMP01" style="text-transform:uppercase">' +
+    '<div>รหัส</div><div>' + (add ? '<input type="text" id="sfCode" maxlength="12" placeholder="เช่น T9062 · TMP01" style="text-transform:uppercase" oninput="sfCheck()">' +
+      '<div id="sfCodeErr" style="display:none;color:var(--bad);font-size:13px"></div>' +
       '<div class="muted">ตัวอังกฤษ / ตัวเลข 2–12 ตัว · แก้ภายหลังไม่ได้ · คนชั่วคราวใช้ TMP01, TMP02… คนละรหัส</div>' : '<b class="mono">' + esc(x.code) + '</b> <span class="muted">(แก้ไม่ได้)</span>') + '</div>' +
     '<div>ชื่อ</div><div><input type="text" id="sfName" value="' + esc(x ? x.name : '') + '" style="width:220px"></div>' +
     '<div>ตำแหน่ง</div><div><input type="text" id="sfRole" value="' + esc(x ? x.role : '') + '" placeholder="เช่น ผู้ตรวจสอบ · หัวหน้าทีม" style="width:220px"></div></div>';
 }
+// v2.5.6: ตรวจรหัสตั้งแต่ตอนพิมพ์ (บาร์โค้ดบนบัตรใส่ตัวไทยไม่ได้) · ผิด/ซ้ำ → ช่องแดง + กด "เพิ่ม" ไม่ได้
+function sfCheck() {
+  var el = $('sfCode'); if (!el) return true;
+  var c = el.value.trim().toUpperCase(), msg = '';
+  if (c && /[^A-Z0-9]/.test(c)) msg = 'ใช้ได้เฉพาะ A–Z และ 0–9 (ไม่มีภาษาไทย เว้นวรรค หรือขีด)';
+  else if (c && c.length < 2) msg = 'อย่างน้อย 2 ตัว';
+  else if (c && STF && STF.staff.some(function (x) { return x.code === c; })) msg = 'รหัส ' + c + ' มีอยู่แล้ว';
+  $('sfCodeErr').textContent = msg; $('sfCodeErr').style.display = msg ? '' : 'none';
+  el.style.borderColor = msg ? 'var(--bad)' : '';
+  var ok = !!c && !msg;
+  $('askOk').dataset.codeBad = ok ? '' : '1';
+  askCheck();
+  return ok;
+}
 function staffAdd() {
   ask({ title: 'เพิ่มพนักงาน', ok: 'เพิ่ม', staff: true, body: staffForm(null, true) }, function (why, by) {
+    if (!sfCheck()) return;
     var c = $('sfCode').value.trim().toUpperCase(), n = $('sfName').value.trim(), r = $('sfRole').value.trim();
     call('apiStaffAdd', [by, c, n, r], function (d) { renderStaff(d); toast('เพิ่ม ' + c + ' ' + n + ' แล้ว — กด "พิมพ์บัตร"'); }, 'กำลังเพิ่ม ' + c + '…');
   });
+  sfCheck();
 }
 function staffEdit(code) {
   var x = STF.staff.filter(function (s) { return s.code === code; })[0]; if (!x) return;
@@ -1425,6 +1501,7 @@ function submitFor(loc, dev) {
 var ASK = null, LAST_STAFF = '';
 function ask(opt, done) {
   ASK = { opt: opt, done: done };
+  $('askOk').dataset.codeBad = '';
   $('askTitle').textContent = opt.title; $('askBody').innerHTML = opt.body || '';
   $('askOk').textContent = opt.ok || 'ตกลง';
   $('askCancel').style.display = opt.noCancel ? 'none' : '';   // กล่องแจ้งผล (v2.4.1): ปุ่มเดียว
@@ -1443,14 +1520,15 @@ function askCheck() {
   if (o.must && $('askWhy').value.trim() !== o.must) { whyOk = false; need.push('พิมพ์ให้ตรง: ' + o.must); }
   else if (!whyOk) need.push('ต้องใส่เหตุผลก่อน');
   if (!stOk) need.push('ต้องเลือกรหัสผู้ตรวจสอบก่อน');
-  $('askOk').disabled = !(whyOk && stOk); $('askNeed').innerHTML = need.map(esc).join('<br>'); $('askNeed').style.display = need.length ? 'block' : 'none';
+  var codeOk = !$('askOk').dataset.codeBad;   // v2.5.6: ช่องรหัสพนักงาน (sfCheck)
+  $('askOk').disabled = !(whyOk && stOk && codeOk); $('askNeed').innerHTML = need.map(esc).join('<br>'); $('askNeed').style.display = need.length ? 'block' : 'none';
   $('askWhy').classList.toggle('need', !whyOk);
 }
 function askClose() { $('askDlg').classList.remove('on'); ASK = null; }
 function askDo() {
   if (!ASK) return;
   var why = $('askWhy').value.trim(), st = ASK.opt.staff ? $('askStaff').value : '';
-  if ((ASK.opt.why && !why) || (ASK.opt.staff && !st) || (ASK.opt.must && why !== ASK.opt.must)) { askCheck(); return; }
+  if ((ASK.opt.why && !why) || (ASK.opt.staff && !st) || (ASK.opt.must && why !== ASK.opt.must) || $('askOk').dataset.codeBad) { askCheck(); return; }
   if (st) LAST_STAFF = st;
   var done = ASK.done; askClose(); done(why, st);
 }

@@ -213,6 +213,12 @@ sequenceDiagram
 - `check` รับ `project` → `Devices.Check_Project`
 - หน้า Admin: `apiStaffState()` · `apiStaffAdd(by, code, name, role)` · `apiStaffEdit(by, code, name, role)` · `apiStaffActive(by, code, on, why)` · `apiDevicesState()` คืน `ready: { ok, why[] }` ต่อเครื่อง
 
+## หน้า Admin อ่านอย่างเดียว (v2.5.6)
+- `apiAdminLog(round, q, offset)` → `{ rows, total, offset, round, q, rounds:[{p,n}] }` · round = รหัสรอบ หรือ `*` ทุกรอบ · ค้นคำทุกคอลัมน์ · 100 แถวต่อครั้ง ใหม่ก่อน · ไม่ใช้ล็อก
+- `apiRoundStatus()` → `{ projectId, status, statusTh }` · อ่าน Config อย่างเดียว · หน้า Admin ถามทุก 30 วินาทีระหว่าง SETUP
+- `apiGetState().log.rounds` = รอบทั้งหมดใน Admin_Log (ช่องเลือกรอบ)
+- เครื่อง: `locInfo` รอ 15 วินาทีเมื่อผู้ใช้รอ · 25 วินาทีเมื่อถามเป็นรอบเบื้องหลัง
+
 ## ปิดการนับ (v2.5.0)
 - `ROUND_STATUS = COUNT_CLOSED`: `sync` ยังรับรายการเข้า Count_Log ตามปกติ (ค้างส่งจากก่อนปิด ไม่กักไว้ใน Quarantine) · เหตุการณ์ SUBMIT / PAUSE / CLOSE รับตามปกติ
 - รายการที่รับระหว่างปิด → นับใน Script Properties `AFTER_COUNT_CLOSE` และบันทึก `SYNC_AFTER_COUNT_CLOSE` · รายการที่ `scanTime` ≥ `COUNT_CLOSED_AT` นับเป็น "ยิงหลังเวลาปิด" (เครื่องยังไม่รู้ว่าปิด เช่น ออฟไลน์)

@@ -21,6 +21,8 @@ window.google = { script: { run: (function mk(ok, bad) {
       if (k === 'apiCloseCheck') { setTimeout(function () { ok && ok(window.KFULL || window.ST.KCHECK); }, 0); return; }
       if (k === 'apiCloseCheckFast') { setTimeout(function () { ok && ok(window.KFAST || Object.assign({}, window.ST.KCHECK, { full: false })); }, 0); return; }
       if (k.indexOf('apiStaff') === 0) { setTimeout(function () { ok && ok(window.STAFF); }, 0); return; }
+      if (k === 'apiAdminLog') { setTimeout(function () { ok && ok(window.LOGRES); }, 0); return; }
+      if (k === 'apiRoundStatus') { setTimeout(function () { ok && ok(window.RSTAT); }, 0); return; }
       if (k === 'apiCloseRound') { setTimeout(function () { ok && ok(window.CLOSEROUND); }, 0); return; }
       if (k === 'apiVerifyArchive') { setTimeout(function () { ok && ok(window.VERIFY); }, 0); return; }
       if (k === 'apiCountClose' || k === 'apiCountReopen') { setTimeout(function () { ok && ok(window.CLOSERES); }, 0); return; }
@@ -82,6 +84,13 @@ with sync_playwright() as p:
     check(pg.is_visible('#askDlg') and 'อนุมัติ Master' in pg.inner_text('#askTitle'), 'อนุมัติ Master → กล่องยืนยัน')
     pg.click('#askOk'); pg.wait_for_timeout(50)
     check(pg.evaluate('CALLS')[0][0] == 'apiApprove', 'กดอนุมัติ → เรียก apiApprove')
+    pg.evaluate("document.querySelectorAll('.dlg.on').forEach(d => d.classList.remove('on'))")
+    pg.evaluate("approveDoneBox({ round: { status: 'SETUP' }, master: { approved: { count: 2330 } } })")
+    ab = pg.inner_text('#askDlg')
+    check('อนุมัติ Master แล้ว' in pg.inner_text('#askTitle') and '2,330' in ab and 'ตรวจความพร้อมใหม่' in ab and 'กำลังนับ' in ab and 'รายการแรก' in ab, 'v2.5.6 อนุมัติแล้ว → กล่องบอกขั้นต่อไป + สถานะจะเป็น "กำลังนับ" เมื่อไร')
+    pg.click('#askOk')
+    tabs = pg.eval_on_selector_all('#nav button', 'els => els.map(e => e.dataset.t)')
+    check(tabs.index('summary') + 1 == tabs.index('staff') and tabs.index('staff') + 1 == tabs.index('log'), 'v2.5.6 ลำดับแท็บ: สรุปผลนับ → พนักงาน → บันทึก Admin')
     # กระทบยอดทั้งรอบ + คำเตือนบันทึก Admin_Log ไม่สำเร็จ (v2.3.8)
     pg.evaluate("""window.RECON = { at: '2026-11-12 16:30:00', ok: false, locs: 20, closed: 15, qty: 1234, lines: 900,
       indexDiffs: ['T9 TC21-01 ดัชนี 38/38 ชีต 38/37'], closeDiffs: [{ loc: 'T9', close: 39, sheet: 38, flag: '' }, { loc: 'D6', close: 30, sheet: 32, flag: 'มีรายการหลังปิด' }], missing: [],
@@ -276,8 +285,21 @@ with sync_playwright() as p:
     L = st['STATE']['log']
     n = pg.locator('#logTbl tr').count() - 1
     check(n == len(L['cur']) and 'รอบ 2026Q4' in pg.inner_text('#logInfo') and pg.locator('#logTbl tr >> nth=0').inner_text().split('\t')[-1] == 'รอบ', 'บันทึก Admin แสดงเฉพาะรอบนี้ + คอลัมน์รอบ: ' + pg.inner_text('#logInfo'))
-    pg.check('#logAll'); pg.wait_for_timeout(30)
-    check(pg.locator('#logTbl tr').count() - 1 == len(L['all']) and 'ทุกรอบ' in pg.inner_text('#logInfo'), 'ติ๊ก "แสดงทุกรอบ" → เห็นทุกรอบ')
+    opts = pg.eval_on_selector_all('#logRound option', 'els => els.map(e => e.value)')
+    check(pg.input_value('#logRound') == '2026Q4' and opts[-1] == '*' and len(opts) >= 2, 'v2.5.6 ช่องเลือกรอบ: ค่าเริ่มต้นรอบปัจจุบัน · มี "ทุกรอบ" ท้ายสุด: ' + str(opts))
+    pg.evaluate("x => { window.LOGRES = x; }", {'rows': L['all'], 'total': len(L['all']) + 150, 'offset': 0, 'round': '*', 'q': '', 'rounds': L.get('rounds', [])})
+    pg.evaluate('CALLS.length = 0'); pg.select_option('#logRound', '*'); pg.wait_for_timeout(50)
+    check(['apiAdminLog', '*', '', 0] in pg.evaluate('CALLS') and pg.locator('#logTbl tr').count() - 1 == len(L['all']) and 'ทุกรอบ' in pg.inner_text('#logInfo'), 'เลือก "ทุกรอบ" → apiAdminLog("*") · ' + pg.inner_text('#logInfo'))
+    check(pg.is_visible('#logMore') and 'เหลือ 150' in pg.inner_text('#logMore'), 'มีปุ่ม "แสดงเพิ่ม (เหลือ 150)"')
+    w = [pg.evaluate("document.querySelector('#logTbl tr:nth-child(2) td:nth-child(%d)').getBoundingClientRect().width" % i) for i in (1, 6)]
+    check(abs(w[0] - 150) < 2 and abs(w[1] - 110) < 2, 'ความกว้างคอลัมน์คงที่ (เวลา 150 · รอบ 110): ' + str(w))
+    pg.evaluate("x => { window.LOGRES = x; }", {'rows': L['all'][:3], 'total': len(L['all']) + 150, 'offset': len(L['all']), 'round': '*', 'q': '', 'rounds': []})
+    pg.evaluate('CALLS.length = 0'); pg.click('#logMore'); pg.wait_for_timeout(50)
+    check(['apiAdminLog', '*', '', len(L['all'])] in pg.evaluate('CALLS') and pg.locator('#logTbl tr').count() - 1 == len(L['all']) + 3, 'แสดงเพิ่ม → ต่อท้าย (offset ' + str(len(L['all'])) + ')')
+    pg.evaluate("x => { window.LOGRES = x; }", {'rows': [], 'total': 0, 'offset': 0, 'round': '*', 'q': 'ไม่มีแน่', 'rounds': []})
+    pg.fill('#logQ', 'ไม่มีแน่'); pg.evaluate('CALLS.length = 0'); pg.press('#logQ', 'Enter'); pg.wait_for_timeout(50)
+    check(['apiAdminLog', '*', 'ไม่มีแน่', 0] in pg.evaluate('CALLS') and 'ไม่พบรายการ' in pg.inner_text('#logTbl') and not pg.is_visible('#logMore'), 'ค้นคำ (Enter) → ไม่พบรายการ')
+    pg.fill('#logQ', '')
 
     print('v2.5.1: ตาราง Location กรอง/ค้นหา · ค้นหา SKU ทุกกลุ่ม · K1 แยกตามเครื่อง · ตัด "Error:"')
     pg.click('#nav button[data-t=devices]') if pg.locator('#nav button[data-t=devices]').count() else None
@@ -375,6 +397,18 @@ with sync_playwright() as p:
     vb = pg.inner_text('#askDlg')
     check(['apiVerifyArchive', pid] in pg.evaluate('CALLS') and 'ไม่ตรง' in pg.inner_text('#askTitle') and 'ถูกแก้หลังปิดรอบ' in vb and 'ARCHIVE_CHECK' in vb, 'ตรวจไฟล์สำรองที่ถูกแก้ → ✗ บอกชีตที่ไม่ตรง')
     pg.screenshot(path='/tmp/admin-verify.png'); pg.click('#askOk')
+    keepHist = pg.evaluate("[document.querySelector('#histBox').innerHTML, S]")
+    hist7 = json.loads(json.dumps(closed)); h0 = {'project': 'x', 'countDate': '2027-01-01', 'book': 10, 'final': 8, 'diffQty': -2, 'diffValue': -20, 'lines': 5, 'url': 'https://example.invalid/h', 'at': '2027-01-02 10:00:00', 'by': 'EMP-K', 'type': 'REAL', 'typeTh': 'รอบทดลอง'}
+    hist7['history'] = [dict(h0, project='2027Q%d' % (i % 4 + 1) + ('-R%d' % i if i > 3 else ''), countDate='%d-03-01' % (2027 + i // 4), type='REAL' if i % 2 else 'PILOT') for i in range(7)]
+    pg.evaluate("s => { HIST_ALL = false; renderHistory(s); }", hist7)
+    check(pg.locator('#histBox table.hist tr').count() - 1 == 5 and 'ดูทั้งหมด (7 รอบ)' in pg.inner_text('#histBox'), 'v2.5.6 รอบที่ปิดแล้ว: แสดง 5 รอบล่าสุด + ปุ่ม "ดูทั้งหมด (7 รอบ)"')
+    pg.evaluate("s => { S = s; }", hist7); pg.click('#histBox button:has-text("ดูทั้งหมด")')
+    check(pg.locator('#histBox table.hist tr').count() - 1 == 7 and pg.is_visible('#histYear'), 'ดูทั้งหมด → 7 รอบ + ตัวกรองปี/ประเภท')
+    pg.select_option('#histType', 'REAL')
+    check(pg.locator('#histBox table.hist tr').count() - 1 == 3 and '3 จาก 7 รอบ' in pg.inner_text('#histBox'), 'กรองประเภท รอบจริง → 3 จาก 7')
+    pg.select_option('#histType', ''); pg.select_option('#histYear', '2028')
+    check(pg.locator('#histBox table.hist tr').count() - 1 == 3, 'กรองปี 2028 → 3 รอบ')
+    pg.evaluate("k => { HIST_ALL = false; document.querySelector('#histBox').innerHTML = k[0]; S = k[1]; }", keepHist)
     # โหมดทดสอบ 2026Q4: ปุ่มล้างข้อมูลทดสอบ ใช้ได้เมื่อ K3 K6 K7 ผ่าน (K1 K2 K4 K5 ไม่ผ่านก็ได้)
     tq = json.loads(json.dumps(closed)); tq['round']['testAllowed'] = True
     kt = json.loads(json.dumps(st['KCHECK'])); kt['full'] = False
@@ -431,7 +465,16 @@ with sync_playwright() as p:
     pg.evaluate("S = S || {}; S.staff = [['EMP-K', 'นาย ก']]; LAST_STAFF = ''")
     pg.click('#staff button:has-text("+ เพิ่มพนักงาน")')
     check(pg.is_visible('#askDlg') and pg.is_visible('#sfCode') and pg.is_disabled('#askOk'), 'เพิ่ม → กล่องกรอกรหัส / ชื่อ / ตำแหน่ง · ยังไม่เลือกผู้กด → กดไม่ได้')
-    pg.fill('#sfCode', 'tmp02'); pg.fill('#sfName', 'คนใหม่'); pg.select_option('#askStaff', 'EMP-K'); pg.evaluate('CALLS.length = 0'); pg.click('#askOk'); pg.wait_for_timeout(50)
+    pg.select_option('#askStaff', 'EMP-K'); pg.fill('#sfName', 'คนใหม่')
+    check(pg.is_disabled('#askOk') and not pg.is_visible('#sfCodeErr'), 'v2.5.6 รหัสว่าง → กดเพิ่มไม่ได้ (ยังไม่ขึ้นตัวแดง)')
+    pg.fill('#sfCode', 'ทดสอบ')
+    check(pg.is_visible('#sfCodeErr') and 'A–Z' in pg.inner_text('#sfCodeErr') and pg.is_disabled('#askOk'), 'พิมพ์ภาษาไทย → ตัวแดงทันที "ใช้ได้เฉพาะ A–Z และ 0–9" · กดเพิ่มไม่ได้')
+    pg.fill('#sfCode', 'tmp01')
+    check('มีอยู่แล้ว' in pg.inner_text('#sfCodeErr') and pg.is_disabled('#askOk'), 'รหัสซ้ำ (tmp01) → "มีอยู่แล้ว" ก่อนกด')
+    pg.press('#sfName', 'Enter') if False else None
+    pg.fill('#sfCode', 'tmp02')
+    check(not pg.is_visible('#sfCodeErr') and not pg.is_disabled('#askOk'), 'รหัสถูก → ตัวแดงหาย กดได้')
+    pg.evaluate('CALLS.length = 0'); pg.click('#askOk'); pg.wait_for_timeout(50)
     check(['apiStaffAdd', 'EMP-K', 'TMP02', 'คนใหม่', ''] in pg.evaluate('CALLS'), 'เรียก apiStaffAdd(ผู้กด, รหัสพิมพ์ใหญ่, ชื่อ, ตำแหน่ง)')
     # แก้ไข: รหัสแก้ไม่ได้
     pg.click('#st-TMP01 button:has-text("แก้ไข")')

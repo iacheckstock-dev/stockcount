@@ -12,7 +12,7 @@ var SCHEMA_VERSION = 12;   // 6 = v2.4.1 Variance.Barcode · 7 = v2.4.2 ชี�
  * เวอร์ชันของระบบ (ใช้เลขเดียวทั้งแอป TC21 และเซิร์ฟเวอร์ ตาม Semantic Versioning MAJOR.MINOR.PATCH)
  * ต้องตรงกับ APP_VERSION ใน app/app.js และ appVersion ใน app/config.json — ดู CHANGELOG.md
  */
-var SYSTEM_VERSION = '2.5.5';
+var SYSTEM_VERSION = '2.5.6';
 
 var SHEETS = {
   Config: ['Key', 'Value', 'Note'],
@@ -468,17 +468,50 @@ function apiGetState() {
  * Admin_Log สำหรับหน้า Admin (v2.5.0): แถวก่อน v2.5.0 ไม่มี Project_ID → ใช้รอบจาก OPEN_ROUND ล่าสุดก่อนแถวนั้น (อ่านอย่างเดียว ไม่เขียนกลับ)
  * คืน { cur: 100 แถวล่าสุดของรอบปัจจุบัน, all: 100 แถวล่าสุดทุกรอบ, curCount, allCount } · แต่ละแถว [เวลา, ผู้ทำ, การกระทำ, เป้าหมาย, รายละเอียด, รอบ]
  */
-function logView_(log, project) {
-  var cur = '', rows = log.slice(1).filter(function (r) { return r[0] !== '' || r[2] !== ''; }).map(function (r) {
+function logRows_(log) {
+  var cur = '';
+  return log.slice(1).filter(function (r) { return r[0] !== '' || r[2] !== ''; }).map(function (r) {
     var p = String(r[5] || '');
     if (r[2] === 'OPEN_ROUND') cur = String(r[3] || '');
     if (p) cur = p;
     return [r[0], r[1], r[2], r[3], r[4], p || cur];
   });
+}
+/** รอบทั้งหมดที่มีใน Admin_Log (ใหม่ก่อน) พร้อมจำนวนแถว — ช่องเลือกรอบในแท็บบันทึก Admin (v2.5.6) */
+function logRounds_(rows) {
+  var n = {}, order = [];
+  rows.forEach(function (r) { var p = r[5] || '(ไม่ระบุรอบ)'; if (!(p in n)) { n[p] = 0; order.push(p); } n[p]++; });
+  return order.reverse().map(function (p) { return { p: p, n: n[p] }; });
+}
+function logView_(log, project) {
+  var rows = logRows_(log);
   var mine = project ? rows.filter(function (r) { return r[5] === project; }) : rows;
   // rowsProject: รอบของแต่ละแถว ตามลำดับแถวในชีต (รวมแถวว่าง) — ใช้ตัด Admin_Log ในไฟล์สำรอง (v2.5.2)
   var c2 = '', rowsProject = log.slice(1).map(function (r) { if (r[2] === 'OPEN_ROUND') c2 = String(r[3] || ''); if (r[5]) c2 = String(r[5]); return r[0] !== '' || r[2] !== '' ? c2 : ''; });
-  return { cur: mine.slice(-100).reverse(), all: rows.slice(-100).reverse(), curCount: mine.length, allCount: rows.length, project: project || '', rowsProject: rowsProject };
+  return { cur: mine.slice(-100).reverse(), all: rows.slice(-100).reverse(), curCount: mine.length, allCount: rows.length, project: project || '', rowsProject: rowsProject,
+    rounds: logRounds_(rows) };
+}
+
+/**
+ * แท็บบันทึก Admin (v2.5.6): เลือกรอบ · ค้นคำ · แสดงเพิ่มทีละ 100 — อ่านอย่างเดียว ไม่ใช้ล็อก
+ * round: รหัสรอบ / '*' = ทุกรอบ · q: คำค้น (ไม่สนตัวพิมพ์ ค้นทุกคอลัมน์) · offset: เริ่มที่แถวที่ (ใหม่ก่อน)
+ */
+function apiAdminLog(round, q, offset) {
+  var sh = SpreadsheetApp.getActive().getSheetByName('Admin_Log');
+  var rows = logRows_(sh.getDataRange().getDisplayValues());
+  var rounds = logRounds_(rows);
+  if (round && round !== '*') rows = rows.filter(function (r) { return (r[5] || '(ไม่ระบุรอบ)') === round; });
+  var term = String(q || '').trim().toLowerCase();
+  if (term) rows = rows.filter(function (r) { return r.join(' ').toLowerCase().indexOf(term) >= 0; });
+  rows.reverse();
+  offset = Math.max(0, Number(offset) || 0);
+  return { rows: rows.slice(offset, offset + 100), total: rows.length, offset: offset, round: round || '*', q: String(q || ''), rounds: rounds };
+}
+
+/** สถานะรอบอย่างเดียว (เบา · อ่าน Config) — หน้า Admin ถามทุก 30 วินาทีระหว่าง "เตรียมรอบ" (v2.5.6) */
+function apiRoundStatus() {
+  var cfg = readConfig_(), st = cfg.ROUND_STATUS || 'NONE';
+  return { projectId: cfg.PROJECT_ID || '', status: st, statusTh: ROUND_STATUS_TH[st] || st };
 }
 
 function ackList_(cfg) {
@@ -841,6 +874,12 @@ function apiStaffState() {
   };
 }
 
+/** ชื่อสองค่าดูเหมือนกันบนจอหรือไม่ (ตัดวรรณยุกต์/สระบนล่างที่ซ้อน และช่องว่าง แล้วเทียบ) */
+function looksSame_(a, b) {
+  var f = function (x) { return String(x || '').replace(/[\s\u0E31\u0E34-\u0E3A\u0E47-\u0E4E]/g, ''); };
+  return f(a) === f(b) && String(a || '') !== String(b || '');
+}
+
 function staffFind_(t, code) {
   var c = normStaff_(code);
   for (var i = 0; i < t.rows.length; i++) if (normStaff_(t.rows[i][t.idx.Staff_Code]) === c) return i;
@@ -871,7 +910,11 @@ function apiStaffEdit(by, code, name, role) {
     var old = rowObj_(t, t.rows[i]);
     if (String(old.Name || '') === n && String(old.Role || '') === ro) throw new Error('ไม่มีอะไรเปลี่ยน');
     putRow_(t, i, { Name: n, Role: ro });
-    logAdmin_('STAFF_EDIT', normStaff_(code), 'ชื่อ ' + (old.Name || '-') + ' → ' + n + ' · ตำแหน่ง ' + (old.Role || '-') + ' → ' + (ro || '-') + ' · ผู้กด ' + who[0] + ' ' + who[1]);
+    // v2.5.6: บันทึกเฉพาะช่องที่เปลี่ยน · ชื่อที่ดูเหมือนเดิมแต่ตัวอักษรต่างกัน (เช่น สระซ้อน) บอกให้รู้
+    var ch = [];
+    if (String(old.Name || '') !== n) ch.push('ชื่อ ' + (old.Name || '-') + ' → ' + n + (String(old.Name || '').normalize('NFC').replace(/\s+/g, ' ') === n.normalize('NFC').replace(/\s+/g, ' ') || looksSame_(old.Name, n) ? ' (แก้ตัวสะกด/สระซ้อน)' : ''));
+    if (String(old.Role || '') !== ro) ch.push('ตำแหน่ง ' + (old.Role || '-') + ' → ' + (ro || '-'));
+    logAdmin_('STAFF_EDIT', normStaff_(code), ch.join(' · ') + ' · ผู้กด ' + who[0] + ' ' + who[1]);
     return apiStaffState();
   });
 }

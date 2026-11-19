@@ -115,5 +115,32 @@ test('ชีต Devices มีคอลัมน์ Check_Project · SCHEMA_VERS
   assert.strictEqual(run('SCHEMA_VERSION'), 12);
 });
 
+console.log('\nv2.5.6');
+test('แก้พนักงาน: บันทึกเฉพาะช่องที่เปลี่ยน · ชื่อดูเหมือนเดิม (สระซ้อนสลับลำดับ) บอกว่าแก้ตัวสะกด', () => {
+  run('apiStaffEdit("EMP-K", "TMP01", "ชั่วคราว หนึ่ง", "หัวหน้า")');
+  let d = logs('STAFF_EDIT').slice(-1)[0][4];
+  assert.ok(/^ตำแหน่ง ผู้ตรวจสอบ → หัวหน้า · ผู้กด/.test(d) && !/ชื่อ/.test(d), d);
+  env.sheets.Staff.data.push(['TA369', 'ปาริฉัตร สวาศรี'.replace('ั', 'ั'), '', 'Y']);
+  run('apiStaffEdit("EMP-K", "TA369", "ปาริฉัตร  สวาศรี", "")');   // วรรคซ้ำ → ดูเหมือนเดิม
+  d = logs('STAFF_EDIT').slice(-1)[0][4];
+  assert.ok(/^ชื่อ .* \(แก้ตัวสะกด\/สระซ้อน\) · ผู้กด/.test(d) && !/ตำแหน่ง/.test(d), d);
+});
+test('apiAdminLog: เลือกรอบ · ทุกรอบ · ค้นคำ · offset · รายการรอบ', () => {
+  const all = run('apiAdminLog("*", "", 0)');
+  assert.ok(all.total >= 10 && all.rows.length === Math.min(100, all.total) && all.rounds.some(r => r.p === '2026Q4-R1'));
+  assert.ok(String(all.rows[0][0]) >= String(all.rows[all.rows.length - 1][0]), 'ใหม่ก่อน');
+  const st = run('apiAdminLog("2026Q4-R1", "staff_", 0)');
+  assert.ok(st.total >= 5 && st.rows.every(r => /STAFF_/.test(r[2]) && r[5] === '2026Q4-R1'), JSON.stringify(st.rows.slice(0, 2)));
+  const o2 = run('apiAdminLog("*", "", 2)');
+  assert.deepStrictEqual(o2.rows[0], all.rows[2]);
+  assert.strictEqual(run('apiAdminLog("*", "ไม่มีคำนี้แน่นอน", 0)').total, 0);
+  assert.ok(run('apiGetState()').log.rounds.length >= 1);
+});
+test('apiRoundStatus: เบา · ตรงกับ Config', () => {
+  const r = run('apiRoundStatus()');
+  assert.deepStrictEqual([r.projectId, r.status], ['2026Q4-R1', run('readConfig_().ROUND_STATUS')]);
+  assert.ok(r.statusTh);
+});
+
 console.log('\nผล: ผ่าน ' + pass + ' / ไม่ผ่าน ' + fail);
 process.exit(fail ? 1 : 0);

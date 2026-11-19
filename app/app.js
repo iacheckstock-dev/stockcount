@@ -5,12 +5,14 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2.5.5';
+  var APP_VERSION = '2.5.6';
   var QTY_CONFIRM = 150;      // จำนวนที่ป้อนเองเกินนี้ต้องยืนยันอีกครั้ง
   var QTY_MAX_DIGITS = 5;     // ยาวกว่านี้ = น่าจะยิงบาร์โค้ดเข้าช่องจำนวน
   var INFO_EVERY = 15000;     // ถามสถานะผู้ช่วย/ผู้ดูแลระหว่างนับร่วมกัน
   var INFO_EVERY_WAIT = 8000; // ถี่ขึ้นตอนผู้ดูแลรอผู้ช่วยส่งงาน
-  var INFO_MS = 10000;        // เวลารอคำตอบ "ใครอยู่ใน Location" (GAS จริงตอบ 1–5 วินาที บางครั้งนานกว่า)
+  // เวลารอคำตอบ "ใครอยู่ใน Location" (locInfo) — v2.5.6: UAT 14 วัดได้เฉลี่ย 6.2 ช้าสุด 9.8 วินาที เดิมรอ 10 จึงหมดเวลาบ่อย
+  var INFO_MS = 15000;        // ผู้ใช้รอ (เปิด Location · ตรวจผู้ช่วยก่อนปิด/แก้)
+  var INFO_BG_MS = 25000;     // ถามเป็นรอบเบื้องหลัง (ไม่มีใครรอ · ไม่ถามซ้อน)
   var BATCH = 20;
   var SYNC_EVERY = 2500;
   var STALE_MIN = 30;
@@ -97,14 +99,14 @@
       $('resIcon').className = 'resicon ' + (ok ? 'ok' : 'bad');
       $('resTitle').textContent = title;
       $('resSub').textContent = sub || '';
-      $('resOk').classList.toggle('hidden', !!ok);
+      $('resOk').classList.toggle('hidden', !!ok && !opt.stay);   // v2.5.6: stay = ผลของปุ่มที่กดเอง ต้องกด "ตกลง" (ไม่หายเอง)
       $('result').classList.remove('hidden');
-      S.result = ok ? 'ok' : opt.scanCloses ? 'retry' : 'bad';
+      S.result = ok && !opt.stay ? 'ok' : opt.scanCloses ? 'retry' : 'bad';
       resDone = function (how) {
         clearTimeout(resTimer); resDone = null; S.result = '';
         $('result').classList.add('hidden'); resolve(how || '');
       };
-      if (ok) resTimer = setTimeout(resDone, 1500);
+      if (ok && !opt.stay) resTimer = setTimeout(resDone, 1500);
       else setTimeout(function () { $('resOk').focus(); }, 50);
     });
   }
@@ -447,7 +449,7 @@
     if (!S.loc || S.checking || S.sending || S.infoBusy || navigator.onLine === false || !$('modal').classList.contains('hidden')) return;
     if (!(S.view === 'loc' || (S.view === 'count' && (hasOthers(S.loc) || isHelper())))) return;
     var every = !isHelper() && waitingHelpers(S.loc).length ? INFO_EVERY_WAIT : INFO_EVERY;
-    if (Date.now() - (S.infoAt[S.loc] || 0) >= every) fetchInfo(S.loc);
+    if (Date.now() - (S.infoAt[S.loc] || 0) >= every) fetchInfo(S.loc, INFO_BG_MS);
   }, 2000);
 
   function deviceTotal() { return Math.round(S.entries.reduce(function (a, e) { return a + e.qty; }, 0) * 1000) / 1000; }
@@ -635,7 +637,7 @@
             modal({ title: 'เครื่องนี้เป็นผู้ช่วยที่ ' + r.location, html: esc(r.location) + ' มีผู้ดูแลอยู่แล้ว (' + esc(r.owner) + ')<br>ยอดที่ยิงไว้ยังอยู่ นับต่อได้ เสร็จแล้วกด "ส่งงาน"<br><span class="muted">ถ้ายิงป้ายผิด ให้ยิงป้าย Location ที่ถูก ระบบจะส่งงานให้ แล้วแจ้งผู้ดูแลแก้ยอด</span>',
               yes: 'รับทราบ', noCancel: true });
           } else toast(msg, r.role === 'HELPER');
-          fetchInfo(r.location);
+          fetchInfo(r.location, INFO_BG_MS);
         }
       });
       // การแก้ยอดของเครื่องนี้ชนกับเครื่องอื่น → แจ้งกลางจอทันที (v2.2.8)
@@ -679,7 +681,7 @@
       if (r.round) setRound(r.round, r.project);
       if (r.staffRev && S.boot && r.staffRev !== S.boot.staffRev && !roundMoved()) refreshStaff();
       // เซิร์ฟเวอร์บอกว่า Location นี้มีหลายเครื่อง แต่เครื่องยังไม่รู้ → ถามรายละเอียด (U7/U8)
-      if (loc && loc === S.loc && r.members > 1 && !hasOthers(loc) && !S.infoBusy) fetchInfo(loc);
+      if (loc && loc === S.loc && r.members > 1 && !hasOthers(loc) && !S.infoBusy) fetchInfo(loc, INFO_BG_MS);
     }, function (err) {
       if (err && (err.code === 'BAD_TOKEN' || err.code === 'DEVICE_DISABLED' || err.code === 'UNKNOWN_DEVICE')) { S.lastErr = err.code; render(); }
     });
@@ -698,7 +700,7 @@
     document.querySelectorAll('.view').forEach(function (el) { el.classList.toggle('on', el.id === 'v-' + v); });
     window.scrollTo(0, 0);
     if (v === 'count') { requestWake(); renderCount(); }
-    if (v === 'loc') { renderLoc(); fetchInfo(S.loc); }
+    if (v === 'loc') { renderLoc(); fetchInfo(S.loc, INFO_BG_MS); }
     if (v === 'status') renderStatus();
     if (v === 'revoked') renderRevoked();
     renderBanner();
@@ -852,7 +854,7 @@
     var code = String(raw).trim(), up = code.toUpperCase();
     if (!code) return;
     if (S.view === 'setup') { if (/^DEV:/.test(up)) $('setDevice').value = up.slice(4); return; }
-    if (S.revoked) { SOUND.bad(); toast('เครื่องนี้ถูกยกเลิก ยิงไม่ได้ — กด "จับคู่ใหม่ (เก็บข้อมูลเดิม)"', true); return; }
+    if (S.revoked) { SOUND.bad(); result(false, 'เครื่องนี้ถูกยกเลิก — ไม่บันทึก', 'กด "จับคู่ใหม่ (เก็บข้อมูลเดิม)"', { scanCloses: true }); return; }
     if (/^EMP:/.test(up)) return setStaff(up.slice(4));
     if (/^DEV:/.test(up)) { toast('นี่คือสติกเกอร์เครื่อง ' + up.slice(4)); return; }
     if (S.view === 'sku') {   // หน้าค้นหา SKU: การยิงคือการค้นหา ไม่บันทึกยอด
@@ -861,8 +863,9 @@
     }
     if (S.view === 'ready' || !isReady()) {
       SOUND.bad();
-      toast(isReady() ? 'กด "เริ่มนับ" ก่อน' : 'ตรวจความพร้อมยังไม่ผ่าน — แก้ข้อ ✗ ก่อน' + (S.dwOk ? '' : ' (ยิงบัตรผู้ตรวจสอบ EMP:)'), true);
       if (S.view !== 'ready') show('ready');
+      if (isReady()) toast('กด "เริ่มนับ" ก่อน', true);   // อยู่หน้าตรวจความพร้อมที่ผ่านแล้ว — แค่เตือน
+      else result(false, 'ยังยิงไม่ได้ — ไม่บันทึก', 'ตรวจความพร้อมยังไม่ผ่าน — แก้ข้อ ✗ ก่อน' + (S.dwOk && S.staff ? '' : '\nยิงบัตรผู้ตรวจสอบ (EMP:) ก่อน'), { scanCloses: true });
       return;
     }
     if (S.view === 'status') return;
@@ -947,7 +950,7 @@
       var rr = S.roles[loc];
       if (!rr || (rr.state !== 'PAUSED' && rr.state !== 'COUNTING')) { closedBox(); return Promise.resolve(); }
     }
-    if (!isReady()) { SOUND.bad(); toast('ตรวจความพร้อมยังไม่ผ่าน — แก้ข้อ ✗ ก่อน', true); show('ready'); return Promise.resolve(); }
+    if (!isReady()) { SOUND.bad(); show('ready'); result(false, 'ยังเปิด Location ไม่ได้', 'ตรวจความพร้อมยังไม่ผ่าน — แก้ข้อ ✗ ก่อน', { scanCloses: true }); return Promise.resolve(); }
     if (!S.staff) { SOUND.bad(); setCard('bad', 'ยิงบัตรผู้ตรวจสอบ (EMP:) ก่อน'); show('count'); return Promise.resolve(); }
     if (S.loc === loc) { show('count'); toast('อยู่ที่ ' + loc + ' แล้ว'); return Promise.resolve(); }
     // ถามเซิร์ฟเวอร์ก่อน แล้วตัดสินคำถามจากบทบาทล่าสุด (v2.3.5 — UAT G4-13/15: บทบาทที่จำไว้เก่าหลังหัวหน้าทีมโอนการดูแล)
@@ -1418,7 +1421,7 @@
       return saveState();
     }, function () {}).then(function () { if (S.view === 'locs') renderLocs(); });
   }
-  $('btnLocRefresh').onclick = function () { if (S.loc && !S.infoBusy) { fetchInfo(S.loc); renderLoc(); } };
+  $('btnLocRefresh').onclick = function () { if (S.loc && !S.infoBusy) { fetchInfo(S.loc, INFO_BG_MS); renderLoc(); } };
   $('locsList').addEventListener('click', function (e) {
     var li = e.target.closest('li[data-l]'); if (!li) return;
     openLocation(li.dataset.l);
@@ -1747,7 +1750,12 @@
     $('statusKv').innerHTML = rows.map(function (r) { return '<div>' + esc(r[0]) + '</div><div>' + esc(r[1]) + '</div>'; }).join('') +
       (rej.length ? '<div>ไม่รับ</div><div>' + rej.slice(0, 5).map(function (e) { return esc(e.logId + ' ' + e.rejected); }).join('<br>') + '</div>' : '');
   }
-  $('btnSyncNow').onclick = function () { syncNow(true).then(function () { toast(S.online ? 'ส่งแล้ว' : 'ยังติดต่อเซิร์ฟเวอร์ไม่ได้', !S.online); renderStatus(); }); };
+  $('btnSyncNow').onclick = function () { syncNow(true).then(function () {
+    var left = pending().length + S.oldPending.length;
+    if (S.online) result(true, 'ส่งข้อมูลแล้ว', left ? 'ยังค้างส่ง ' + fmt(left) + ' รายการ — ระบบส่งต่อเอง' : 'ค้างส่ง 0', { stay: true });
+    else result(false, 'ยังติดต่อเซิร์ฟเวอร์ไม่ได้', 'ข้อมูลยังอยู่ในเครื่อง ไม่หาย\nตรวจ Wi-Fi แล้วกดส่งอีกครั้ง');
+    renderStatus();
+  }); };
   $('btnExport').onclick = function () { exportFile(false); };
   $('btnRecheck').onclick = function () { show('ready'); runChecks(false); };
   $('btnStatusBack').onclick = function () { show(S.readiness && S.readiness.pass ? 'count' : 'ready'); };
@@ -1755,15 +1763,15 @@
     DB.all('entries').then(function (all) {
       var old = all.filter(function (e) { return e.projectId !== S.projectId; });
       var unsent = old.filter(function (e) { return !e.synced && !e.rejected; });
-      if (unsent.length) { toast('ยังมีข้อมูลรอบเก่าค้างส่ง ' + unsent.length + ' รายการ ส่งหรือ Export ก่อน', true); return; }
-      if (!old.length) { toast('ไม่มีข้อมูลรอบเก่า'); return; }
+      if (unsent.length) { result(false, 'ยังล้างไม่ได้', 'มีข้อมูลรอบเก่าค้างส่ง ' + fmt(unsent.length) + ' รายการ\nกด "ส่งข้อมูลตอนนี้" หรือ Export ก่อน'); return; }
+      if (!old.length) { result(true, 'ไม่มีข้อมูลรอบเก่า', 'ระบบล้างรายการของรอบที่ปิดแล้ว (ที่ส่งครบ) ให้เองตอนเข้ารอบใหม่', { stay: true }); return; }
       confirmBox('ล้างข้อมูลรอบเก่า', old.length + ' รายการที่ส่งครบแล้ว', 'ล้าง').then(function (y) {
-        if (y) DB.remove('entries', old.map(function (e) { return e.logId; })).then(function () { toast('ล้างแล้ว'); });
+        if (y) DB.remove('entries', old.map(function (e) { return e.logId; })).then(function () { result(true, 'ล้างข้อมูลรอบเก่าแล้ว', fmt(old.length) + ' รายการ', { stay: true }); });
       });
     });
   };
   $('btnUnpair').onclick = function () {
-    if (pending().length || S.oldPending.length || S.events.length) { toast('ยังมีข้อมูลค้างส่ง ส่งหรือ Export ก่อน', true); return; }
+    if (pending().length || S.oldPending.length || S.events.length) { result(false, 'ยังยกเลิกการจับคู่ไม่ได้', 'มีข้อมูลค้างส่ง\nกด "ส่งข้อมูลตอนนี้" หรือ Export ก่อน'); return; }
     confirmBox('ยกเลิกการจับคู่', 'ต้องใช้รหัสจับคู่ใหม่จากหัวหน้าทีมจึงจะใช้เครื่องนี้ได้อีก', 'ยกเลิกการจับคู่').then(function (y) {
       if (!y) return;
       // แจ้งเซิร์ฟเวอร์ก่อน ให้หน้า Admin ขึ้น "ยังไม่จับคู่" ตรงกับเครื่อง
@@ -1772,7 +1780,7 @@
         return confirmBox('ติดต่อเซิร์ฟเวอร์ไม่ได้', 'หน้า Admin จะยังขึ้นว่าเครื่องนี้จับคู่อยู่ ให้แจ้งหัวหน้าทีมกด "ยกเลิกเครื่อง" ในหน้า Admin', 'ยกเลิกการจับคู่ต่อ');
       }).then(function (go) {
         if (!go) return;
-        return resetPairing().then(function () { show('setup'); toast('ยกเลิกการจับคู่แล้ว'); });
+        return resetPairing().then(function () { show('setup'); result(true, 'ยกเลิกการจับคู่แล้ว', 'ใช้เครื่องนี้อีกครั้ง: ขอรหัสจับคู่จากหัวหน้าทีม', { stay: true }); });
       });
     });
   };
@@ -1823,7 +1831,8 @@
     var a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' }));
     a.download = name; document.body.appendChild(a); a.click(); a.remove();
-    toast((auto ? 'สำรองอัตโนมัติ: ' : 'บันทึกไฟล์ ') + name + ' ใน Downloads');
+    if (auto) toast('สำรองอัตโนมัติ: ' + name + ' ใน Downloads');
+    else result(true, 'บันทึกไฟล์แล้ว', name + '\nอยู่ในโฟลเดอร์ Downloads · ' + fmt(list.length) + ' รายการ', { stay: true });
   }
 
   // ---------- ตั้งค่า / จับคู่ ----------
@@ -2044,7 +2053,9 @@
   $('btnRunCheck').onclick = function () { runChecks(false); };
   $('btnReload').onclick = function () {
     $('readyHead').textContent = 'กำลังโหลดรายการบาร์โค้ด…';
-    downloadMaster().then(function () { toast('โหลดแล้ว ' + fmt(S.masterList.length) + ' รายการ'); runChecks(true); }, function (e) { toast(e.message || 'โหลดไม่สำเร็จ', true); runChecks(true); });
+    downloadMaster().then(function () {
+      runChecks(true); result(true, 'โหลดรายการบาร์โค้ดแล้ว', fmt(S.masterList.length) + ' รายการ', { stay: true });
+    }, function (e) { runChecks(true); result(false, 'โหลดรายการบาร์โค้ดไม่สำเร็จ', (e.message || '') + (S.online ? '' : '\nตรวจ Wi-Fi แล้วกดโหลดอีกครั้ง')); });
   };
   $('btnStart').onclick = function () { setCard('idle', S.loc ? 'อยู่ที่ ' + S.loc + ' — ยิงสินค้าต่อได้' : 'ยิงป้าย Location เพื่อเริ่ม'); show('count'); };
 
