@@ -115,6 +115,11 @@ test('Count_History: ยอดบัญชี / สุดท้าย / ต่�
   assert.ok(/^Count_Log:[0-9a-f]{16}\|Adjustments:[0-9a-f]{16}\|Variance:[0-9a-f]{16}$/.test(h.Checksum), h.Checksum);
   assert.ok(h.Archive_ID && h.Archive_Link.indexOf(h.Archive_ID) >= 0);
   assert.strictEqual(Number(h.Net_Count), 11);
+  // v2.5.5: ทุกคอลัมน์ต้องมีค่า (v2.5.4 Diff_Items ว่าง เพราะคำอธิบายในโค้ดกลืนบรรทัดไป) — คอลัมน์ที่ว่างได้ต้องระบุชื่อไว้ที่นี่
+  const mayBlank = [];
+  const blank = Object.keys(t.idx).filter(k => mayBlank.indexOf(k) < 0 && (h[k] === '' || h[k] === undefined || h[k] === null));
+  assert.deepStrictEqual(blank, [], 'Count_History คอลัมน์ว่าง: ' + blank.join(', '));
+  assert.ok(Number(h.Diff_Items) > 0, 'Diff_Items ' + h.Diff_Items);
   // v2.5.4 (UAT G12-6): ผลต่างเท่ากับหน้าสรุปผล (ไม่รวมสินค้าที่ไม่มีในบัญชี) — เดิม Net − บัญชี ต่างกัน 2 ชิ้น
   const sv = logs(E, 'SUMMARY_SAVE').slice(-1)[0][4].match(/ต่าง (-?[\d.]+)/)[1];
   assert.strictEqual(Number(h.Diff_Qty), Number(sv), 'Diff_Qty ' + h.Diff_Qty + ' ≠ สรุปผล ' + sv);

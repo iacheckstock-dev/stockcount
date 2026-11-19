@@ -95,6 +95,7 @@
   #adjDlg .f input[type=text], #adjDlg .f select { width:100%; }
   #adjDlg .err { color:var(--bad); font-size:13px; }
   #adjInfo { background:var(--soft); border-radius:8px; padding:8px 10px; margin-top:8px; font-size:13px; }
+  tr.off td { color:var(--mut); }
   tr.rev td { color:var(--mut); text-decoration:line-through; } tr.rev td.keep { text-decoration:none; }
   /* ใบเดินตรวจ (v2.4.1): ดูตัวอย่างบนจอ แล้วพิมพ์เฉพาะส่วนนี้ */
   #walk { position:fixed; inset:0; background:#fff; z-index:20; overflow:auto; display:none; }
@@ -135,6 +136,7 @@
   <button data-t="conflicts">ขัดแย้ง<span class="badge" id="confBadge" style="display:none"></span></button>
   <button data-t="compare">เทียบ SAP กับ POS</button>
   <button data-t="devices">เครื่อง TC21</button>
+  <button data-t="staff">พนักงาน</button>
   <button data-t="summary">สรุปผลนับ</button>
   <button data-t="log">บันทึก Admin</button>
 </nav>
@@ -287,6 +289,18 @@
       <span class="muted" id="sumInfo"></span>
     </div>
     <div id="sumBody"><div class="muted">กด "รีเฟรช" เพื่อคำนวณ</div></div>
+  </section>
+
+  <!-- พนักงาน (v2.5.5): เพิ่ม / แก้ชื่อ-ตำแหน่ง / ปิดใช้-เปิดใช้ / พิมพ์บัตรรายคน — ไม่ต้องเปิดชีต Staff · ทุกการเปลี่ยนบันทึก Admin_Log -->
+  <section id="staff">
+    <div class="row">
+      <button class="btn" onclick="staffAdd()">+ เพิ่มพนักงาน</button>
+      <button class="btn sec" onclick="loadStaff()">รีเฟรช</button>
+      <label><input type="checkbox" id="stOff" onchange="renderStaff()"> แสดงคนที่ปิดใช้</label>
+      <span class="muted" id="stInfo"></span>
+    </div>
+    <div class="muted" style="margin:4px 0">รหัสแก้ไม่ได้ (ข้อมูลทุกรอบอ้างรหัสนี้) · ไม่มีลบ — ใช้ "ปิดใช้" แทน · เครื่อง TC21 ได้รายชื่อใหม่ภายใน 1 นาที · คนที่ถูกปิดใช้จะถูกให้ออกจากเครื่อง</div>
+    <div class="scroll"><table id="stTbl"></table></div>
   </section>
 
   <!-- บันทึก -->
@@ -449,6 +463,7 @@ document.querySelectorAll('#nav button').forEach(function (b) {
     document.querySelectorAll('main section').forEach(function (s) { s.classList.toggle('on', s.id === b.dataset.t); });
     if (b.dataset.t === 'compare' && !CMP) loadCompare();
     if (b.dataset.t === 'devices') loadDevices();
+    if (b.dataset.t === 'staff') loadStaff();
     if (b.dataset.t === 'summary' && !SUM) loadSummary();
   };
 });
@@ -1205,6 +1220,58 @@ function perfLine(p) {
 }
 var DEV = null;
 function loadDevices() { call('apiDevicesState', [], renderDevices); }
+// "พร้อมรอบนี้" (v2.5.5): ✓ = เปิดใช้ · จับคู่ · แอปล่าสุด · ไม่ค้างส่ง · ตรวจความพร้อมผ่านในรอบนี้ · ✗ บอกข้อที่ยังไม่ผ่าน
+function readyCell(x) {
+  var r = x.ready || { ok: false, why: [] };
+  return r.ok ? '<span class="pill ok">✓ พร้อม</span>' : '<span class="pill bad">✗ ยังไม่พร้อม</span><div class="muted">' + r.why.map(esc).join('<br>') + '</div>';
+}
+
+// ---------- พนักงาน (v2.5.5) ----------
+var STF = null;
+function loadStaff() { call('apiStaffState', [], renderStaff); }
+function renderStaff(d) {
+  if (d) { STF = d; if (S) S.staff = d.staff.filter(function (x) { return x.active; }).map(function (x) { return [x.code, x.name]; }); }
+  if (!STF) return;
+  var showOff = $('stOff').checked, on = STF.staff.filter(function (x) { return x.active; }).length, off = STF.staff.length - on;
+  $('stInfo').textContent = 'ใช้งาน ' + on + ' คน · ปิดใช้ ' + off + ' คน · รอบ ' + (STF.projectId || '-');
+  var list = STF.staff.filter(function (x) { return x.active || showOff; });
+  var base = String(STF.appUrl || '').replace(/\/?$/, '/') + 'labels.html';
+  $('stTbl').innerHTML = '<tr><th>รหัส</th><th>ชื่อ</th><th>ตำแหน่ง</th><th>สถานะ</th><th class="n">รายการรอบนี้</th><th></th></tr>' +
+    list.map(function (x) {
+      var badge = STF.appUrl ? '<a class="btn sec" style="text-decoration:none" target="_blank" href="' + esc(base + '#type=EMP&items=' + encodeURIComponent(x.code + '|' + x.name)) + '">พิมพ์บัตร</a> ' : '';
+      return '<tr id="st-' + esc(x.code) + '"' + (x.active ? '' : ' class="off"') + '><td class="mono"><b>' + esc(x.code) + '</b></td><td>' + esc(x.name) + '</td><td>' + esc(x.role) + '</td><td>' +
+        (x.active ? '<span class="pill ok">ใช้งาน</span>' : '<span class="pill bad">ปิดใช้</span>') + '</td><td class="n">' + fmt(x.lines) + '</td><td>' +
+        '<button class="btn sec" onclick="staffEdit(\'' + esc(x.code) + '\')">แก้ไข</button> ' + (x.active ? badge : '') +
+        (x.active ? '<button class="btn sec" onclick="staffActive(\'' + esc(x.code) + '\', false)">ปิดใช้</button>' : '<button class="btn sec" onclick="staffActive(\'' + esc(x.code) + '\', true)">เปิดใช้</button>') + '</td></tr>';
+    }).join('') + (list.length ? '' : '<tr><td colspan="6" class="muted">ยังไม่มีพนักงาน — กด "+ เพิ่มพนักงาน"</td></tr>');
+}
+function staffForm(x, add) {
+  return '<div class="kv">' +
+    '<div>รหัส</div><div>' + (add ? '<input type="text" id="sfCode" maxlength="12" placeholder="เช่น T9062 · TMP01" style="text-transform:uppercase">' +
+      '<div class="muted">ตัวอังกฤษ / ตัวเลข 2–12 ตัว · แก้ภายหลังไม่ได้ · คนชั่วคราวใช้ TMP01, TMP02… คนละรหัส</div>' : '<b class="mono">' + esc(x.code) + '</b> <span class="muted">(แก้ไม่ได้)</span>') + '</div>' +
+    '<div>ชื่อ</div><div><input type="text" id="sfName" value="' + esc(x ? x.name : '') + '" style="width:220px"></div>' +
+    '<div>ตำแหน่ง</div><div><input type="text" id="sfRole" value="' + esc(x ? x.role : '') + '" placeholder="เช่น ผู้ตรวจสอบ · หัวหน้าทีม" style="width:220px"></div></div>';
+}
+function staffAdd() {
+  ask({ title: 'เพิ่มพนักงาน', ok: 'เพิ่ม', staff: true, body: staffForm(null, true) }, function (why, by) {
+    var c = $('sfCode').value.trim().toUpperCase(), n = $('sfName').value.trim(), r = $('sfRole').value.trim();
+    call('apiStaffAdd', [by, c, n, r], function (d) { renderStaff(d); toast('เพิ่ม ' + c + ' ' + n + ' แล้ว — กด "พิมพ์บัตร"'); }, 'กำลังเพิ่ม ' + c + '…');
+  });
+}
+function staffEdit(code) {
+  var x = STF.staff.filter(function (s) { return s.code === code; })[0]; if (!x) return;
+  ask({ title: 'แก้ไข ' + code, ok: 'บันทึก', staff: true, body: staffForm(x, false) }, function (why, by) {
+    call('apiStaffEdit', [by, code, $('sfName').value.trim(), $('sfRole').value.trim()], function (d) { renderStaff(d); toast('แก้ไข ' + code + ' แล้ว'); }, 'กำลังบันทึก…');
+  });
+}
+function staffActive(code, on) {
+  var x = STF.staff.filter(function (s) { return s.code === code; })[0] || { name: '' };
+  ask({ title: (on ? 'เปิดใช้ ' : 'ปิดใช้ ') + code + ' ' + x.name, ok: on ? 'เปิดใช้' : 'ปิดใช้', staff: true, why: on ? '' : 'เช่น ลาออก · ย้ายสาขา · บัตรหาย',
+    body: on ? '<div>ยิงบัตรเดิมได้อีกครั้ง (เครื่องได้รายชื่อใหม่ภายใน 1 นาที)</div>' :
+      '<div>• ยิงบัตรนี้ไม่ได้อีก · ถ้ากำลังใช้เครื่องอยู่ เครื่องจะให้ยิงบัตรคนอื่นภายใน 1 นาที<br>• รายการที่นับไปแล้ว (' + fmt(x.lines || 0) + ' รายการรอบนี้) ยังอยู่ครบ<br>• เปิดใช้คืนได้ภายหลัง</div>' }, function (why, by) {
+    call('apiStaffActive', [by, code, on, why], function (d) { renderStaff(d); toast((on ? 'เปิดใช้ ' : 'ปิดใช้ ') + code + ' แล้ว'); }, 'กำลังบันทึก…');
+  });
+}
 function renderDevices(d) {
   DEV = d;
   showLogWarn(d.logWarn);
@@ -1217,7 +1284,7 @@ function renderDevices(d) {
   ], true);
   $('qInfo').textContent = d.quarantine ? 'มีข้อมูลรอบอื่นแยกไว้ ' + d.quarantine + ' รายการ (ชีต Quarantine)' : '';
   var now = Date.now();
-  $('devTbl').innerHTML = '<tr><th>เครื่อง</th><th>สถานะ</th><th>ติดต่อล่าสุด</th><th>ส่งล่าสุด</th><th class="n">Seq ล่าสุด</th><th class="n">Seq ขาด</th><th>ตรวจความพร้อม</th><th>เวอร์ชันแอป</th><th>จับคู่</th><th></th></tr>' +
+  $('devTbl').innerHTML = '<tr><th>เครื่อง</th><th>สถานะ</th><th>ติดต่อล่าสุด</th><th>ส่งล่าสุด</th><th class="n">Seq ล่าสุด</th><th class="n">Seq ขาด</th><th>ตรวจความพร้อม</th><th>เวอร์ชันแอป</th><th>พร้อมรอบนี้</th><th>จับคู่</th><th></th></tr>' +
     d.devices.map(function (x) {
       var rev = x.revokedAt ? '<div class="muted">ยกเลิก ' + esc(x.revokedAt.slice(5, 16)) + ' · ' + esc(x.revokeReasonText) + (x.repairedAt ? ' · จับคู่ใหม่ ' + esc(x.repairedAt.slice(5, 16)) : '') + '</div>' : '';
       var st = !x.active ? '<span class="pill bad">ปิดใช้งาน</span>' + rev + '<div class="muted">นำกลับ: กด "เปิดใช้" → "สร้างรหัสจับคู่"</div>' :
@@ -1226,7 +1293,7 @@ function renderDevices(d) {
       var pair = x.pairCode ? '<span class="big mono">' + x.pairCode + '</span><br><span class="muted">หมดอายุใน ' + Math.max(0, Math.round((x.pairExpires - now) / 60000)) + ' นาที</span>' : '';
       return '<tr><td><b>' + esc(x.id) + '</b></td><td>' + st + '</td><td>' + contactCell(x, d) + '</td><td>' + esc(x.lastSync) + '</td><td class="n">' + esc(x.lastSeq) + '</td><td class="n">' +
         (Number(x.gaps) ? '<span class="pill bad">' + esc(x.gaps) + '</span>' : esc(x.gaps || '')) + '</td><td>' + esc(x.lastCheck) + ' <span class="muted">' + esc(x.lastCheckAt) + '</span></td><td>' + esc(x.appVersion) +
-        '</td><td>' + pair + '</td><td>' + (x.active ? '<button class="btn sec" onclick="pairCode(\'' + x.id + '\')">' + (x.paired ? 'จับคู่ใหม่' : 'สร้างรหัสจับคู่') + '</button> ' : '') +
+        '</td><td>' + readyCell(x) + '</td><td>' + pair + '</td><td>' + (x.active ? '<button class="btn sec" onclick="pairCode(\'' + x.id + '\')">' + (x.paired ? 'จับคู่ใหม่' : 'สร้างรหัสจับคู่') + '</button> ' : '') +
         (x.active ? '<button class="btn sec" onclick="setActive(\'' + x.id + '\', false)">ยกเลิกเครื่อง</button>' : '<button class="btn sec" onclick="setActive(\'' + x.id + '\', true)">เปิดใช้</button>') + '</td></tr>';
     }).join('');
   renderLocTbl();

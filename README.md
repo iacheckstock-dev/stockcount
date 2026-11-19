@@ -51,6 +51,7 @@ SAMPLE_SAP=... SAMPLE_POS=... node multi-test.js # หลายเครื่�
 SAMPLE_SAP=... SAMPLE_POS=... node close-test.js # ปิดการนับ + เงื่อนไขปิดรอบ K1–K7 ครบทุกข้อ (v2.5.0)
 SAMPLE_SAP=... SAMPLE_POS=... node closeround-test.js # ปิดรอบ: สำรอง → ตรวจไฟล์สำรอง → ล้างชีตงาน · ค้างกลางทาง · โหมดทดสอบ (v2.5.2)
 node config-test.js                              # Config ชื่อซ้ำ + อัปเกรดโครงสร้างชีตพร้อมกัน (v2.5.3)
+SAMPLE_SAP=... SAMPLE_POS=... node staff-test.js # จัดการพนักงาน · staffRev · พร้อมรอบนี้ (v2.5.5)
 SAMPLE_SAP=... SAMPLE_POS=... node mock-server.js &   # เซิร์ฟเวอร์จำลอง http://localhost:8787/app/
 python3 e2e.py                                   # E2E เว็บแอปด้วย Chrome (Playwright)
 python3 e2e_multi.py                             # E2E สองเครื่อง (รัน mock-server ใหม่ก่อน)

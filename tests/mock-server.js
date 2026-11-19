@@ -21,7 +21,7 @@ env.sheets.Staff.data.push(['EMP-NU', 'นุ่น', 'ผู้ตรวจส�
 run('apiSeedDevices(5, "TC21")');
 
 let offline = false;
-let appVersion = '2.5.4';
+let appVersion = '2.5.5';
 let slowMs = 0;
 let apiDelay = { ms: 0, action: '' };   // จำลองเซิร์ฟเวอร์ช้า (GAS จริงตอบ 1–5 วินาที) v2.2.6
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'application/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.webmanifest': 'application/manifest+json' };
@@ -58,6 +58,11 @@ http.createServer((req, res) => {
       if (url.pathname === '/debug/countclose') return send(200, run('apiCountClose(_s)', { _s: url.searchParams.get('staff') || 'EMP-NU' }).check);
       if (url.pathname === '/debug/countreopen') return send(200, run('apiCountReopen(_s, _w)', { _s: url.searchParams.get('staff') || 'EMP-NU', _w: url.searchParams.get('why') || 'e2e' }).check);
       if (url.pathname === '/debug/roundstatus') { run('setConfig_({ ROUND_STATUS: _v })', { _v: url.searchParams.get('v') }); return send(200, { ok: true }); }   // v2.5.2 จำลองรอบปิดแล้ว (ปิดรอบจริงทดสอบใน closeround-test)
+      // v2.5.5: จัดการพนักงานจากหน้า Admin · จำลองเปิดรอบใหม่ (เปลี่ยนรหัสรอบในเซิร์ฟเวอร์ ขณะเครื่องยังอยู่รอบเดิม)
+      if (url.pathname === '/debug/staffadd') return send(200, run('apiStaffAdd("EMP-NU", _c, _n, "")', { _c: url.searchParams.get('code'), _n: url.searchParams.get('name') || 'ทดสอบ' }));
+      if (url.pathname === '/debug/staffactive') return send(200, run('apiStaffActive(_b, _c, _on, "e2e")', { _b: url.searchParams.get('by') || 'EMP-AOY', _c: url.searchParams.get('code'), _on: url.searchParams.get('on') === '1' }));
+      if (url.pathname === '/debug/history') { const h = env.sheets.Count_History.data, row = h[0].map(c => c === 'Project_ID' ? url.searchParams.get('p') : ''); h.push(row); return send(200, { ok: true }); }
+      if (url.pathname === '/debug/project') { run('setConfig_({ PROJECT_ID: _v })', { _v: url.searchParams.get('v') }); return send(200, { ok: true }); }
       if (url.pathname === '/debug/closecheck') return send(200, run('apiCloseCheck()'));
       if (url.pathname === '/debug/version') { appVersion = url.searchParams.get('v'); return send(200, { appVersion }); }
       if (url.pathname === '/app/config.json') return send(200, { apiUrl: 'http://localhost:' + PORT + '/api', appVersion });

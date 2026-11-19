@@ -6,19 +6,19 @@
  * (API สำหรับ TC21 จะเพิ่มในเฟส 2 แยกต่างหาก และต้องใช้ device token)
  */
 
-var SCHEMA_VERSION = 11;   // 6 = v2.4.1 Variance.Barcode · 7 = v2.4.2 ชีต Adjustments · 8 = v2.5.0 Admin_Log.Project_ID · 9 = v2.5.2 Count_History คอลัมน์ปิดรอบ · 10 = v2.5.3 ซ่อม Config ซ้ำ · 11 = v2.5.4 สถานะอัปเกรดใน Script Properties (โครงสร้างชีตไม่เปลี่ยน — เลขขยับเพื่อให้อัปเกรดทำงานหนึ่งครั้งหลัง Deploy)
+var SCHEMA_VERSION = 12;   // 6 = v2.4.1 Variance.Barcode · 7 = v2.4.2 ชีต Adjustments · 8 = v2.5.0 Admin_Log.Project_ID · 9 = v2.5.2 Count_History คอลัมน์ปิดรอบ · 10 = v2.5.3 ซ่อม Config ซ้ำ · 11 = v2.5.4 สถานะอัปเกรดใน Script Properties (โครงสร้างชีตไม่เปลี่ยน — เลขขยับเพื่อให้อัปเกรดทำงานหนึ่งครั้งหลัง Deploy) · 12 = v2.5.5 Devices.Check_Project
 
 /**
  * เวอร์ชันของระบบ (ใช้เลขเดียวทั้งแอป TC21 และเซิร์ฟเวอร์ ตาม Semantic Versioning MAJOR.MINOR.PATCH)
  * ต้องตรงกับ APP_VERSION ใน app/app.js และ appVersion ใน app/config.json — ดู CHANGELOG.md
  */
-var SYSTEM_VERSION = '2.5.4';
+var SYSTEM_VERSION = '2.5.5';
 
 var SHEETS = {
   Config: ['Key', 'Value', 'Note'],
   Staff: ['Staff_Code', 'Name', 'Role', 'Active'],
   Devices: ['Device_ID', 'Name', 'Active', 'Last_Seq', 'Last_Sync', 'Gaps', 'App_Version', 'Last_Check_At', 'Last_Check',
-    'Paired_At', 'Token_Hash', 'Pair_Code', 'Pair_Expires', 'Pair_Fails', 'Revoked_At', 'Revoke_Reason', 'Repaired_At'],
+    'Paired_At', 'Token_Hash', 'Pair_Code', 'Pair_Expires', 'Pair_Fails', 'Revoked_At', 'Revoke_Reason', 'Repaired_At', 'Check_Project'],
   Locations: ['Location', 'Zone', 'Status', 'Open_By', 'Counters', 'Devices', 'Opened_At', 'Closed_Time', 'Last_Check', 'Edits',
     'Updated_At', 'Owner', 'Members', 'Status_Detail', 'Flag', 'Flag_Check', 'Close_Cover', 'Close_Total'],
   // ผู้ดูแล/ผู้ช่วยต่อ Location ต่อเครื่อง (v2.2.0)
@@ -690,11 +690,15 @@ function apiDevicesState() {
       id: d.Device_ID, name: d.Name, active: d.Active === 'Y', paired: !!d.Token_Hash, lastSeq: d.Last_Seq, lastSync: d.Last_Sync,
       gaps: d.Gaps, appVersion: d.App_Version, lastCheckAt: d.Last_Check_At, lastCheck: d.Last_Check, pairedAt: d.Paired_At,
       pairCode: pairLive ? d.Pair_Code : '', pairExpires: pairLive ? Number(d.Pair_Expires) : 0,
-      revokedAt: d.Revoked_At || '', revokeReason: d.Revoke_Reason || '', revokeReasonText: REVOKE_REASONS[d.Revoke_Reason] || '', repairedAt: d.Repaired_At || ''
+      revokedAt: d.Revoked_At || '', revokeReason: d.Revoke_Reason || '', revokeReasonText: REVOKE_REASONS[d.Revoke_Reason] || '', repairedAt: d.Repaired_At || '',
+      checkProject: d.Check_Project || ''
     };
   });
   var hb = heartbeats_(devices.map(function (x) { return x.id; }));
-  devices.forEach(function (x) { if (hb[x.id]) x.hb = hb[x.id]; });
+  devices.forEach(function (x) {
+    if (hb[x.id]) x.hb = hb[x.id];
+    x.ready = deviceReady_(x, cfg.PROJECT_ID);
+  });
   var staff = table_('Staff');
   var q = readRaw_('Quarantine');
   var locs = table_('Locations');
@@ -801,6 +805,94 @@ function apiReconcile() {
 var ROUND_STATUS_TH = { NONE: 'ยังไม่เปิดรอบ', SETUP: 'เตรียมรอบ', COUNTING: 'กำลังนับ', COUNT_CLOSED: 'ปิดการนับแล้ว', CLOSING: 'กำลังปิดรอบ (ค้าง)', CLOSED: 'ปิดรอบแล้ว', ARCHIVED: 'ไฟล์สำรอง (ดูอย่างเดียว)' };
 
 /** รหัสผู้ตรวจสอบที่ยังใช้งาน (Staff.Active ≠ N) · ไม่พบ = error */
+/**
+ * "พร้อมรอบนี้" ของเครื่อง (v2.5.5 B5): ทุกข้อต้องผ่าน · คืน { ok, why:[ข้อที่ยังไม่ผ่าน] }
+ * เปิดใช้ + จับคู่แล้ว · แอปเวอร์ชันเดียวกับเซิร์ฟเวอร์ · ค้างส่ง 0 (สัญญาณล่าสุด) · ตรวจความพร้อมผ่านในรอบนี้
+ */
+function deviceReady_(d, project) {
+  var why = [];
+  if (!d.active) why.push('ปิดใช้งาน');
+  else if (!d.paired) why.push('ยังไม่จับคู่');
+  if (d.appVersion && d.appVersion !== SYSTEM_VERSION) why.push('แอป ' + d.appVersion + ' (ล่าสุด ' + SYSTEM_VERSION + ')');
+  if (d.hb && Number(d.hb.pending) > 0) why.push('ค้างส่ง ' + d.hb.pending);
+  if (!project) why.push('ยังไม่เปิดรอบ');
+  else if (d.checkProject !== project) why.push(d.checkProject ? 'ตรวจความพร้อมล่าสุดเป็นรอบ ' + d.checkProject : 'ยังไม่ตรวจความพร้อม');
+  else if (d.lastCheck !== 'ผ่าน') why.push('ตรวจความพร้อมไม่ผ่าน');
+  return { ok: !why.length, why: why };
+}
+
+// ---------- จัดการพนักงาน (v2.5.5) ----------
+// รหัสแก้ไม่ได้ (Count_Log · Admin_Log · ไฟล์สำรองทุกรอบอ้างรหัส) · ไม่มีลบ — ปิดใช้แทน · ทุกการเปลี่ยนบันทึก Admin_Log พร้อมรหัสผู้กด
+
+var STAFF_CODE_RE = /^[A-Z0-9]{2,12}$/;
+
+/** แท็บพนักงาน: รายชื่อทั้งหมด + จำนวนรายการในรอบนี้ต่อคน */
+function apiStaffState() {
+  ensureSetup_();
+  var cfg = readConfig_(), t = table_('Staff'), used = {};
+  var L = table_('Count_Log'), iS = L.idx.Staff_Code, iP = L.idx.Project_ID;
+  L.rows.forEach(function (r) { if (r[iP] === cfg.PROJECT_ID && r[iS]) { var k = normStaff_(r[iS]); used[k] = (used[k] || 0) + 1; } });
+  return {
+    projectId: cfg.PROJECT_ID, appUrl: cfg.APP_URL,
+    staff: t.rows.filter(function (r) { return r[t.idx.Staff_Code]; }).map(function (r) {
+      var s = rowObj_(t, r), c = normStaff_(s.Staff_Code);
+      return { code: c, name: String(s.Name || ''), role: String(s.Role || ''), active: String(s.Active).toUpperCase() !== 'N', lines: used[c] || 0 };
+    })
+  };
+}
+
+function staffFind_(t, code) {
+  var c = normStaff_(code);
+  for (var i = 0; i < t.rows.length; i++) if (normStaff_(t.rows[i][t.idx.Staff_Code]) === c) return i;
+  return -1;
+}
+
+/** เพิ่มพนักงาน · by = รหัสผู้ตรวจสอบที่กด */
+function apiStaffAdd(by, code, name, role) {
+  return withLock_(function () {
+    var who = staffMust_(by), c = normStaff_(code), n = String(name || '').trim(), ro = String(role || '').trim();
+    if (!STAFF_CODE_RE.test(c)) throw new Error('รหัสพนักงานต้องเป็นตัวอังกฤษพิมพ์ใหญ่หรือตัวเลข 2–12 ตัว (เช่น T9062 · TMP01)');
+    if (!n) throw new Error('ใส่ชื่อพนักงาน');
+    var t = table_('Staff'), i = staffFind_(t, c);
+    if (i >= 0) throw new Error('รหัส ' + c + ' มีอยู่แล้ว' + (String(t.rows[i][t.idx.Active]).toUpperCase() === 'N' ? ' (ปิดใช้อยู่ — กด "เปิดใช้" แทน)' : '') + ' · รหัสซ้ำไม่ได้');
+    appendRows_(SpreadsheetApp.getActive().getSheetByName('Staff'), [[c, n, ro, 'Y']]);
+    logAdmin_('STAFF_ADD', c, n + (ro ? ' · ' + ro : '') + ' · ผู้กด ' + who[0] + ' ' + who[1]);
+    return apiStaffState();
+  });
+}
+
+/** แก้ชื่อ / ตำแหน่ง (รหัสแก้ไม่ได้) */
+function apiStaffEdit(by, code, name, role) {
+  return withLock_(function () {
+    var who = staffMust_(by), n = String(name || '').trim(), ro = String(role || '').trim();
+    if (!n) throw new Error('ใส่ชื่อพนักงาน');
+    var t = table_('Staff'), i = staffFind_(t, code);
+    if (i < 0) throw new Error('ไม่พบรหัส ' + normStaff_(code));
+    var old = rowObj_(t, t.rows[i]);
+    if (String(old.Name || '') === n && String(old.Role || '') === ro) throw new Error('ไม่มีอะไรเปลี่ยน');
+    putRow_(t, i, { Name: n, Role: ro });
+    logAdmin_('STAFF_EDIT', normStaff_(code), 'ชื่อ ' + (old.Name || '-') + ' → ' + n + ' · ตำแหน่ง ' + (old.Role || '-') + ' → ' + (ro || '-') + ' · ผู้กด ' + who[0] + ' ' + who[1]);
+    return apiStaffState();
+  });
+}
+
+/** ปิดใช้ / เปิดใช้ (ปิดใช้ต้องมีเหตุผล · ปิดใช้ตัวเองไม่ได้) — เครื่องรู้ภายใน 1 นาที แล้วให้ยิงบัตรคนอื่น */
+function apiStaffActive(by, code, on, why) {
+  return withLock_(function () {
+    var who = staffMust_(by), c = normStaff_(code), w = String(why || '').trim();
+    if (!on && !w) throw new Error('ใส่เหตุผลที่ปิดใช้');
+    if (!on && c === who[0]) throw new Error('ปิดใช้รหัสของตัวเองไม่ได้ — ให้คนอื่นเป็นผู้กด');
+    var t = table_('Staff'), i = staffFind_(t, c);
+    if (i < 0) throw new Error('ไม่พบรหัส ' + c);
+    var was = String(t.rows[i][t.idx.Active]).toUpperCase() !== 'N';
+    if (was === !!on) throw new Error(on ? c + ' ใช้งานอยู่แล้ว' : c + ' ปิดใช้อยู่แล้ว');
+    if (!on && activeStaff_().length <= 1) throw new Error('ต้องเหลือผู้ตรวจสอบที่ใช้งานได้อย่างน้อย 1 คน');
+    putRow_(t, i, { Active: on ? 'Y' : 'N' });
+    logAdmin_(on ? 'STAFF_ON' : 'STAFF_OFF', c, String(t.rows[i][t.idx.Name] || '') + (w ? ' · เหตุผล: ' + w : '') + ' · ผู้กด ' + who[0] + ' ' + who[1]);
+    return apiStaffState();
+  });
+}
+
 function staffMust_(code) {
   var c = normStaff_(code), st = activeStaff_().filter(function (x) { return x[0] === c; })[0];
   if (!st) throw new Error('เลือกรหัสผู้ตรวจสอบที่กด');
@@ -982,7 +1074,7 @@ function apiCloseRound(staff, confirm, test) {
     // 5) CLOSING → Count_History → ล้าง → CLOSED
     var state = {
       project: project, countDate: cfg.COUNT_DATE, type: type, archiveId: file.getId(), url: file.getUrl(), checksum: sumText_(sums),
-      book: T.book, final: T.final, diffQty: T.diff, diffValue: T.diffValue,   // v2.5.4: ตัวเลขเดียวกับหน้าสรุปผล (ไม่รวมสินค้าที่ไม่มีในบัญชี) — เดิม final − book diffItems: T.over + T.short,
+      book: T.book, final: T.final, diffQty: T.diff, diffValue: T.diffValue, diffItems: T.over + T.short,   // diffQty v2.5.4: ตัวเลขเดียวกับหน้าสรุปผล · diffItems v2.5.5: กลับมาบันทึก (v2.5.4 หลุดเข้าไปในคำอธิบาย)
       edits: T.adjLines, run: SV && SV.project === project ? SV.run : '', lines: sums.Count_Log.rows - 1, by: s[0] + ' ' + s[1] + ' (' + who_() + ')', history: false
     };
     setConfig_({ ROUND_STATUS: 'CLOSING', CLOSE_STATE: JSON.stringify(state) });

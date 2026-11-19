@@ -50,6 +50,7 @@ function doPost__(e, t0) {
       case 'sku': out = apiSku_(auth_(req), req); break;
       case 'check': out = apiCheck_(auth_(req), req); break;
       case 'hello': out = apiHello_(auth_(req), req); break;
+      case 'staff': out = apiStaff_(auth_(req)); break;
       case 'unpair': out = apiUnpair_(auth_(req), req); break;
       default: out = { ok: false, error: 'UNKNOWN_ACTION' };
     }
@@ -219,7 +220,7 @@ function perfSummary_(p) {
 function apiHello_(a, req) {
   heartbeat_(a.deviceId, req.pending, req.location, perfSummary_(req.perf));
   // บอกจำนวนเครื่องใน Location ที่เครื่องอยู่ (อ่าน Loc_Members ซึ่งเล็ก) — ผู้ดูแลรู้ว่ามีผู้ช่วยเข้ามา โดยไม่ต้องถาม locInfo ตลอด (v2.2.7)
-  var cfg = readConfig_(), out = { ok: true, round: cfg.ROUND_STATUS || 'NONE', project: cfg.PROJECT_ID };   // round: v2.5.0
+  var cfg = readConfig_(), out = { ok: true, round: cfg.ROUND_STATUS || 'NONE', project: cfg.PROJECT_ID, staffRev: staffRev_() };   // round: v2.5.0 · staffRev: v2.5.5
   var loc = normLoc_(req.location);
   if (loc) out.members = membersOf_(membersTable_(), cfg.PROJECT_ID, loc).length;
   return out;
@@ -237,12 +238,31 @@ function apiUnpair_(a, req) {
   });
 }
 
+/** รายชื่อผู้ตรวจสอบที่ใช้งานได้ (ส่งลงเครื่อง) */
+function deviceStaff_() {
+  var staff = table_('Staff');
+  return staff.rows.map(function (r) { return rowObj_(staff, r); })
+    .filter(function (s) { return s.Staff_Code && String(s.Active).toUpperCase() !== 'N'; })
+    .map(function (s) { return { code: normStaff_(s.Staff_Code), name: String(s.Name || ''), role: String(s.Role || '') }; });
+}
+/** เลขชุดรายชื่อ (v2.5.5): เปลี่ยนเมื่อเพิ่ม / แก้ / ปิดใช้พนักงาน — เครื่องเทียบกับที่มี แล้วดึงรายชื่อใหม่เอง (ไม่ใช้ล็อก) */
+function staffRev_() {
+  var s = deviceStaff_().map(function (x) { return x.code + '|' + x.name + '|' + x.role; }).sort();
+  return hash_(s).slice(0, 12);
+}
+/** เครื่องขอรายชื่อผู้ตรวจสอบล่าสุด (v2.5.5): เลขชุดไม่ตรง หรือยิงบัตรที่ไม่รู้จัก */
+function apiStaff_(a) {
+  var list = deviceStaff_();
+  return { ok: true, staff: list, staffRev: staffRev_() };
+}
+/** รอบที่ปิดรอบแล้ว (มีใน Count_History = ไฟล์สำรองตรวจผ่าน) — เครื่องล้างรายการของรอบเหล่านี้ได้เมื่อส่งครบ (v2.5.5 B4) */
+function closedProjects_() {
+  try { return historyRows_().map(function (h) { return h.Project_ID; }).filter(String); } catch (e) { return []; }
+}
+
 function apiBootstrap_(a) {
   var cfg = readConfig_();
-  var staff = table_('Staff');
-  var list = staff.rows.map(function (r) { return rowObj_(staff, r); })
-    .filter(function (s) { return s.Staff_Code && String(s.Active).toUpperCase() !== 'N'; })
-    .map(function (s) { return { code: normStaff_(s.Staff_Code), name: s.Name, role: s.Role }; });
+  var list = deviceStaff_();
   var m = computeMaster_();
   var approvedOk = approvedCurrent_(cfg, m);
   var seqInfo = deviceSeqInfo_(a.deviceId, cfg.PROJECT_ID);
@@ -252,6 +272,8 @@ function apiBootstrap_(a) {
     project: { id: cfg.PROJECT_ID, countDate: cfg.COUNT_DATE, status: cfg.ROUND_STATUS || 'NONE' },
     master: { approved: approvedOk, hash: approvedOk ? cfg.MASTER_APPROVED_HASH : '', version: cfg.MASTER_APPROVED_VERSION, count: cfg.MASTER_APPROVED_COUNT },
     staff: list,
+    staffRev: staffRev_(),
+    closedProjects: closedProjects_(),
     stockVersion: stockVersion_(cfg),
     device: { id: a.deviceId, name: a.device.Name || a.deviceId, maxSeq: seqInfo.max, received: seqInfo.count, gaps: seqInfo.gaps,
       maxSeqAll: deviceMaxSeqAll_(a.deviceId) }
@@ -681,6 +703,7 @@ function apiSync_(a, req) {
   res.masterHash = cfg.MASTER_APPROVED_PROJECT === cfg.PROJECT_ID ? cfg.MASTER_APPROVED_HASH : '';
   res.stockVersion = stockVersion_(cfg);
   res.round = cfg.ROUND_STATUS || 'NONE';   // v2.5.0: เครื่องรู้ทันทีเมื่อปิดการนับ / เปิดการนับอีกครั้ง
+  res.project = cfg.PROJECT_ID;   // v2.5.5: เครื่องรู้เมื่อเปิดรอบใหม่แล้ว (B1)
   return res;
 }
 
@@ -1507,7 +1530,8 @@ function apiCheck_(a, req) {
   var detail = items.map(function (i) { return (i.result === 'OK' ? '✓' : i.result === 'WARN' ? '⚠' : '✗') + ' ' + i.title; }).join(' | ');
   appendRows_(SpreadsheetApp.getActive().getSheetByName('Device_Checks'),
     [[now_(), a.deviceId, normStaff_(req.staff), a.appVersion, pass ? 'ผ่าน' : 'ไม่ผ่าน', detail]]);
-  putRow_(a.table, a.row, { Last_Check_At: now_(), Last_Check: pass ? 'ผ่าน' : 'ไม่ผ่าน', App_Version: a.appVersion });
+  putRow_(a.table, a.row, { Last_Check_At: now_(), Last_Check: pass ? 'ผ่าน' : 'ไม่ผ่าน', App_Version: a.appVersion,
+    Check_Project: String(req.project || readConfig_().PROJECT_ID || '') });   // v2.5.5: ตรวจผ่านในรอบไหน (คอลัมน์ "พร้อมรอบนี้")
   return { ok: true, pass: pass };
 }
 

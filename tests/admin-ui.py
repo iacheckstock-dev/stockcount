@@ -20,6 +20,7 @@ window.google = { script: { run: (function mk(ok, bad) {
       if (window.FAIL && window.FAIL[k]) { var m = window.FAIL[k]; setTimeout(function () { bad && bad({ message: m }); }, 0); return; }
       if (k === 'apiCloseCheck') { setTimeout(function () { ok && ok(window.KFULL || window.ST.KCHECK); }, 0); return; }
       if (k === 'apiCloseCheckFast') { setTimeout(function () { ok && ok(window.KFAST || Object.assign({}, window.ST.KCHECK, { full: false })); }, 0); return; }
+      if (k.indexOf('apiStaff') === 0) { setTimeout(function () { ok && ok(window.STAFF); }, 0); return; }
       if (k === 'apiCloseRound') { setTimeout(function () { ok && ok(window.CLOSEROUND); }, 0); return; }
       if (k === 'apiVerifyArchive') { setTimeout(function () { ok && ok(window.VERIFY); }, 0); return; }
       if (k === 'apiCountClose' || k === 'apiCountReopen') { setTimeout(function () { ok && ok(window.CLOSERES); }, 0); return; }
@@ -408,6 +409,40 @@ with sync_playwright() as p:
     pg.evaluate("st => { LOCF = 'todo'; renderDevices(st); }", st)
     w2 = pg.evaluate("[].map.call(document.querySelectorAll('#locTbl tr:nth-child(2) td'), function (t) { return Math.round(t.getBoundingClientRect().width); })")
     check(w == w2 and min(w) > 0, 'สลับตัวกรองแล้วความกว้างคอลัมน์เท่าเดิม: ' + str(w))
+    # พร้อมรอบนี้ (v2.5.5)
+    dv = json.loads(json.dumps(st)); dv['devices'][0]['ready'] = {'ok': True, 'why': []}; dv['devices'][1]['ready'] = {'ok': False, 'why': ['แอป 2.5.4 (ล่าสุด 2.5.5)', 'ตรวจความพร้อมล่าสุดเป็นรอบ 2026Q3']}
+    pg.evaluate("st => renderDevices(st)", dv)
+    hd = pg.inner_text('#devTbl tr >> nth=0'); r0 = pg.inner_text('#devTbl tr >> nth=1'); r1 = pg.inner_text('#devTbl tr >> nth=2')
+    check('พร้อมรอบนี้' in hd and '✓ พร้อม' in r0 and '✗ ยังไม่พร้อม' in r1 and 'รอบ 2026Q3' in r1 and 'แอป 2.5.4' in r1, 'ตารางเครื่อง: คอลัมน์ "พร้อมรอบนี้" ✓ / ✗ พร้อมข้อที่ยังไม่ผ่าน')
+    # แท็บพนักงาน (v2.5.5)
+    STF = {'projectId': '2026Q4', 'appUrl': 'https://x.github.io/stockcount/', 'staff': [
+      {'code': 'EMP-K', 'name': 'นาย ก', 'role': 'หัวหน้าทีม', 'active': True, 'lines': 12},
+      {'code': 'TMP01', 'name': 'ชั่วคราว', 'role': '', 'active': True, 'lines': 0},
+      {'code': 'OLD9', 'name': 'ลาออกแล้ว', 'role': '', 'active': False, 'lines': 0}]}
+    pg.evaluate("x => { window.STAFF = x; }", STF)
+    pg.evaluate("CALLS.length = 0"); pg.click('#nav button[data-t=staff]'); pg.wait_for_timeout(100)
+    check(['apiStaffState'] in pg.evaluate('CALLS'), 'เปิดแท็บพนักงาน → เรียก apiStaffState')
+    t = pg.inner_text('#stTbl')
+    check('EMP-K' in t and 'TMP01' in t and 'OLD9' not in t and 'ใช้งาน 2 คน · ปิดใช้ 1 คน' in pg.inner_text('#stInfo'), 'ค่าเริ่มต้นแสดงเฉพาะคนที่ใช้งาน · สรุปจำนวน')
+    pg.check('#stOff'); check('OLD9' in pg.inner_text('#stTbl') and pg.locator('#st-OLD9 button:has-text("เปิดใช้")').count() == 1, 'ติ๊ก "แสดงคนที่ปิดใช้" → เห็น OLD9 พร้อมปุ่มเปิดใช้')
+    href = pg.get_attribute('#st-TMP01 a:has-text("พิมพ์บัตร")', 'href')
+    check(href.endswith('labels.html#type=EMP&items=TMP01%7C%E0%B8%8A%E0%B8%B1%E0%B9%88%E0%B8%A7%E0%B8%84%E0%B8%A3%E0%B8%B2%E0%B8%A7'), 'พิมพ์บัตรรายคน: ลิงก์ป้าย EMP 1 ใบ (' + href[-40:] + ')')
+    # เพิ่ม: ต้องเลือกผู้กดก่อน
+    pg.evaluate("S = S || {}; S.staff = [['EMP-K', 'นาย ก']]; LAST_STAFF = ''")
+    pg.click('#staff button:has-text("+ เพิ่มพนักงาน")')
+    check(pg.is_visible('#askDlg') and pg.is_visible('#sfCode') and pg.is_disabled('#askOk'), 'เพิ่ม → กล่องกรอกรหัส / ชื่อ / ตำแหน่ง · ยังไม่เลือกผู้กด → กดไม่ได้')
+    pg.fill('#sfCode', 'tmp02'); pg.fill('#sfName', 'คนใหม่'); pg.select_option('#askStaff', 'EMP-K'); pg.evaluate('CALLS.length = 0'); pg.click('#askOk'); pg.wait_for_timeout(50)
+    check(['apiStaffAdd', 'EMP-K', 'TMP02', 'คนใหม่', ''] in pg.evaluate('CALLS'), 'เรียก apiStaffAdd(ผู้กด, รหัสพิมพ์ใหญ่, ชื่อ, ตำแหน่ง)')
+    # แก้ไข: รหัสแก้ไม่ได้
+    pg.click('#st-TMP01 button:has-text("แก้ไข")')
+    check(pg.locator('#sfCode').count() == 0 and 'แก้ไม่ได้' in pg.inner_text('#askBody') and pg.input_value('#sfName') == 'ชั่วคราว', 'แก้ไข → รหัสแก้ไม่ได้ · ชื่อเดิมกรอกไว้ให้')
+    pg.fill('#sfName', 'ชั่วคราว 1'); pg.select_option('#askStaff', 'EMP-K'); pg.evaluate('CALLS.length = 0'); pg.click('#askOk'); pg.wait_for_timeout(50)
+    check(['apiStaffEdit', 'EMP-K', 'TMP01', 'ชั่วคราว 1', ''] in pg.evaluate('CALLS'), 'เรียก apiStaffEdit')
+    # ปิดใช้: ต้องมีเหตุผล + ผู้กด
+    pg.click('#st-TMP01 button:has-text("ปิดใช้")')
+    check(pg.is_visible('#askWhyBox') and pg.is_disabled('#askOk'), 'ปิดใช้ → ต้องใส่เหตุผลและเลือกผู้กด')
+    pg.fill('#askWhy', 'จบงาน'); pg.select_option('#askStaff', 'EMP-K'); pg.evaluate('CALLS.length = 0'); pg.click('#askOk'); pg.wait_for_timeout(50)
+    check(['apiStaffActive', 'EMP-K', 'TMP01', False, 'จบงาน'] in pg.evaluate('CALLS'), 'เรียก apiStaffActive(…, false, เหตุผล)')
     check(not dialogs, 'ไม่มี popup ของเบราว์เซอร์: ' + json.dumps(dialogs, ensure_ascii=False))
     b.close()
 print('\nผล: ผ่าน %d / ไม่ผ่าน %d' % (P, F))

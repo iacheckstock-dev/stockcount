@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2.5.4';
+  var APP_VERSION = '2.5.5';
   var QTY_CONFIRM = 150;      // จำนวนที่ป้อนเองเกินนี้ต้องยืนยันอีกครั้ง
   var QTY_MAX_DIGITS = 5;     // ยาวกว่านี้ = น่าจะยิงบาร์โค้ดเข้าช่องจำนวน
   var INFO_EVERY = 15000;     // ถามสถานะผู้ช่วย/ผู้ดูแลระหว่างนับร่วมกัน
@@ -142,11 +142,18 @@
   // สถานะรอบล่าสุดที่รู้ เก็บใน S.boot.project.status (จำในเครื่อง ใช้ตอนออฟไลน์ได้) · อัปเดตจาก bootstrap / sync / hello
   function roundStatus() { return (S.boot && S.boot.project && S.boot.project.status) || ''; }
   // v2.5.2: ปิดรอบแล้ว (CLOSING / CLOSED) ก็ยิงไม่ได้เช่นกัน — รายการที่หลุดส่งไป เซิร์ฟเวอร์กักไว้ใน Quarantine
-  function roundEnded() { var st = roundStatus(); return st === 'CLOSING' || st === 'CLOSED'; }
+  function roundEnded() { var st = roundStatus(); return st === 'CLOSING' || st === 'CLOSED' || !!roundMoved(); }
+  // v2.5.5 (B1): เซิร์ฟเวอร์เปิดรอบใหม่แล้ว แต่เครื่องยังอยู่รอบเดิม (เช่น ออฟไลน์ตอนปิดรอบ) → หยุดยิง จนกว่าจะตรวจความพร้อมใหม่
+  function roundMoved() { return S.serverProject && S.boot && S.boot.project && S.boot.project.id && S.serverProject !== S.boot.project.id ? S.serverProject : ''; }
+  function roundEndedText() {
+    var mv = roundMoved(), cur = (S.boot && S.boot.project.id) || '';
+    return mv ? 'เปิดรอบใหม่ ' + mv + ' แล้ว (เครื่องยังอยู่รอบ ' + cur + ')\nกด ⋮ → ตรวจความพร้อมใหม่ เพื่อเข้ารอบใหม่'
+      : 'รอบ ' + cur + ' ปิดรอบแล้ว\nรอเปิดรอบใหม่ แล้วกด ⋮ → ตรวจความพร้อมใหม่';
+  }
   function countClosed() { return roundStatus() === 'COUNT_CLOSED' || roundEnded(); }
   function closedBox() {
     SOUND.bad();
-    if (roundEnded()) return result(false, 'ปิดรอบแล้ว — ไม่บันทึก', 'รอบ ' + ((S.boot && S.boot.project.id) || '') + ' ปิดรอบแล้ว\nรอเปิดรอบใหม่ แล้วกด ⋮ → ตรวจความพร้อมใหม่', { scanCloses: true });
+    if (roundEnded()) return result(false, (roundMoved() ? 'เปิดรอบใหม่แล้ว' : 'ปิดรอบแล้ว') + ' — ไม่บันทึก', roundEndedText(), { scanCloses: true });
     return result(false, 'ปิดการนับแล้ว — ไม่บันทึก', 'ยิงสินค้า เปิด Location ใหม่ และแก้ยอดไม่ได้\n' +
       'Location ที่ยังเปิดอยู่: ผู้ดูแลกด "ปิด Location" · ผู้ช่วยกด "ส่งงาน"\nค้นหา SKU ได้ที่เมนู ⋮\nต้องนับเพิ่ม: แจ้งทีมให้กด "เปิดการนับอีกครั้ง" ในหน้า Admin', { scanCloses: true });
   }
@@ -155,9 +162,21 @@
   /** เซิร์ฟเวอร์บอกสถานะรอบ: เปลี่ยน → จำไว้ + แจ้งกลางจอ */
   function setRound(st, project) {
     if (!st || !S.boot || !S.boot.project) return;
-    if (project !== undefined && project !== S.boot.project.id) return;   // รอบเปลี่ยน: ตรวจความพร้อมใหม่จัดการเอง
+    if (project !== undefined && project !== S.boot.project.id) {
+      // v2.5.5 (B1 · B2): รอบในเซิร์ฟเวอร์เปลี่ยนแล้ว — หยุดยิง + บอกกลางจอครั้งเดียว (ตรวจความพร้อมใหม่จะพาเข้ารอบใหม่)
+      if (project && S.boot.project.id && S.serverProject !== project) {
+        S.serverProject = project;
+        SOUND.warn();
+        var h = 'เปิดรอบใหม่ <b>' + esc(project) + '</b> แล้ว · เครื่องยังอยู่รอบ ' + esc(S.boot.project.id) + '<br>• ยิงไม่ได้จนกว่าจะเข้ารอบใหม่<br>• กด ⋮ → <b>ตรวจความพร้อมใหม่</b>';
+        if ($('modal').classList.contains('hidden')) modal({ title: 'เปิดรอบใหม่แล้ว', html: h, yes: 'รับทราบ', noCancel: true });
+        render();
+      }
+      return;
+    }
+    var wasMoved = !!S.serverProject;
+    S.serverProject = '';
     var prev = S.boot.project.status;
-    if (prev === st) return;
+    if (prev === st) { if (wasMoved) render(); return; }
     S.boot.project.status = st;
     DB.set('boot', S.boot);
     if (st === 'COUNT_CLOSED') {
@@ -630,7 +649,7 @@
       }
       if (res.masterHash !== undefined && S.masterHash && res.masterHash && res.masterHash !== S.masterHash) S.masterChanged = true;
       if (res.stockVersion && res.stockVersion !== S.stockVersion) downloadStock().catch(function () {});
-      if (res.round) setRound(res.round);
+      if (res.round) setRound(res.round, res.project);
       S.lastSyncOk = Date.now();
       return Promise.all([DB.putMany('entries', changed), DB.remove('events', removeIds), saveState()]).then(function () {
         S.syncing = false; render();
@@ -655,8 +674,10 @@
     if (Date.now() - lastHello < (S.loc ? 30000 : 60000) - 1000) return;
     lastHello = Date.now();
     var loc = S.loc;
-    api('hello', { pending: pending().length + S.oldPending.length, location: loc || '', perf: perfReport() }, 10000).then(function (r) {
+    // v2.5.5: รอได้ 20 วินาที (เดิม 10 — คำขอปกติบางครั้งใช้ 9.8 วินาที จึงขึ้น "หมดเวลา" ทั้งที่ระบบปกติ)
+    api('hello', { pending: pending().length + S.oldPending.length, location: loc || '', perf: perfReport() }, 20000).then(function (r) {
       if (r.round) setRound(r.round, r.project);
+      if (r.staffRev && S.boot && r.staffRev !== S.boot.staffRev && !roundMoved()) refreshStaff();
       // เซิร์ฟเวอร์บอกว่า Location นี้มีหลายเครื่อง แต่เครื่องยังไม่รู้ → ถามรายละเอียด (U7/U8)
       if (loc && loc === S.loc && r.members > 1 && !hasOthers(loc) && !S.infoBusy) fetchInfo(loc);
     }, function (err) {
@@ -711,6 +732,7 @@
     else if (S.lastErr === 'BAD_TOKEN' || S.lastErr === 'DEVICE_DISABLED' || S.lastErr === 'UNKNOWN_DEVICE') { msg = 'เครื่องนี้ถูกยกเลิกหรือต้องจับคู่ใหม่ ข้อมูลในเครื่องไม่หาย ให้ Export ไฟล์ แล้วแจ้งหัวหน้าทีม'; bad = true; }
     else if (oldest && Date.now() - oldest > STALE_MIN * 60000) { msg = 'มีรายการค้างส่งเกิน ' + STALE_MIN + ' นาที — ไปจุดที่มี Wi-Fi หรือ Export ไฟล์'; bad = true; }
     else if (rejected) { msg = 'มี ' + rejected + ' รายการที่เซิร์ฟเวอร์ไม่รับ ดูที่หน้าสถานะ'; bad = true; }
+    else if (roundMoved()) { msg = 'เปิดรอบใหม่ ' + roundMoved() + ' แล้ว — ⋮ → ตรวจความพร้อมใหม่'; bad = true; }
     else if (roundEnded()) { msg = 'ปิดรอบแล้ว — ยิงไม่ได้ · รอเปิดรอบใหม่'; bad = true; }
     else if (countClosed()) { msg = 'ปิดการนับแล้ว — ยิงไม่ได้ · ส่งงาน / ปิด Location ที่ค้างได้ · ค้นหา SKU ได้ที่ ⋮'; bad = true; }
     else if (S.masterChanged) msg = 'หัวหน้าทีมอนุมัติรายการบาร์โค้ดชุดใหม่ ไปที่สถานะ → ตรวจความพร้อมใหม่ เพื่อโหลด';
@@ -852,10 +874,37 @@
     scanProduct(code);
   }
 
-  function setStaff(code) {
+  /**
+   * v2.5.5: ดึงรายชื่อผู้ตรวจสอบล่าสุด (เพิ่ม / แก้ / ปิดใช้จากหน้า Admin) — ผู้ตรวจที่ยิงบัตรไว้ถูกปิดใช้ → ออกจากระบบ ให้ยิงบัตรคนอื่น (Q11)
+   */
+  var staffBusy = null;
+  function refreshStaff() {
+    if (staffBusy) return staffBusy;
+    staffBusy = api('staff', {}, 15000).then(function (r) {
+      staffBusy = null;
+      if (!S.boot || !r || !r.staff) return false;
+      S.boot.staff = r.staff; S.boot.staffRev = r.staffRev; DB.set('boot', S.boot);
+      if (S.staff && !r.staff.some(function (x) { return x.code === S.staff.code; })) {
+        var gone = S.staff;
+        S.staff = null; saveState();
+        SOUND.warn();
+        modal({ title: 'ผู้ตรวจสอบถูกปิดใช้', html: esc(gone.name || gone.code) + ' (' + esc(gone.code) + ') ถูกปิดใช้จากหน้า Admin<br>• รายการที่ยิงแล้วยังส่งตามปกติ<br>• <b>ยิงบัตรผู้ตรวจสอบคนอื่น</b> ก่อนยิงต่อ', yes: 'รับทราบ', noCancel: true });
+      }
+      render();
+      return true;
+    }, function () { staffBusy = null; return false; });
+    return staffBusy;
+  }
+
+  function setStaff(code, retried) {
     var list = (S.boot && S.boot.staff) || [];
     var s = list.find(function (x) { return x.code === code; });
-    if (!s) { SOUND.bad(); result(false, 'ไม่พบรหัสผู้ตรวจสอบ', code + '\nยิงบัตรใหม่ หรือแจ้งหัวหน้าทีม', { scanCloses: true }); return; }
+    if (!s && !retried && S.online && S.cfg.token) {   // v2.5.5: เพิ่งเพิ่มในหน้า Admin — ถามเซิร์ฟเวอร์ก่อน
+      toast('กำลังตรวจรหัส ' + code + '…');
+      refreshStaff().then(function () { setStaff(code, true); });
+      return;
+    }
+    if (!s) { SOUND.bad(); result(false, 'ไม่พบรหัสผู้ตรวจสอบ', code + (S.online ? '\nรหัสนี้ไม่มี หรือถูกปิดใช้ — แจ้งหัวหน้าทีม' : '\nเครื่องออฟไลน์: ต่อ Wi-Fi แล้วยิงบัตรใหม่'), { scanCloses: true }); return; }
     S.staff = { code: s.code, name: s.name };
     S.dwOk = true;
     SOUND.ok();
@@ -1835,6 +1884,26 @@
     });
   }
 
+  /**
+   * v2.5.5 (B4 · Q13): ล้างรายการในเครื่องของรอบที่ปิดรอบแล้ว (มีใน Count_History = ไฟล์สำรองตรวจผ่าน) เฉพาะที่ส่งครบ
+   * รอบที่ยังไม่ปิด / ยังค้างส่ง ไม่แตะ · ปุ่มล้างเองที่หน้าสถานะยังอยู่
+   */
+  function cleanClosedRounds(closed) {
+    if (!closed.length) return Promise.resolve(0);
+    return DB.all('entries').then(function (all) {
+      var gone = all.filter(function (e) { return e.projectId !== S.projectId && closed.indexOf(e.projectId) >= 0 && (e.synced || e.rejected); });
+      var still = {};   // รอบที่ยังมีรายการค้างส่ง: เก็บค่าประกอบของรอบนั้นไว้
+      all.forEach(function (e) { if (!e.synced && !e.rejected) still[e.projectId] = 1; });
+      if (!gone.length) return 0;
+      return DB.remove('entries', gone.map(function (e) { return e.logId; })).then(function () {
+        var ps = {}; gone.forEach(function (e) { ps[e.projectId] = 1; });
+        Object.keys(ps).forEach(function (p) { if (!still[p]) ['closedLocs_', 'locChecks_', 'roles_', 'knownNames_', 'myLocs_'].forEach(function (k) { DB.del(k + p); }); });
+        S.cleaned = { n: gone.length, projects: Object.keys(ps), at: Date.now() };
+        return gone.length;
+      });
+    }).catch(function () { return 0; });
+  }
+
   function switchProject(pid) {
     if (pid === S.projectId) return Promise.resolve();
     return loadEntries(pid).then(function () {
@@ -1870,7 +1939,13 @@
       var chain = Promise.resolve();
       if (b.boot) {
         S.boot = b.boot; DB.set('boot', b.boot);
-        chain = bumpSeq(b.boot.device && b.boot.device.maxSeqAll).then(function () { return switchProject(b.boot.project.id); });
+        var prevProject = S.projectId;
+        S.serverProject = '';
+        chain = bumpSeq(b.boot.device && b.boot.device.maxSeqAll).then(function () { return switchProject(b.boot.project.id); }).then(function () {
+          // v2.5.5 (B3): เข้ารอบใหม่ = ยิงบัตรผู้ตรวจสอบใหม่ (คนนับรอบใหม่อาจไม่ใช่คนเดิม)
+          if (prevProject && prevProject !== b.boot.project.id && S.staff) { S.staff = null; S.dwOk = false; saveState(); }
+          return cleanClosedRounds(b.boot.closedProjects || []);
+        });
       }
       return chain.then(function () {
         var boot = S.boot;
@@ -1937,7 +2012,7 @@
           S.readiness = { project: S.projectId, date: today(), pass: pass, at: Date.now() };
           DB.set('readiness', S.readiness);
           renderChecks(items, pass);
-          if (S.online && S.cfg.token) api('check', { items: items, staff: S.staff ? S.staff.code : '' }, 10000).catch(function () {});
+          if (S.online && S.cfg.token) api('check', { items: items, staff: S.staff ? S.staff.code : '', project: S.projectId }, 10000).catch(function () {});
           return pass;
         });
       });
@@ -2029,6 +2104,6 @@
     });
   }
 
-  window.__SC = { S: S, handleScan: handleScan, syncNow: syncNow, locSummary: locSummary, exportFile: exportFile };
+  window.__SC = { S: S, handleScan: handleScan, syncNow: syncNow, locSummary: locSummary, exportFile: exportFile, helloNow: function () { lastHello = 0; hello(); } };
   init();
 })();

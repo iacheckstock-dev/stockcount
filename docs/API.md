@@ -33,6 +33,7 @@ URL ลงท้าย `/exec` ตั้งไว้ใน `app/config.json` (`a
 | `sku` | ใช่ | ⋮ → ค้นหา SKU (v2.4.1) | — |
 | `check` | ใช่ | ส่งผลตรวจความพร้อม | Device_Checks, Devices |
 | `hello` | ใช่ | รายงานตัวทุก 1 นาที (v2.2.2) | CacheService เท่านั้น (ไม่เขียนชีต) |
+| `staff` | ใช่ | รายชื่อผู้ตรวจสอบล่าสุด (v2.5.5): `staffRev` ไม่ตรง / ยิงบัตรที่ไม่รู้จัก | — |
 | `unpair` | ใช่ | ผู้ใช้กด "ยกเลิกการจับคู่เครื่องนี้" (v2.2.2) | Devices (ล้าง token), Admin_Log |
 | `locStatus` | ใช่ | แอปรุ่นก่อน 2.2.0 (เก็บไว้ให้เข้ากันได้) | — |
 
@@ -204,6 +205,13 @@ sequenceDiagram
 - หน้า Admin → เครื่อง TC21 → คอลัมน์ "ติดต่อล่าสุด": แดงเมื่อไม่ติดต่อเกิน 10 นาทีและครั้งล่าสุดรายงานว่ามีค้าง, เหลืองเมื่อไม่ติดต่อเกิน 10 นาที
 - เครื่องที่ถูกยกเลิกจะได้ `DEVICE_DISABLED` / `BAD_TOKEN` ภายใน 1 นาที และขึ้นแถบแดงทันที
 - ข้อจำกัด: ถ้าเครื่องออฟไลน์แล้วยิงต่อ เซิร์ฟเวอร์จะเห็นจำนวนค้างของครั้งสุดท้ายที่ติดต่อได้ ไม่ใช่ของปัจจุบัน
+
+## เครื่องข้ามรอบ · รายชื่อผู้ตรวจสอบ (v2.5.5)
+- `hello` → `{ ok, round, project, staffRev }` · `sync` ตอบ `round` และ `project` · `bootstrap` เพิ่ม `staffRev`, `closedProjects` (รอบใน Count_History)
+- `project` ไม่ตรงกับรอบในเครื่อง → แอปหยุดยิง กล่อง "เปิดรอบใหม่แล้ว" จนกว่าจะตรวจความพร้อมใหม่ · เข้ารอบใหม่ → ล้างผู้ตรวจสอบที่ยิงไว้ · ล้างรายการของ `closedProjects` ที่ส่งครบแล้ว
+- `staff` → `{ ok, staff:[{code,name,role}], staffRev }` (เฉพาะ Active) · `staffRev` = hash ของรายชื่อ (เปลี่ยนเมื่อเพิ่ม / แก้ / ปิดใช้)
+- `check` รับ `project` → `Devices.Check_Project`
+- หน้า Admin: `apiStaffState()` · `apiStaffAdd(by, code, name, role)` · `apiStaffEdit(by, code, name, role)` · `apiStaffActive(by, code, on, why)` · `apiDevicesState()` คืน `ready: { ok, why[] }` ต่อเครื่อง
 
 ## ปิดการนับ (v2.5.0)
 - `ROUND_STATUS = COUNT_CLOSED`: `sync` ยังรับรายการเข้า Count_Log ตามปกติ (ค้างส่งจากก่อนปิด ไม่กักไว้ใน Quarantine) · เหตุการณ์ SUBMIT / PAUSE / CLOSE รับตามปกติ
