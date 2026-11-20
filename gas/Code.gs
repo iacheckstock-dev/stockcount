@@ -12,7 +12,7 @@ var SCHEMA_VERSION = 12;   // 6 = v2.4.1 Variance.Barcode · 7 = v2.4.2 ชี�
  * เวอร์ชันของระบบ (ใช้เลขเดียวทั้งแอป TC21 และเซิร์ฟเวอร์ ตาม Semantic Versioning MAJOR.MINOR.PATCH)
  * ต้องตรงกับ APP_VERSION ใน app/app.js และ appVersion ใน app/config.json — ดู CHANGELOG.md
  */
-var SYSTEM_VERSION = '2.5.7';
+var SYSTEM_VERSION = '2.5.8';
 
 var SHEETS = {
   Config: ['Key', 'Value', 'Note'],

@@ -120,8 +120,9 @@ details { margin: 10px 0; } summary { color: #555; font-size: 14px; }
 .mbtns .btn { margin: 0; }
 #toast { position: fixed; left: 12px; right: 12px; bottom: 14px; padding: 12px 14px; border-radius: 12px; background: #111; color: #fff; z-index: 11; font-size: 16px; text-align: center; }
 #toast.err { background: #b42318; }
-.kv { display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; font-size: 16px; margin-bottom: 10px; }
-.kv div:nth-child(odd) { color: #555; } .kv div:nth-child(even) { font-weight: 600; text-align: right; }
+.kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 10px; font-size: 16px; margin-bottom: 10px; }
+/* v2.5.8: ชื่อแถวไม่ตัดคำเสมอ · ค่าที่ยาวขึ้นบรรทัดใหม่แทน */
+.kv div:nth-child(odd) { color: #555; white-space: nowrap; } .kv .nw { white-space: nowrap; } .kv div:nth-child(even) { font-weight: 600; text-align: right; overflow-wrap: break-word; }
 
 /* ผู้ดูแล / ผู้ช่วย ในหน้าดู Location */
 #locMembers .mrow { display: flex; justify-content: space-between; gap: 6px; font-size: 14px; padding: 4px 8px; border-radius: 8px; background: #f0efec; margin: 3px 0; }

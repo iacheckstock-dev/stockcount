@@ -82,7 +82,7 @@ with sync_playwright() as p:
     pg.wait_for_function("/พร้อมนับ ✓/.test(document.querySelector('#readyHead').textContent)", timeout=10000)
     shot('03-ready-pass')
     check(pg.is_visible('#btnStart'), 'ผ่านทุกข้อ ขึ้นปุ่มเริ่มนับ')
-    check('แอป 2.5.7 · เซิร์ฟเวอร์ 2.5.7' in pg.inner_text('#readyList'), 'แสดงเวอร์ชันแอปและเซิร์ฟเวอร์ตรงกัน')
+    check('แอป 2.5.8 · เซิร์ฟเวอร์ 2.5.8' in pg.inner_text('#readyList'), 'แสดงเวอร์ชันแอปและเซิร์ฟเวอร์ตรงกัน')
     pg.click('#btnStart'); pg.wait_for_selector('#v-count.on')
     check('นุ่น' in pg.inner_text('#tbStaff'), 'เข้างานเป็น นุ่น')
 
@@ -161,7 +161,16 @@ with sync_playwright() as p:
 
     print('Export และนำเข้าไฟล์')
     with pg.expect_download() as dl:
-        open_menu('status'); pg.wait_for_selector('#v-status.on'); shot('09-status'); pg.click('#btnExport')
+        open_menu('status'); pg.wait_for_selector('#v-status.on'); shot('09-status')
+        # v2.5.8: จอ TC21 (360 px) ชื่อแถวในหน้าสถานะต้องอยู่บรรทัดเดียว (v2.5.7 ตัดเป็น "ผู้ตรวจ/สอบ")
+        wrapped = pg.evaluate("""[...document.querySelectorAll('#statusKv > div:nth-child(odd)')].filter(d => d.getBoundingClientRect().height > parseFloat(getComputedStyle(d).lineHeight) * 1.5).map(d => d.textContent)""")
+        kvw = pg.evaluate("document.querySelector('#statusKv').scrollWidth <= document.querySelector('#statusKv').clientWidth + 1")
+        check(not wrapped and kvw, 'หน้าสถานะ 360 px: ชื่อแถวไม่ตัดคำ · ไม่ล้นจอ (ตัด: ' + str(wrapped) + ')')
+        bad = pg.evaluate("""(() => { const r = document.createRange(), out = []; document.querySelectorAll('#statusKv > div:nth-child(even)').forEach(d => { const sp = [...d.querySelectorAll('span')].find(x => x.textContent.includes('บาร์โค้ด')); const t = sp && sp.firstChild; if (!t) return; const i = t.textContent.indexOf('บาร์โค้ด'); r.setStart(t, i); r.setEnd(t, i + 8); if (r.getClientRects().length > 1) out.push(t.textContent); }); return out; })()""")
+        check(not bad, 'คำ "บาร์โค้ด" ไม่ถูกตัดกลางคำ: ' + str(bad))
+        st = pg.inner_text('#statusKv')
+        check('2,330 รหัส · 2,318 บาร์โค้ด' in st and 'ชุดที่อนุมัติ' in st, 'แถว รายการบาร์โค้ด / ชุดที่อนุมัติ แยกกัน')
+        pg.click('#btnExport')
     pg.wait_for_selector('#result:not(.hidden)')
     check('บันทึกไฟล์แล้ว' in pg.inner_text('#resTitle') and 'Downloads' in pg.inner_text('#result') and pg.is_visible('#resOk'), 'Export → กล่อง "บันทึกไฟล์แล้ว" ค้างจนกดตกลง (v2.5.6)')
     pg.wait_for_timeout(1800); check(pg.is_visible('#result'), 'กล่องผลของปุ่มไม่หายเอง (เดิม Toast หายใน 2 วิ)')
@@ -206,7 +215,7 @@ with sync_playwright() as p:
     check('9.9.9' in pg.inner_text('#readyList'), 'มีเวอร์ชันใหม่ → ขึ้น ✗ พร้อมปุ่ม "อัปเดตแอปตอนนี้"')
     shot('11-update')
     pg.click('#btnUpdate'); pg.wait_for_load_state('load'); pg.wait_for_timeout(1500)
-    get('/debug/version?v=2.5.7')
+    get('/debug/version?v=2.5.8')
     pg.wait_for_selector('.view.on', timeout=10000)
     check('รายการ 38' in pg.inner_text('#syncText'), 'หลังกดอัปเดต แอปโหลดใหม่ ข้อมูลในเครื่องยังครบ 38 รายการ')
 

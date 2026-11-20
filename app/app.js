@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2.5.7';
+  var APP_VERSION = '2.5.8';
   var QTY_CONFIRM = 150;      // จำนวนที่ป้อนเองเกินนี้ต้องยืนยันอีกครั้ง
   var QTY_MAX_DIGITS = 5;     // ยาวกว่านี้ = น่าจะยิงบาร์โค้ดเข้าช่องจำนวน
   var INFO_EVERY = 15000;     // ถามสถานะผู้ช่วย/ผู้ดูแลระหว่างนับร่วมกัน
@@ -1735,7 +1735,9 @@
       ['ยอดรวมทั้งเครื่อง (ชิ้น)', fmt(deviceTotal())],
       ['เซิร์ฟเวอร์ไม่รับ', fmt(rej.length)], ['ข้อมูลรอบอื่นค้างส่ง', fmt(S.oldPending.length)], ['รอตรวจ Location', fmt(S.events.length)],
       ['ส่งสำเร็จล่าสุด', S.lastSyncOk ? stamp(new Date(S.lastSyncOk)).slice(11) : '-'], ['เชื่อมต่อ', S.online === false ? 'ออฟไลน์' : S.slow ? 'เซิร์ฟเวอร์ช้า/มีปัญหา (' + S.slow + ')' : S.online ? 'ออนไลน์' : '-'],
-      ['รายการบาร์โค้ด', masterCountText() + ' · ' + (S.masterHash || '-')], ['เวอร์ชัน', 'แอป ' + APP_VERSION + ' · เซิร์ฟเวอร์ ' + (S.serverVersion || '-') + (S.latestVersion && S.latestVersion !== APP_VERSION ? ' (มีแอป ' + S.latestVersion + ')' : '')]
+      // v2.5.8: แยกแถว — ค่ายาวในแถวเดียว (v2.5.7) ดันคอลัมน์ชื่อแถวจนตัดคำ ("ผู้ตรวจ/สอบ")
+      ['รายการบาร์โค้ด', masterCountText()],
+      ['ชุดที่อนุมัติ', (S.boot && S.boot.master && S.boot.master.version ? 'v' + S.boot.master.version + ' · ' : '') + String(S.masterHash || '-').slice(0, 8)], ['เวอร์ชัน', 'แอป ' + APP_VERSION + ' · เซิร์ฟเวอร์ ' + (S.serverVersion || '-') + (S.latestVersion && S.latestVersion !== APP_VERSION ? ' (มีแอป ' + S.latestVersion + ')' : '')]
     ];
     // เวลาตอบของเซิร์ฟเวอร์ตั้งแต่เปิดแอป (v2.2.6) — ใช้ตัดสินใจปรับระบบ (ขั้น C)
     var sec = function (ms) { return (ms / 1000).toFixed(1); };
@@ -1755,7 +1757,9 @@
       }
     });
     $('perfBox').innerHTML = prow.length ? '<div class="muted">เวลาตอบของเซิร์ฟเวอร์ ตั้งแต่เปิดแอป (วินาที)</div><table class="perf"><tr><th></th><th>ครั้ง</th><th>เฉลี่ย</th><th>ช้าสุด</th><th>หมดเวลา</th><th>ออฟไลน์</th><th>ผิดพลาด</th></tr>' + prow.join('') + '</table>' : '';
-    $('statusKv').innerHTML = rows.map(function (r) { return '<div>' + esc(r[0]) + '</div><div>' + esc(r[1]) + '</div>'; }).join('') +
+    // v2.5.8: แต่ละช่วงคั่นด้วย " · " ไม่ตัดกลาง (เช่น "2,318 บาร์โค้ด") — ขึ้นบรรทัดใหม่ได้เฉพาะที่ตัวคั่น
+    var kvVal = function (v) { return String(v).split(' · ').map(function (x) { return '<span class="nw">' + esc(x) + '</span>'; }).join(' · '); };
+    $('statusKv').innerHTML = rows.map(function (r) { return '<div>' + esc(r[0]) + '</div><div>' + kvVal(r[1]) + '</div>'; }).join('') +
       (rej.length ? '<div>ไม่รับ</div><div>' + rej.slice(0, 5).map(function (e) { return esc(e.logId + ' ' + e.rejected); }).join('<br>') + '</div>' : '');
   }
   $('btnSyncNow').onclick = function () { syncNow(true).then(function () {
