@@ -12,7 +12,7 @@ var SCHEMA_VERSION = 12;   // 6 = v2.4.1 Variance.Barcode · 7 = v2.4.2 ชี�
  * เวอร์ชันของระบบ (ใช้เลขเดียวทั้งแอป TC21 และเซิร์ฟเวอร์ ตาม Semantic Versioning MAJOR.MINOR.PATCH)
  * ต้องตรงกับ APP_VERSION ใน app/app.js และ appVersion ใน app/config.json — ดู CHANGELOG.md
  */
-var SYSTEM_VERSION = '2.5.8';
+var SYSTEM_VERSION = '2.6.0';
 
 var SHEETS = {
   Config: ['Key', 'Value', 'Note'],
@@ -1822,4 +1822,163 @@ function apiAdjustReverse(id, staff, why) {
     R.adjDone = { id: nid, material: a.material, name: a.name, qty: -a.qty, before: cur.final, after: after, book: b.book, reversed: id };
     return R;
   });
+}
+
+
+// ---------- หน้า Audit (v2.6.0) ----------
+//
+// ค้นดูรายละเอียดของรอบที่เปิดอยู่: SKU / Location / ผู้ตรวจ → ทุกบรรทัดใน Count_Log พร้อมเวลา เครื่อง ผู้ยิง ผู้ขอให้แก้
+// อ่านอย่างเดียว: ไม่ล็อก ไม่เขียนชีต ไม่บันทึก Admin_Log (ตัดสิน Q3) — เครื่องที่กำลังนับไม่ต้องรอ
+// อ่าน Count_Log ทั้งชีตครั้งละ 1 รอบต่อการค้น · ส่งบรรทัดกลับทีละ AUDIT_PAGE
+
+var AUDIT_PAGE = 200;
+var AUDIT_TYPE_TH = { SCAN: 'ยิง', MANUAL: 'ป้อนเอง', VOID: 'ยกเลิก', RECOUNT_SET: 'ผู้ดูแลแก้ยอด', SELF_SET: 'ผู้ช่วยแก้ยอด' };
+var AUDIT_EVENT_TH = { OPEN: 'เปิด', JOIN: 'เข้าร่วม', SUBMIT: 'ส่งงาน', PAUSE: 'พัก', CLOSE: 'ปิด', EDIT: 'แก้ยอด', EDIT_CONFLICT: 'แก้ชนกัน',
+  ADMIN_SUBMIT: 'ส่งงานแทน (Admin)', TRANSFER: 'โอนการดูแล', FLAG_RESOLVE: 'เคลียร์ธง', ADMIN_LOG_FAIL: 'บันทึกสำรอง' };
+
+/**
+ * kind = 'sku' | 'loc' | 'staff' · q = คำค้น · opt = { pick: คีย์ SKU ที่เลือกจากรายการ, edits: เฉพาะแก้/ยกเลิก, offset }
+ * คืน { project, status, at, kind, q, head, lines (หน้าเดียว), total, editCount, offset, page } หรือ { choices } เมื่อ SKU พบหลายตัว
+ */
+function apiAudit(kind, q, opt) {
+  opt = opt || {};
+  var cfg = readConfig_(), project = String(cfg.PROJECT_ID || ''), st = cfg.ROUND_STATUS || 'NONE';
+  var base = { project: project, status: st, statusTh: ROUND_STATUS_TH[st] || st, at: now_(), kind: kind, q: String(q || '').trim() };
+  if (!project || st === 'NONE') return Object.assign(base, { none: true });
+  if (st === 'CLOSED') {
+    var h = historyRows_().filter(function (x) { return x.Project_ID === project; })[0];
+    return Object.assign(base, { closed: true, url: h ? String(h.Archive_Link || '') : '' });
+  }
+  if (!base.q && !opt.pick) throw new Error('ใส่คำค้นก่อน');
+  var ctx = { project: project, lines: auditLines_(project), book: bookByMaterial_(), names: staffNames_() };
+  var res = kind === 'sku' ? auditSku_(ctx, base.q, opt) : kind === 'loc' ? auditLoc_(ctx, base.q) : kind === 'staff' ? auditStaff_(ctx, base.q) : null;
+  if (!res) throw new Error('ประเภทการค้นไม่ถูกต้อง: ' + kind);
+  if (res.choices) return Object.assign(base, res);
+  var all = res.lines, editCount = all.filter(function (l) { return l.ed; }).length;
+  var list = opt.edits ? all.filter(function (l) { return l.ed; }) : all;
+  var off = Math.max(0, Number(opt.offset) || 0);
+  return Object.assign(base, res, { lines: list.slice(off, off + AUDIT_PAGE), total: list.length, all: all.length, editCount: editCount,
+    offset: off, page: AUDIT_PAGE, edits: !!opt.edits });
+}
+
+/** ทุกบรรทัดของรอบใน Count_Log เรียงตามเวลายิง (เท่ากัน → ลำดับที่รับ) */
+function auditLines_(project) {
+  var rows = readRaw_('Count_Log'), H = SHEETS.Count_Log, c = {}, out = [];
+  H.forEach(function (n, i) { c[n] = i; });
+  rows.slice(1).forEach(function (r, i) {
+    if (r[c.Project_ID] !== project) return;
+    var ty = String(r[c.Entry_Type] || ''), rs = String(r[c.Reason] || '');
+    out.push({ row: i + 2, id: r[c.Log_ID], t: String(r[c.Scan_Time] || ''), rt: String(r[c.Received_Time] || ''), loc: r[c.Location], dev: r[c.Device_ID],
+      seq: Number(r[c.Seq]) || 0, st: normStaff_(r[c.Staff_Code]), bc: String(r[c.Barcode] || ''), m: String(r[c.Material] || ''),
+      q: Number(String(r[c.Qty]).replace(/,/g, '')) || 0, ty: ty, clr: lxIsClear_(ty, rs), ref: String(r[c.Ref_ID] || ''), rs: rs,
+      nt: String(r[c.Note] || ''), src: String(r[c.Source] || ''), eb: normStaff_(r[c.Entered_By]), rq: normStaff_(r[c.Requested_By]),
+      ed: ty === 'VOID' || ty === 'RECOUNT_SET' || ty === 'SELF_SET' });
+  });
+  out.sort(function (a, b) { return a.t < b.t ? -1 : a.t > b.t ? 1 : a.row - b.row; });
+  return out;
+}
+
+/** เติมชื่อสินค้า / ชื่อผู้ตรวจ / ประเภทภาษาไทย */
+function auditDress_(ctx, lines) {
+  return lines.map(function (l) {
+    var b = ctx.book[l.m];
+    l.nm = b ? b.name : '';
+    l.sn = ctx.names[l.st] || '';
+    l.th = l.clr ? 'ล้าง Location' : (AUDIT_TYPE_TH[l.ty] || l.ty);
+    return l;
+  });
+}
+
+function auditSku_(ctx, q, opt) {
+  var key = opt.pick || '', Q = q.toUpperCase(), book = ctx.book;
+  if (!key) {
+    if (book[q] || book[Q]) key = book[q] ? q : Q;
+    else {
+      Object.keys(book).some(function (m) { if (book[m].bcs.indexOf(q) >= 0) { key = m; return true; } return false; });
+      // บาร์โค้ดที่ยิงแล้วแต่ไม่มีใน Master
+      if (!key && ctx.lines.some(function (l) { return !l.m && l.bc === q; })) key = 'BC:' + q;
+    }
+  }
+  if (!key) {
+    var lq = q.toLowerCase(), hit = Object.keys(book).filter(function (m) {
+      return m.toUpperCase().indexOf(Q) >= 0 || book[m].name.toLowerCase().indexOf(lq) >= 0 || book[m].bcs.some(function (b) { return b.indexOf(q) >= 0; });
+    });
+    if (!hit.length) throw new Error('ไม่พบสินค้า "' + q + '" ใน Master ของรอบนี้');
+    if (hit.length > 1) {
+      hit.sort(natCmp_);
+      return { choices: hit.slice(0, 50).map(function (m) { return [m, book[m].name, book[m].bcs.join(' ')]; }), choiceTotal: hit.length };
+    }
+    key = hit[0];
+  }
+  var d = apiSkuDetail(key), b = d.book;
+  var dev = r3_(d.rows.reduce(function (t, x) { return t + x[5]; }, 0));
+  var adj = r3_((d.adjustments || []).reduce(function (t, x) { return t + (Number(x[4]) || 0); }, 0));
+  var fin = r3_(dev + adj), head = { key: key, material: key.indexOf('BC:') === 0 ? '' : key, barcodes: b ? b.bcs : [key.replace(/^BC:/, '')],
+    name: b ? b.name : '', inMaster: !!b, dev: dev, adj: adj, fin: fin, perLoc: d.rows, adjustments: d.adjustments || [] };
+  if (b) {
+    head.book = b.book; head.diff = r3_(fin - b.book); head.diffValue = Math.round(head.diff * b.cost * 100) / 100;
+    head.it = b.it; head.qi = b.qi; head.bl = b.bl;
+  }
+  var lines = ctx.lines.filter(function (l) { return itemKey_(l.m, l.bc) === key; });
+  return { head: head, lines: auditDress_(ctx, lines) };
+}
+
+function auditLoc_(ctx, q) {
+  var loc = q.toUpperCase(), project = ctx.project;
+  var lt = table_('Locations'), L = null;
+  lt.rows.forEach(function (r) { var x = rowObj_(lt, r); if (String(x.Location).toUpperCase() === loc) { L = x; loc = x.Location; } });
+  var lines = ctx.lines.filter(function (l) { return String(l.loc).toUpperCase() === loc; });
+  if (!L && !lines.length) throw new Error('ไม่พบ Location "' + q + '" ในรอบนี้');
+  if (!L && lines.length) loc = lines[0].loc;
+  var members = membersForAdmin_(project).filter(function (m) { return m.location === loc; }).map(function (m) {
+    var s = normStaff_(m.staff); return { device: m.device, role: m.role, state: m.state, staff: s, name: ctx.names[s] || '', at: m.stateAt, subBy: m.subBy };
+  });
+  var lc = readRaw_('Loc_Checks'), events = [];
+  if (lc.length > 1) {
+    var ix = {}; lc[0].forEach(function (n, i) { ix[n] = i; });
+    lc.slice(1).forEach(function (r) {
+      if (r[ix.Project_ID] !== project || r[ix.Location] !== loc) return;
+      var s = normStaff_(r[ix.Staff]);
+      events.push({ t: String(r[ix.Time]), dev: r[ix.Device_ID], ev: r[ix.Event], th: AUDIT_EVENT_TH[r[ix.Event]] || r[ix.Event], staff: s, name: ctx.names[s] || '',
+        devQty: r[ix.Dev_Qty], srvQty: r[ix.Srv_Qty], match: r[ix.Match], note: r[ix.Note] });
+    });
+  }
+  var X = logIdx_(project, {}), D = X.loc([loc])[loc], items = [];
+  if (D) Object.keys(D.items).forEach(function (k) {
+    var it = D.items[k]; if (it.qty === 0) return;
+    var b = ctx.book[k];
+    items.push([k.replace(/^BC:/, ''), it.barcode || '', b ? b.name : '', it.qty, !!b]);
+  });
+  items.sort(function (a, b) { return natCmp_(a[0], b[0]); });
+  var head = { loc: loc, status: L ? String(L.Status || '') : '', owner: L ? String(L.Owner || '') : '', openedAt: L ? String(L.Opened_At || '') : '',
+    closedAt: L ? String(L.Closed_Time || '') : '', closeTotal: L ? String(L.Close_Total || '') : '', edits: L ? String(L.Edits || '') : '',
+    flag: L ? String(L.Flag_Check || '') : '', qty: D ? D.qty : 0, members: members, events: events, items: items };
+  return { head: head, lines: auditDress_(ctx, lines) };
+}
+
+function auditStaff_(ctx, q) {
+  var code = normStaff_(q);
+  var own = ctx.lines.filter(function (l) { return l.st === code; });
+  var req = ctx.lines.filter(function (l) { return l.st !== code && l.rq === code; });
+  var members = membersForAdmin_(ctx.project).filter(function (m) { return normStaff_(m.staff) === code; });
+  if (!ctx.names[code] && !own.length && !req.length && !members.length) throw new Error('ไม่พบผู้ตรวจ "' + q + '"');
+  var devs = {}, locs = {}, qty = 0, edits = 0, voids = 0;
+  own.forEach(function (l) {
+    devs[l.dev] = 1; qty = r3_(qty + l.q);
+    if (l.ty === 'VOID') voids++; else if (l.ed) edits++;
+    var x = locs[l.loc] || (locs[l.loc] = { loc: l.loc, roles: [], lines: 0, qty: 0 });
+    x.lines++; x.qty = r3_(x.qty + l.q);
+  });
+  members.forEach(function (m) {
+    var x = locs[m.location] || (locs[m.location] = { loc: m.location, roles: [], lines: 0, qty: 0 });
+    var role = (m.role === 'OWNER' ? 'ผู้ดูแล' : 'ผู้ช่วย') + ' ' + m.device;
+    if (x.roles.indexOf(role) < 0) x.roles.push(role);
+  });
+  var times = own.map(function (l) { return l.t; }).filter(String).sort();
+  var lines = own.concat(req.map(function (l) { l.req = true; return l; }));
+  lines.sort(function (a, b) { return a.t < b.t ? -1 : a.t > b.t ? 1 : a.row - b.row; });
+  var head = { code: code, name: ctx.names[code] || '', devices: Object.keys(devs).sort(), lines: own.length, qty: qty, edits: edits, voids: voids,
+    requested: req.length, first: times[0] || '', last: times[times.length - 1] || '',
+    locs: Object.keys(locs).sort(natCmp_).map(function (k) { return locs[k]; }) };
+  return { head: head, lines: auditDress_(ctx, lines) };
 }

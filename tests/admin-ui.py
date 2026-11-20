@@ -24,6 +24,7 @@ window.google = { script: { run: (function mk(ok, bad) {
       if (k === 'apiAdminLog') { setTimeout(function () { ok && ok(window.LOGRES); }, 0); return; }
       if (k === 'apiRoundStatus') { setTimeout(function () { ok && ok(window.RSTAT); }, 0); return; }
       if (k === 'apiCloseRound') { setTimeout(function () { ok && ok(window.CLOSEROUND); }, 0); return; }
+      if (k === 'apiAudit') { var au = window.ST.AUDIT, kd = arguments[0], aq = arguments[1], o = arguments[2] || {}; var res = o.edits ? au.edits : o.pick ? au.sku : kd === 'sku' && aq === 'A112101UT0' ? au.choices : au[kd]; setTimeout(function () { ok && ok(res); }, 0); return; }
       if (k === 'apiVerifyArchive') { setTimeout(function () { ok && ok(window.VERIFY); }, 0); return; }
       if (k === 'apiCountClose' || k === 'apiCountReopen') { setTimeout(function () { ok && ok(window.CLOSERES); }, 0); return; }
       var r = k === 'apiReconcile' ? window.RECON : k === 'apiSummary' ? window.ST.SUMMARY : k === 'apiSummarySave' ? Object.assign({}, window.ST.SUMMARY, { run: 3, saved: 9, same: !!window.SAME, prevAt: '2026-11-16 10:58:15', lastSave: { run: 3, at: window.ST.SUMMARY.at } }) : k === 'apiAdjust' || k === 'apiAdjustReverse' ? Object.assign({}, window.ST.SUMMARY, { adjDone: { id: 'ADJ-0099', material: 'A112101UT0550XK', name: 'SHIRT', qty: -1, before: 10, after: 9, book: 52, reversed: k === 'apiAdjustReverse' ? 'ADJ-0001' : '' } }) : k === 'apiSkuDetail' ? window.ST.SKU_DETAIL : k === 'apiDevicesState' || k.indexOf('apiLoc') === 0 || k === 'apiPairCode' ? window.ST : {};
@@ -96,7 +97,7 @@ with sync_playwright() as p:
     opts = pg.eval_on_selector_all('#logRound option', 'els => els.map(e => e.textContent)')
     check(any('ก่อนเปิดรอบแรก · 1' == o for o in opts) and not any('ไม่ระบุรอบ' in o for o in opts) and '2026Q4-R1 (รอบปัจจุบัน) · 8' in opts, 'v2.5.7 ช่องเลือกรอบ: "ก่อนเปิดรอบแรก" แทน "(ไม่ระบุรอบ)": ' + str(opts))
     tabs = pg.eval_on_selector_all('#nav button', 'els => els.map(e => e.dataset.t)')
-    check(tabs.index('summary') + 1 == tabs.index('staff') and tabs.index('staff') + 1 == tabs.index('log'), 'v2.5.6 ลำดับแท็บ: สรุปผลนับ → พนักงาน → บันทึก Admin')
+    check(tabs.index('summary') + 2 == tabs.index('staff') and tabs.index('staff') + 1 == tabs.index('log'), 'v2.5.6 ลำดับแท็บ: สรุปผลนับ → (ตรวจสอบ v2.6.0) → พนักงาน → บันทึก Admin')
     # กระทบยอดทั้งรอบ + คำเตือนบันทึก Admin_Log ไม่สำเร็จ (v2.3.8)
     pg.evaluate("""window.RECON = { at: '2026-11-12 16:30:00', ok: false, locs: 20, closed: 15, qty: 1234, lines: 900,
       indexDiffs: ['T9 TC21-01 ดัชนี 38/38 ชีต 38/37'], closeDiffs: [{ loc: 'T9', close: 39, sheet: 38, flag: '' }, { loc: 'D6', close: 30, sheet: 32, flag: 'มีรายการหลังปิด' }], missing: [],
@@ -380,7 +381,7 @@ with sync_playwright() as p:
     check(not pg.is_disabled('#askOk'), 'พิมพ์ตรง + มีรหัสผู้ตรวจสอบ → กดได้')
     pg.screenshot(path='/tmp/admin-closeround-ask.png')
     after = json.loads(json.dumps(st['STATE'])); after['round'].update({'status': 'CLOSED', 'statusTh': 'ปิดรอบแล้ว'})
-    H = {'project': pid, 'countDate': '2026-11-20', 'book': 120, 'final': 118, 'diffQty': -2, 'diffValue': -350.5, 'diffItems': 2, 'edits': 1, 'url': 'https://example.invalid/a', 'checksum': 'Count_Log:5ed397b96df8dfc8|Adjustments:7ef1e3b1da4df995|Variance:0123456789abcdef',
+    H = {'project': pid, 'countDate': '2026-11-20', 'book': 120, 'final': 121, 'diffQty': -2, 'diffValue': -350.5, 'diffItems': 2, 'edits': 1, 'url': 'https://example.invalid/a', 'checksum': 'Count_Log:5ed397b96df8dfc8|Adjustments:7ef1e3b1da4df995|Variance:0123456789abcdef',
          'run': 3, 'lines': 99, 'at': '2026-11-20 18:00:00', 'by': 'EMP-K', 'type': 'PILOT', 'typeTh': 'รอบทดลอง'}
     after['history'] = [H]
     C = dict(H); C['type'] = 'PILOT'
@@ -392,10 +393,12 @@ with sync_playwright() as p:
     sw = pg.evaluate("(() => { const b = document.querySelector('#askBody'); return [b.scrollWidth, b.clientWidth]; })()")
     check(sw[0] <= sw[1] + 1, 'กล่องผลปิดรอบไม่มีแถบเลื่อนแนวนอน (checksum ตัดบรรทัด · UAT G12-6): ' + str(sw))
     pg.screenshot(path='/tmp/admin-closeround-done.png')
+    OUTM = ['(นอก Master 3)' in pg.inner_text('#askDlg'), False]
     pg.click('#askOk')
     cb = pg.inner_text('#closeCard')
     check('ปิดรอบแล้ว' in cb and 'เปิดไฟล์สำรอง' in cb and 'รหัสรอบใหม่' in cb, 'การ์ดหลังปิดรอบ: ลิงก์ไฟล์สำรอง + บอกให้เปิดรอบใหม่ด้วยรหัสใหม่')
     hb = pg.inner_text('#histBox')
+    OUTM[1] = 'นอก Master 3' in hb
     check(pid in hb and 'รอบทดลอง' in hb and '-2' in hb and pg.locator('#histBox button:has-text("ตรวจไฟล์สำรอง")').count() == 1, 'การ์ด "รอบที่ปิดแล้ว" แสดงรอบ ประเภท ผลต่าง และปุ่มตรวจไฟล์สำรอง')
     pg.evaluate("x => { window.VERIFY = x; }", {'project': pid, 'ok': False, 'cfgOk': True, 'url': 'https://example.invalid/a', 'at': '2026-11-21 09:00:00',
         'rows': [{'sheet': 'Count_Log', 'ok': False, 'rows': 99}, {'sheet': 'Adjustments', 'ok': True, 'rows': 1}, {'sheet': 'Variance', 'ok': True, 'rows': 40}]})
@@ -492,6 +495,58 @@ with sync_playwright() as p:
     check(pg.is_visible('#askWhyBox') and pg.is_disabled('#askOk'), 'ปิดใช้ → ต้องใส่เหตุผลและเลือกผู้กด')
     pg.fill('#askWhy', 'จบงาน'); pg.select_option('#askStaff', 'EMP-K'); pg.evaluate('CALLS.length = 0'); pg.click('#askOk'); pg.wait_for_timeout(50)
     check(['apiStaffActive', 'EMP-K', 'TMP01', False, 'จบงาน'] in pg.evaluate('CALLS'), 'เรียก apiStaffActive(…, false, เหตุผล)')
+
+    # v2.6.0 นอก Master (ผลปิดรอบ / รอบที่ปิดแล้ว) — ตรวจไว้ตอนปิดรอบด้านบน
+    check(OUTM[0] and OUTM[1], 'v2.6.0 นอก Master: กล่องผลปิดรอบ "(นอก Master 3)" + ตารางรอบที่ปิดแล้ว "นอก Master 3"')
+
+    # v2.6.0 หน้า ตรวจสอบ (Audit)
+    print('\nหน้า ตรวจสอบ (v2.6.0)')
+    AUD = st['AUDIT']
+    pg.click('#nav button[data-t="audit"]'); pg.wait_for_timeout(50)
+    check(pg.is_visible('#audit') and pg.locator('#auKinds button').count() == 3 and 'SKU' in pg.inner_text('#auKinds button.on'), 'แท็บ "ตรวจสอบ" อยู่ถัดจากสรุปผลนับ · ปุ่ม SKU / Location / ผู้ตรวจ (เริ่มที่ SKU)')
+    navs = pg.eval_on_selector_all('#nav button', 'b => b.map(x => x.dataset.t)')
+    check(navs.index('audit') == navs.index('summary') + 1 and navs.index('staff') == navs.index('audit') + 1, 'ลำดับแท็บ: สรุปผลนับ → ตรวจสอบ → พนักงาน')
+    pg.evaluate('CALLS.length = 0'); pg.click('#audit button:has-text("ค้น")'); pg.wait_for_timeout(50)
+    check(not any(c[0] == 'apiAudit' for c in pg.evaluate('CALLS')), 'ไม่ใส่คำค้น → ไม่เรียกเซิร์ฟเวอร์')
+    pg.fill('#auQ', 'A112101UT0'); pg.press('#auQ', 'Enter'); pg.wait_for_timeout(80)
+    check(['apiAudit', 'sku', 'A112101UT0', {'pick': '', 'edits': False, 'offset': 0}] in pg.evaluate('CALLS'), 'Enter → apiAudit("sku", คำค้น, { offset 0 })')
+    check('กดเลือก 1 รายการ' in pg.inner_text('#auBody') and pg.locator('#auBody table tr').count() - 1 == len(AUD['choices']['choices']), 'เจอหลายตัว → ตารางให้เลือก')
+    pg.evaluate('CALLS.length = 0'); pg.locator('#auBody a.j').first.click(); pg.wait_for_timeout(80)
+    c = [x for x in pg.evaluate('CALLS') if x[0] == 'apiAudit'][-1]
+    check(c[3]['pick'] == AUD['choices']['choices'][0][0], 'กดเลือก → ค้นซ้ำพร้อม pick')
+    body = pg.inner_text('#auBody'); S0 = AUD['sku']
+    check('ยอดแยก Location' in body and 'บรรทัดใน Count_Log' in body and ('จาก ' + str(S0['total'])) in body, 'ผล SKU: ยอด · แยก Location · บรรทัด (จาก %d)' % S0['total'])
+    check(pg.locator('#auBody table tr.ed').count() == S0['editCount'] and S0['editCount'] > 0, 'บรรทัดแก้/ยกเลิก ไฮไลต์ (%d)' % S0['editCount'])
+    check('ผู้ดูแลแก้ยอด' in body or 'ล้าง Location' in body, 'ประเภทเป็นภาษาไทย')
+    pg.screenshot(path='/tmp/admin-audit-sku.png', full_page=True)
+    pg.evaluate('CALLS.length = 0'); pg.check('#auEd'); pg.wait_for_timeout(80)
+    c = [x for x in pg.evaluate('CALLS') if x[0] == 'apiAudit'][-1]
+    check(c[3]['edits'] is True and c[3]['offset'] == 0, 'ติ๊ก "เฉพาะรายการแก้/ยกเลิก" → ค้นซ้ำ edits=true')
+    check(pg.locator('#auBody table tr.ed').count() == AUD['edits']['total'] and 'เฉพาะแก้/ยกเลิก' in pg.inner_text('#auBody'), 'แสดงเฉพาะบรรทัดแก้/ยกเลิก')
+    pg.uncheck('#auEd'); pg.wait_for_timeout(50)
+    # กด Location ในผล → ค้น Location
+    pg.evaluate('CALLS.length = 0'); pg.locator('#auBody a.j', has_text='D80').first.click(); pg.wait_for_timeout(80)
+    c = [x for x in pg.evaluate('CALLS') if x[0] == 'apiAudit'][-1]
+    check(c[1] == 'loc' and c[2] == 'D80' and 'Location' in pg.inner_text('#auKinds button.on'), 'กด D80 → ค้นแบบ Location')
+    body = pg.inner_text('#auBody')
+    check('ลำดับเหตุการณ์' in body and 'เครื่องที่ร่วมนับ' in body and 'เปิด' in body and 'ผู้ดูแล' in body, 'ผล Location: เครื่องที่ร่วม · ลำดับเหตุการณ์ภาษาไทย')
+    check('สินค้า' in pg.inner_text('#auBody table >> nth=-1') or pg.locator('#auBody th', has_text='สินค้า').count() == 1, 'ค้น Location → ตารางบรรทัดมีคอลัมน์สินค้า')
+    pg.screenshot(path='/tmp/admin-audit-loc.png', full_page=True)
+    pg.evaluate('CALLS.length = 0'); pg.locator('#auBody a.j', has_text='นาย ค').first.click(); pg.wait_for_timeout(80)
+    c = [x for x in pg.evaluate('CALLS') if x[0] == 'apiAudit'][-1]
+    check(c[1] == 'staff' and c[2] == 'EMP-C', 'กดชื่อผู้ตรวจ → ค้นแบบผู้ตรวจ (รหัส)')
+    body = pg.inner_text('#auBody')
+    check('นาย ค' in body and 'Location ที่ร่วม' in body and 'บรรทัดที่บันทึก' in body, 'ผล ผู้ตรวจ: ชื่อ · Location ที่ร่วม · สรุปตัวเลข')
+    pg.screenshot(path='/tmp/admin-audit-staff.png', full_page=True)
+    # รอบปิดแล้ว / ไม่มีรอบ
+    pg.evaluate("renderAudit({ closed: true, project: 'R9', statusTh: 'ปิดรอบแล้ว', at: 'x', url: 'https://example.invalid/z' })")
+    check('ไฟล์สำรอง' in pg.inner_text('#auBody') and pg.locator('#auBody a[href="https://example.invalid/z"]').count() == 1, 'รอบปิดแล้ว → ลิงก์ไฟล์สำรอง')
+    pg.evaluate("renderAudit({ none: true })")
+    check('ยังไม่มีรอบที่เปิดอยู่' in pg.inner_text('#auBody'), 'ไม่มีรอบ → บอกชัด')
+    # แบ่งหน้า
+    big = dict(AUD['sku']); big.update({'total': 450, 'offset': 200, 'page': 200})
+    pg.evaluate("r => renderAudit(r)", big)
+    check(pg.locator('#auBody button:has-text("ก่อนหน้า")').count() == 1 and pg.locator('#auBody button:has-text("ถัดไป")').count() == 1 and 'แสดง 201–' in pg.inner_text('#auBody'), 'แบ่งหน้า: ก่อนหน้า / ถัดไป')
     check(not dialogs, 'ไม่มี popup ของเบราว์เซอร์: ' + json.dumps(dialogs, ensure_ascii=False))
     b.close()
 print('\nผล: ผ่าน %d / ไม่ผ่าน %d' % (P, F))
