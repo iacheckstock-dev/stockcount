@@ -53,7 +53,7 @@ with sync_playwright() as p:
     pg.wait_for_selector('#v-ready.on'); pg.wait_for_function("/พร้อม/.test(document.querySelector('#readyHead').textContent)", timeout=20000)
     shot('02-ready-before')
     check('ยังไม่พร้อม' in pg.inner_text('#readyHead'), 'ตรวจความพร้อมครั้งแรก: ยังไม่พร้อม (ยังไม่ยิงบัตร/ทดสอบเสียง)')
-    check('2,330 รายการ' in pg.inner_text('#readyList'), 'โหลดรายการบาร์โค้ด 2,330 รายการลงเครื่อง')
+    check('2,330 รหัส · 2,318 บาร์โค้ด' in pg.inner_text('#readyList'), 'โหลดรายการบาร์โค้ดลงเครื่อง: 2,330 รหัส · 2,318 บาร์โค้ด (v2.5.7 แสดงทั้งสองตัวเลข)')
 
     print('ตรวจความพร้อม')
     scan('EMP:EMP-XX')
@@ -82,7 +82,7 @@ with sync_playwright() as p:
     pg.wait_for_function("/พร้อมนับ ✓/.test(document.querySelector('#readyHead').textContent)", timeout=10000)
     shot('03-ready-pass')
     check(pg.is_visible('#btnStart'), 'ผ่านทุกข้อ ขึ้นปุ่มเริ่มนับ')
-    check('แอป 2.5.6 · เซิร์ฟเวอร์ 2.5.6' in pg.inner_text('#readyList'), 'แสดงเวอร์ชันแอปและเซิร์ฟเวอร์ตรงกัน')
+    check('แอป 2.5.7 · เซิร์ฟเวอร์ 2.5.7' in pg.inner_text('#readyList'), 'แสดงเวอร์ชันแอปและเซิร์ฟเวอร์ตรงกัน')
     pg.click('#btnStart'); pg.wait_for_selector('#v-count.on')
     check('นุ่น' in pg.inner_text('#tbStaff'), 'เข้างานเป็น นุ่น')
 
@@ -206,7 +206,7 @@ with sync_playwright() as p:
     check('9.9.9' in pg.inner_text('#readyList'), 'มีเวอร์ชันใหม่ → ขึ้น ✗ พร้อมปุ่ม "อัปเดตแอปตอนนี้"')
     shot('11-update')
     pg.click('#btnUpdate'); pg.wait_for_load_state('load'); pg.wait_for_timeout(1500)
-    get('/debug/version?v=2.5.6')
+    get('/debug/version?v=2.5.7')
     pg.wait_for_selector('.view.on', timeout=10000)
     check('รายการ 38' in pg.inner_text('#syncText'), 'หลังกดอัปเดต แอปโหลดใหม่ ข้อมูลในเครื่องยังครบ 38 รายการ')
 

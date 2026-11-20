@@ -554,7 +554,7 @@ function render(s) {
   var st = s.master.stats;
   $('statsKv').innerHTML = kv([
     ['รหัสทั้งหมด', fmt(st.materials)], ['SAP / POS', fmt(st.sapMaterials) + ' / ' + fmt(st.posItems)],
-    ['จับคู่ได้', fmt(st.matched)], ['บาร์โค้ดส่งลงเครื่อง', fmt(st.barcodes)],
+    ['จับคู่ได้', fmt(st.matched)], ['ส่งลงเครื่อง', barcodeText(s.master)],
     ['ยอด SAP (ชิ้น)', s.master.hasSap ? fmt(st.sapQtyTotal) : '-'], ['ยอด POS (ชิ้น)', fmt(st.posQtyTotal)],
     ['มูลค่าตามบัญชี', s.master.hasSap ? fmt(st.sapValueTotal) + ' บาท' : '-'], ['สถานะพิเศษ IT/QI/BL', fmt(st.specialStatus) + ' รหัส']
   ], true);
@@ -571,12 +571,23 @@ function render(s) {
  * v2.5.6: เลือกรอบ / ทุกรอบ · ค้นคำ · แสดงเพิ่มทีละ 100 (apiAdminLog) · ความกว้างคอลัมน์คงที่ทุกมุมมอง
  */
 var LOGQ = null;
+// v2.5.7: ส่งลงเครื่อง "2,330 รหัส · 2,318 บาร์โค้ด" แบบเดียวกับบนเครื่อง · ต่างกัน = รหัสบาร์โค้ด 0000 / ซ้ำ (ยิงหาไม่ได้)
+function barcodeText(m) {
+  var st = m.stats || {}, rows = m.deviceCount || st.posItems || 0, bc = st.barcodes || 0;
+  return fmt(rows) + ' รหัส · ' + fmt(bc) + ' บาร์โค้ด' + (rows > bc ? '<br><span class="muted">' + fmt(rows - bc) + ' รหัสยิงหาไม่ได้ (บาร์โค้ด 0000 / ซ้ำ) — ดูแท็บ ตรวจความพร้อม</span>' : '');
+}
+function logRoundLabel(p) { return p === '(ไม่ระบุรอบ)' ? 'ก่อนเปิดรอบแรก' : p; }
+function logRoundOptions(rounds, project, allCount) {
+  var sel = $('logRound'), keep = sel.value;
+  sel.innerHTML = (rounds || []).map(function (x) { return '<option value="' + esc(x.p) + '">' + esc(logRoundLabel(x.p)) + (x.p === project ? ' (รอบปัจจุบัน)' : '') + ' · ' + x.n + '</option>'; }).join('') +
+    '<option value="*">ทุกรอบ · ' + allCount + '</option>';
+  if (project && !(rounds || []).some(function (x) { return x.p === project; })) sel.insertAdjacentHTML('afterbegin', '<option value="' + esc(project) + '">' + esc(project) + ' (รอบปัจจุบัน) · 0</option>');
+  if (keep) sel.value = keep;
+}
 function renderLog() {
   var L = S && S.log; if (!L) return;
   var sel = $('logRound'), keep = sel.value;
-  sel.innerHTML = (L.rounds || []).map(function (x) { return '<option value="' + esc(x.p) + '">' + esc(x.p) + (x.p === L.project ? ' (รอบปัจจุบัน)' : '') + ' · ' + x.n + '</option>'; }).join('') +
-    '<option value="*">ทุกรอบ · ' + L.allCount + '</option>';
-  if (!(L.rounds || []).some(function (x) { return x.p === L.project; }) && L.project) sel.insertAdjacentHTML('afterbegin', '<option value="' + esc(L.project) + '">' + esc(L.project) + ' (รอบปัจจุบัน) · 0</option>');
+  logRoundOptions(L.rounds, L.project, L.allCount);
   if (LOGQ && (LOGQ.round !== (L.project || '*') || LOGQ.q)) { sel.value = keep || LOGQ.round; return; }   // กำลังดูรอบอื่น/ค้นอยู่ — ไม่ทับ
   sel.value = L.project || '*';
   LOGQ = { round: sel.value, q: '', offset: 0, rows: L.project ? L.cur : L.all, total: L.project ? L.curCount : L.allCount };
@@ -586,12 +597,13 @@ function logQuery(offset, more) {
   var round = $('logRound').value, q = $('logQ').value.trim();
   call('apiAdminLog', [round, q, offset], function (d) {
     LOGQ = { round: d.round, q: d.q, offset: more ? LOGQ.offset : d.offset, rows: more ? LOGQ.rows.concat(d.rows) : d.rows, total: d.total };
+    if (d.rounds && d.rounds.length) logRoundOptions(d.rounds, S && S.log && S.log.project, d.rounds.reduce(function (a, x) { return a + x.n; }, 0));   // v2.5.7: จำนวนในช่องเลือกรอบเป็นปัจจุบัน
     drawLog();
   }, 'กำลังโหลดบันทึก…');
 }
 function drawLog() {
   var Q = LOGQ, head = $('logTbl').querySelector('colgroup').outerHTML;
-  $('logInfo').textContent = (Q.round === '*' ? 'ทุกรอบ' : 'รอบ ' + Q.round) + (Q.q ? ' · ค้น "' + Q.q + '"' : '') + ' · ' + nf(Q.total) + ' รายการ · แสดง ' + nf(Q.rows.length);
+  $('logInfo').textContent = (Q.round === '*' ? 'ทุกรอบ' : 'รอบ ' + logRoundLabel(Q.round)) + (Q.q ? ' · ค้น "' + Q.q + '"' : '') + ' · ' + nf(Q.total) + ' รายการ · แสดง ' + nf(Q.rows.length);
   $('logTbl').innerHTML = head + '<tr><th>เวลา</th><th>ผู้ทำ</th><th>การกระทำ</th><th>สิ่งที่ถูกกระทำ</th><th>รายละเอียด</th><th>รอบ</th></tr>' +
     (Q.rows.length ? Q.rows.map(function (l) { return '<tr>' + l.map(function (c) { return '<td>' + esc(c) + '</td>'; }).join('') + '</tr>'; }).join('') :
       '<tr><td colspan="6" class="muted">ไม่พบรายการ</td></tr>');

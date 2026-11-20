@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2.5.6';
+  var APP_VERSION = '2.5.7';
   var QTY_CONFIRM = 150;      // จำนวนที่ป้อนเองเกินนี้ต้องยืนยันอีกครั้ง
   var QTY_MAX_DIGITS = 5;     // ยาวกว่านี้ = น่าจะยิงบาร์โค้ดเข้าช่องจำนวน
   var INFO_EVERY = 15000;     // ถามสถานะผู้ช่วย/ผู้ดูแลระหว่างนับร่วมกัน
@@ -467,6 +467,11 @@
    * ลดการยิงสลับสี/ไซส์ — เน้นอย่างน้อย 4 ตัวท้ายเสมอ
    */
   var tailCache = new Map();
+  /** v2.5.7: จำนวนในเครื่องแบบเดียวกันทุกที่ — "2,330 รหัส · 2,318 บาร์โค้ด" (รหัสที่บาร์โค้ด 0000 / ซ้ำ ยิงหาไม่ได้ จึงนับบาร์โค้ดน้อยกว่า) */
+  function masterCountText() {
+    var rows = (S.masterList || []).length, bc = S.master ? S.master.size : 0;
+    return fmt(rows) + ' รหัส · ' + fmt(bc) + ' บาร์โค้ด';
+  }
   function diffStart(c) {
     if (tailCache.has(c)) return tailCache.get(c);
     // พี่น้อง = รหัสที่ขึ้นต้นเหมือนกันทั้งหมดยกเว้น 6 ตัวท้าย; เน้นตั้งแต่ตำแหน่งแรกที่ต่างจากพี่น้องตัวใดตัวหนึ่ง
@@ -637,6 +642,9 @@
             modal({ title: 'เครื่องนี้เป็นผู้ช่วยที่ ' + r.location, html: esc(r.location) + ' มีผู้ดูแลอยู่แล้ว (' + esc(r.owner) + ')<br>ยอดที่ยิงไว้ยังอยู่ นับต่อได้ เสร็จแล้วกด "ส่งงาน"<br><span class="muted">ถ้ายิงป้ายผิด ให้ยิงป้าย Location ที่ถูก ระบบจะส่งงานให้ แล้วแจ้งผู้ดูแลแก้ยอด</span>',
               yes: 'รับทราบ', noCancel: true });
           } else toast(msg, r.role === 'HELPER');
+          // v2.5.7: การ์ดยังเขียน "เปิด D2 แล้ว" (แบบผู้ดูแล) ทั้งที่เป็นผู้ช่วยแล้ว — เปลี่ยนเฉพาะการ์ดตอนเปิด (ไม่ทับผลการยิงล่าสุด)
+          if (r.role === 'HELPER' && /^(เปิด|กลับมานับต่อ) /.test($('cardTitle').textContent))
+            setCard('idle', 'ช่วยนับ ' + r.location + ' — ยิงสินค้าได้เลย', 'ผู้ดูแล ' + esc(r.owner || '') + ' · เสร็จแล้วกด "ส่งงาน"');
           fetchInfo(r.location, INFO_BG_MS);
         }
       });
@@ -1727,7 +1735,7 @@
       ['ยอดรวมทั้งเครื่อง (ชิ้น)', fmt(deviceTotal())],
       ['เซิร์ฟเวอร์ไม่รับ', fmt(rej.length)], ['ข้อมูลรอบอื่นค้างส่ง', fmt(S.oldPending.length)], ['รอตรวจ Location', fmt(S.events.length)],
       ['ส่งสำเร็จล่าสุด', S.lastSyncOk ? stamp(new Date(S.lastSyncOk)).slice(11) : '-'], ['เชื่อมต่อ', S.online === false ? 'ออฟไลน์' : S.slow ? 'เซิร์ฟเวอร์ช้า/มีปัญหา (' + S.slow + ')' : S.online ? 'ออนไลน์' : '-'],
-      ['รายการบาร์โค้ด', fmt(S.master.size) + ' · ' + (S.masterHash || '-')], ['เวอร์ชัน', 'แอป ' + APP_VERSION + ' · เซิร์ฟเวอร์ ' + (S.serverVersion || '-') + (S.latestVersion && S.latestVersion !== APP_VERSION ? ' (มีแอป ' + S.latestVersion + ')' : '')]
+      ['รายการบาร์โค้ด', masterCountText() + ' · ' + (S.masterHash || '-')], ['เวอร์ชัน', 'แอป ' + APP_VERSION + ' · เซิร์ฟเวอร์ ' + (S.serverVersion || '-') + (S.latestVersion && S.latestVersion !== APP_VERSION ? ' (มีแอป ' + S.latestVersion + ')' : '')]
     ];
     // เวลาตอบของเซิร์ฟเวอร์ตั้งแต่เปิดแอป (v2.2.6) — ใช้ตัดสินใจปรับระบบ (ขั้น C)
     var sec = function (ms) { return (ms / 1000).toFixed(1); };
@@ -1935,7 +1943,8 @@
     $('readyHead').textContent = 'กำลังตรวจ…';
     $('btnStart').classList.add('hidden');
     var bootP = quick && S.boot ? Promise.resolve({ ok: true, cached: false, boot: S.boot, fresh: true }) :
-      api('bootstrap', {}, 12000).then(function (b) { return { boot: b, fresh: true }; }, function (e) { return { err: e }; });
+      api('bootstrap', {}, 20000)   // v2.5.7: เดิม 12 วิ — UAT 15 หมดเวลา 1 ครั้ง (ใช้ 8–12 วิ)
+     .then(function (b) { return { boot: b, fresh: true }; }, function (e) { return { err: e }; });
     var batteryP = navigator.getBattery ? navigator.getBattery().catch(function () { return null; }) : Promise.resolve(null);
     var storeP = DB.persistent().then(function (p) {
       return navigator.storage && navigator.storage.estimate ? navigator.storage.estimate().then(function (e) { return { p: p, free: (e.quota || 0) - (e.usage || 0) }; }) : { p: p, free: Infinity };
@@ -1993,7 +2002,7 @@
         }
         return masterP.then(function () {
           if (boot && b.boot && !boot.master.approved) add('รายการบาร์โค้ดตรงเวอร์ชันที่อนุมัติ', 'FAIL', 'Master ยังไม่ได้อนุมัติสำหรับรอบนี้ (หน้า Admin)');
-          else if (boot && S.master.size && S.masterHash === boot.master.hash && S.masterProject === boot.project.id) add('รายการบาร์โค้ดตรงเวอร์ชันที่อนุมัติ', offline ? 'WARN' : 'OK', fmt(S.masterList.length) + ' รายการ · v' + (boot.master.version || ''));
+          else if (boot && S.master.size && S.masterHash === boot.master.hash && S.masterProject === boot.project.id) add('รายการบาร์โค้ดตรงเวอร์ชันที่อนุมัติ', offline ? 'WARN' : 'OK', masterCountText() + ' · v' + (boot.master.version || ''));
           else if (offline && S.master.size && S.masterProject === S.projectId) add('รายการบาร์โค้ดตรงเวอร์ชันที่อนุมัติ', 'WARN', 'ใช้ชุดในเครื่อง (ตรวจเวอร์ชันไม่ได้ตอนออฟไลน์)');
           else add('รายการบาร์โค้ดตรงเวอร์ชันที่อนุมัติ', 'FAIL', S._masterErr || 'ยังไม่มีรายการบาร์โค้ดของรอบนี้ในเครื่อง');
           // 6 รอบเก่าค้าง
@@ -2054,7 +2063,7 @@
   $('btnReload').onclick = function () {
     $('readyHead').textContent = 'กำลังโหลดรายการบาร์โค้ด…';
     downloadMaster().then(function () {
-      runChecks(true); result(true, 'โหลดรายการบาร์โค้ดแล้ว', fmt(S.masterList.length) + ' รายการ', { stay: true });
+      runChecks(true); result(true, 'โหลดรายการบาร์โค้ดแล้ว', masterCountText(), { stay: true });
     }, function (e) { runChecks(true); result(false, 'โหลดรายการบาร์โค้ดไม่สำเร็จ', (e.message || '') + (S.online ? '' : '\nตรวจ Wi-Fi แล้วกดโหลดอีกครั้ง')); });
   };
   $('btnStart').onclick = function () { setCard('idle', S.loc ? 'อยู่ที่ ' + S.loc + ' — ยิงสินค้าต่อได้' : 'ยิงป้าย Location เพื่อเริ่ม'); show('count'); };
