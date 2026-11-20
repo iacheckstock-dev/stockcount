@@ -66,6 +66,9 @@
   .steps td { border-top:1px solid var(--line); padding:7px 8px; vertical-align:middle; }
   .steps td.n { width:30px; font-weight:700; text-align:center; } .steps td.r { width:28px; font-size:18px; text-align:center; } .steps td.b { width:230px; text-align:right; }
   .steps .y { color:var(--ok); } .steps .x { color:var(--bad); } .steps .w { color:var(--mut); }
+  /* v2.6.0 (UAT G17-1): ตารางเครื่อง TC21 หัวตาราง/รหัสเครื่องไม่ตัดคำ · ความกว้างตามข้อมูล */
+  #devTbl { table-layout:fixed; min-width:1150px; } #devTbl th, #devTbl td:first-child { white-space:nowrap; } #devTbl td { overflow-wrap:anywhere; }
+  #devTbl td:last-child .btn { display:block; width:100%; margin:0 0 4px; white-space:nowrap; }
   #locTbl { table-layout:fixed; width:100%; min-width:1100px; }
   #locTbl td, #locTbl th { overflow-wrap:anywhere; }
   #archBanner { display:none; background:var(--bad); color:#fff; padding:10px 14px; border-radius:8px; margin-bottom:12px; font-weight:700; }
@@ -658,13 +661,13 @@ function renderClose(s) {
   }
   $('closeBox').innerHTML = h;
   var canCheck = !!r.projectId && (r.status === 'COUNTING' || r.status === 'COUNT_CLOSED' || r.status === 'SETUP');
-  $('kBox').innerHTML = canCheck ? '<div class="row" style="margin-top:10px"><button class="btn sec" onclick="closeCheck()">ตรวจเงื่อนไขปิดรอบ (แบบเต็ม)</button>' +
+  $('kBox').innerHTML = canCheck ? '<div class="row" style="margin-top:10px"><button class="btn sec" onclick="closeCheck(true)">ตรวจเงื่อนไขปิดรอบ (แบบเต็ม)</button>' +
     '<span class="muted">ดูอย่างเดียว ไม่เปลี่ยนข้อมูล · คำนวณผลสรุปใหม่เพื่อเทียบ K5 (ใช้เวลาครู่หนึ่ง)</span></div><div id="kList">' + (KCHK && KCHK.project === r.projectId ? kHtml(KCHK) : '') + '</div>' : '';
   if (r.status === 'COUNT_CLOSED') { stepsRender(); fastCheck(); }
 }
 /** ตรวจแบบเร็วอัตโนมัติ (ไม่คำนวณผลสรุปใหม่) — ไม่ทับผลแบบเต็มที่เพิ่งตรวจ ถ้าตัวเลขยังไม่เปลี่ยน */
-function fastCheck() {
-  google.script.run.withSuccessHandler(function (K) {
+function fastCheck(manual) {
+  var done = function (K) {
     var k4 = function (X) { return (X.items.filter(function (y) { return y.id === 'K4'; })[0] || {}).detail; };
     // ผลแบบเต็มล่าสุดยังใช้ K5 ได้ถ้า Count_Log ไม่เปลี่ยน (K4 เหมือนเดิม) — ปุ่มปิดรอบตรวจซ้ำแบบเต็มที่เซิร์ฟเวอร์อีกครั้งเสมอ
     if (KCHK && KCHK.full && KCHK.project === K.project && k4(KCHK) === k4(K)) {
@@ -672,7 +675,14 @@ function fastCheck() {
       K.full = true; K.ok = K.items.every(function (x) { return x.ok; });
     }
     KCHK = K; if ($('kList')) $('kList').innerHTML = kHtml(K); stepsRender();
-  }).withFailureHandler(function () { }).apiCloseCheckFast();
+    if (manual === true) {   // v2.6.0 (UAT G17-4): กดเอง → กล่องรอ + กล่องผลของขั้นที่ 1 (K3) · ตรวจอัตโนมัติยังเงียบเหมือนเดิม
+      var k3 = K.items.filter(function (y) { return y.id === 'K3'; })[0];
+      if (k3) ask({ title: k3.ok ? '✓ ทุกเครื่องส่งสัญญาณแล้ว · ค้างส่ง 0' : '✗ ขั้นที่ 1 ยังไม่ผ่าน', ok: 'ปิด', noCancel: true,
+        body: '<div class="muted">ตรวจเมื่อ ' + esc(K.at) + '</div>' + kItems([k3]) + (k3.ok ? '<div style="margin-top:6px"><b>ขั้นต่อไป:</b> ทำขั้นที่ยังเป็น ✗ ในตารางทีละข้อ</div>' : '') }, function () {});
+    }
+  };
+  if (manual === true) call('apiCloseCheckFast', [], done, 'กำลังตรวจว่าทุกเครื่องส่งสัญญาณแล้ว…');
+  else google.script.run.withSuccessHandler(done).withFailureHandler(function () { }).apiCloseCheckFast();
 }
 function kOk(id) { var x = KCHK && KCHK.items.filter(function (y) { return y.id === id; })[0]; return !!(x && x.ok); }
 function stepsRender() {
@@ -681,11 +691,11 @@ function stepsRender() {
   var st = function (ok, wait) { return '<td class="r ' + (ok ? 'y">✓' : wait ? 'w">…' : 'x">✗') + '</td>'; };
   var ready = !!(K && K.full && K.ok), testOk = !!(K && kOk('K3') && kOk('K6') && kOk('K7'));
   var rows = [
-    ['1', 'ทุกเครื่องส่งสัญญาณหลังปิดการนับ · ค้างส่ง 0 (K3)', K ? kOk('K3') : null, '<button class="btn sec" onclick="fastCheck()">ตรวจอีกครั้ง</button>'],
+    ['1', 'ทุกเครื่องส่งสัญญาณหลังปิดการนับ · ค้างส่ง 0 (K3)', K ? kOk('K3') : null, '<button class="btn sec" onclick="fastCheck(true)">ตรวจอีกครั้ง</button>'],
     ['2', 'ทุก Location ปิดแล้ว · ไม่มีธงต้องตรวจซ้ำ (K1 · K2)', K ? kOk('K1') && kOk('K2') : null, '<span class="muted">ปิดที่เครื่อง / ส่งงานแทน</span>'],
     ['3', 'กระทบยอดทั้งรอบ หลังเครื่องส่งครบ (K4)', K ? kOk('K4') : null, '<button class="btn sec" onclick="reconcile(fastCheck)">กระทบยอดทั้งรอบ</button>'],
     ['4', 'สรุปผลและบันทึก — หลังปรับยอดครั้งสุดท้าย (K5)', K ? kOk('K5') : null, '<button class="btn sec" onclick="saveSummary(closeCheck)">สรุปผลและบันทึก</button>'],
-    ['5', 'ตรวจเงื่อนไขแบบเต็ม — เทียบตัวเลขผลสรุป', K ? ready : null, '<button class="btn sec" onclick="closeCheck()">ตรวจเงื่อนไข</button>'],
+    ['5', 'ตรวจเงื่อนไขแบบเต็ม — เทียบตัวเลขผลสรุป', K ? ready : null, '<button class="btn sec" onclick="closeCheck(true)">ตรวจเงื่อนไข</button>'],
     ['6', 'ปิดรอบ — สำรองไฟล์ → ตรวจไฟล์สำรอง → ล้างชีตงาน', ready, '<button class="btn" ' + (ready ? '' : 'disabled title="ทำข้อ 1–5 ให้ครบก่อน"') + ' onclick="closeRound(false)">ปิดรอบ</button>']
   ];
   var h = '<table class="steps">' + rows.map(function (x) { return '<tr><td class="n">' + x[0] + '</td>' + st(x[2], x[2] === null) + '<td>' + x[1] + '</td><td class="b">' + x[3] + '</td></tr>'; }).join('') + '</table>';
@@ -756,13 +766,23 @@ function kHtml(K) {
     (K.full ? '' : ' · ยังไม่ได้เทียบตัวเลข K5 กด "ตรวจเงื่อนไขปิดรอบ"') + '</span>' +
     (K.after && K.after.n ? '<div class="card" style="margin-top:6px;border-color:var(--warn);background:var(--warnbg)">หลังปิดการนับ รับรายการเพิ่ม ' + K.after.n + ' รายการ' +
       (K.after.late ? ' · <b>ยิงหลังเวลาปิด ' + K.after.late + ' รายการ</b> (เครื่องยังไม่รู้ว่าปิด เช่น ออฟไลน์) — ดูรายละเอียดใน บันทึก Admin (SYNC_AFTER_COUNT_CLOSE)' : ' (ค้างส่งจากก่อนปิด)') + '</div>' : '') +
-    '<table class="klist">' + K.items.map(function (x) {
-      return '<tr><td class="k">' + esc(x.id) + '</td><td class="r ' + (x.ok ? 'y' : 'x') + '">' + (x.ok ? '✓' : '✗') + '</td><td><b>' + esc(x.title) + '</b><div>' + esc(x.detail) + '</div>' +
-        (x.list && x.list.length ? '<div class="lst">' + x.list.map(function (l) { return '<div>' + esc(l) + '</div>'; }).join('') + '</div>' : '') + (x.fix ? '<div class="fix">ทำอย่างไร: ' + esc(x.fix) + '</div>' : '') + '</td></tr>';
-    }).join('') + '</table></div>';
+    kItems(K.items) + '</div>';
 }
-function closeCheck() {
-  call('apiCloseCheck', [], function (K) { KCHK = K; if ($('kList')) $('kList').innerHTML = kHtml(K); stepsRender(); }, 'กำลังตรวจเงื่อนไขปิดรอบ…');
+function closeCheck(box) {
+  call('apiCloseCheck', [], function (K) { KCHK = K; if ($('kList')) $('kList').innerHTML = kHtml(K); stepsRender(); if (box === true) kResultBox(K); }, 'กำลังตรวจเงื่อนไขปิดรอบ…');
+}
+/** v2.6.0 (UAT G17-7): กดปุ่มตรวจเองแล้วต้องเห็นผลกลางจอ — ตารางที่เป็น ✓ อยู่แล้วดูไม่ออกว่าตรวจเสร็จ */
+function kResultBox(K) {
+  var bad = K.items.filter(function (x) { return !x.ok; });
+  ask({ title: bad.length ? '✗ ยังไม่ครบ ' + bad.length + ' ข้อ' : '✓ ครบทุกเงื่อนไข พร้อมปิดรอบ', ok: 'ปิด', noCancel: true,
+    body: '<div class="muted">ตรวจเมื่อ ' + esc(K.at) + '</div>' + (bad.length ? kItems(bad) :
+      '<div style="margin-top:6px">K1–K7 ✓ ทุกข้อ · <b>ขั้นต่อไป:</b> ขั้นที่ 6 กด "ปิดรอบ"</div>') }, function () {});
+}
+function kItems(list) {
+  return '<table class="klist">' + list.map(function (x) {
+    return '<tr><td class="k">' + esc(x.id) + '</td><td class="r ' + (x.ok ? 'y' : 'x') + '">' + (x.ok ? '✓' : '✗') + '</td><td><b>' + esc(x.title) + '</b><div>' + esc(x.detail) + '</div>' +
+      (x.list && x.list.length ? '<div class="lst">' + x.list.map(function (l) { return '<div>' + esc(l) + '</div>'; }).join('') + '</div>' : '') + (x.fix ? '<div class="fix">ทำอย่างไร: ' + esc(x.fix) + '</div>' : '') + '</td></tr>';
+  }).join('') + '</table>';
 }
 function countClose() {
   ask({ title: 'ปิดการนับ รอบ ' + S.round.projectId + '?', ok: 'ปิดการนับ', staff: true,
@@ -1497,7 +1517,8 @@ function renderDevices(d) {
   ], true);
   $('qInfo').textContent = d.quarantine ? 'มีข้อมูลรอบอื่นแยกไว้ ' + d.quarantine + ' รายการ (ชีต Quarantine)' : '';
   var now = Date.now();
-  $('devTbl').innerHTML = '<tr><th>เครื่อง</th><th>สถานะ</th><th>ติดต่อล่าสุด</th><th>ส่งล่าสุด</th><th class="n">Seq ล่าสุด</th><th class="n">Seq ขาด</th><th>ตรวจความพร้อม</th><th>เวอร์ชันแอป</th><th>พร้อมรอบนี้</th><th>จับคู่</th><th></th></tr>' +
+  $('devTbl').innerHTML = '<colgroup><col style="width:84px"><col><col style="width:106px"><col style="width:100px"><col style="width:82px"><col style="width:70px"><col style="width:120px"><col style="width:92px"><col style="width:140px"><col style="width:96px"><col style="width:136px"></colgroup>' +
+    '<tr><th>เครื่อง</th><th>สถานะ</th><th>ติดต่อล่าสุด</th><th>ส่งล่าสุด</th><th class="n">Seq ล่าสุด</th><th class="n">Seq ขาด</th><th>ตรวจความพร้อม</th><th>เวอร์ชันแอป</th><th>พร้อมรอบนี้</th><th>จับคู่</th><th></th></tr>' +
     d.devices.map(function (x) {
       var rev = x.revokedAt ? '<div class="muted">ยกเลิก ' + esc(x.revokedAt.slice(5, 16)) + ' · ' + esc(x.revokeReasonText) + (x.repairedAt ? ' · จับคู่ใหม่ ' + esc(x.repairedAt.slice(5, 16)) : '') + '</div>' : '';
       var st = !x.active ? '<span class="pill bad">ปิดใช้งาน</span>' + rev + '<div class="muted">นำกลับ: กด "เปิดใช้" → "สร้างรหัสจับคู่"</div>' :

@@ -76,6 +76,8 @@
 
   // ---------- โมดัล ----------
   var modalCb = null;
+  // v2.6.0 (UAT G17-8): กล่องแจ้งสถานะรอบ (ปิดการนับ / ปิดรอบ / เปิดรอบใหม่) — เดิมถ้ามีกล่องค้างอยู่ กล่องใหม่ไม่ขึ้น มีแต่เสียง
+  var noticeOpen = false, noticePending = null;
   /** กล่องกลางจอ "กำลังทำ…" พร้อมไอคอนหมุน (CSS ล้วน ไม่ติดต่อเซิร์ฟเวอร์เพิ่ม) — ค้างจนได้ผล (U9/U15/U17) */
   function busy(title, sub) {
     $('busyTitle').textContent = title; $('busySub').textContent = sub || '';
@@ -127,17 +129,28 @@
       $('mNo').textContent = opt.no || 'ยกเลิก';
       $('mNo').classList.toggle('hidden', opt.noCancel === true);
       $('modal').classList.remove('hidden');
+      noticeOpen = !!opt.notice;
       inp.oninput = function () { if (opt.preview) $('mPreview').innerHTML = opt.preview(inp.value); };
       if (opt.input) { setTimeout(function () { inp.focus(); inp.select(); }, 50); if (opt.preview) $('mPreview').innerHTML = opt.preview(inp.value); }
       modalCb = function (yes) {
-        $('modal').classList.add('hidden'); modalCb = null;
+        $('modal').classList.add('hidden'); modalCb = null; noticeOpen = false;
         resolve(yes ? (opt.input ? inp.value : true) : (opt.input ? null : false));
+        if (noticePending) { var n = noticePending; noticePending = null; setTimeout(function () { notice(n.title, n.html); }, 60); }
       };
     });
   }
   $('mYes').onclick = function () { if (modalCb) modalCb(true); };
   $('mNo').onclick = function () { if (modalCb) modalCb(false); };
   $('mInput').addEventListener('keydown', function (e) { if (e.key === 'Enter' && modalCb) { e.preventDefault(); modalCb(true); } });
+  /**
+   * แจ้งสถานะรอบกลางจอ: ไม่มีกล่องเปิดอยู่ → เปิดกล่องใหม่ · กล่องที่ค้างเป็นกล่องแจ้งสถานะ → เปลี่ยนเป็นข้อความล่าสุดทันที
+   * · กล่องที่ผู้ใช้กำลังตอบ (ยืนยัน / ใส่จำนวน) → ไม่ทับ ขึ้นต่อทันทีหลังกล่องนั้นปิด
+   */
+  function notice(title, html) {
+    if ($('modal').classList.contains('hidden')) return modal({ title: title, html: html, yes: 'รับทราบ', noCancel: true, notice: true });
+    if (noticeOpen) { $('mTitle').textContent = title; $('mBody').innerHTML = html; return; }
+    noticePending = { title: title, html: html };
+  }
   function confirmBox(title, html, yes) { return modal({ title: title, html: html, yes: yes }); }
 
   // ---------- ปิดการนับ (v2.5.0) ----------
@@ -170,7 +183,7 @@
         S.serverProject = project;
         SOUND.warn();
         var h = 'เปิดรอบใหม่ <b>' + esc(project) + '</b> แล้ว · เครื่องยังอยู่รอบ ' + esc(S.boot.project.id) + '<br>• ยิงไม่ได้จนกว่าจะเข้ารอบใหม่<br>• กด ⋮ → <b>ตรวจความพร้อมใหม่</b>';
-        if ($('modal').classList.contains('hidden')) modal({ title: 'เปิดรอบใหม่แล้ว', html: h, yes: 'รับทราบ', noCancel: true });
+        notice('เปิดรอบใหม่แล้ว', h);
         render();
       }
       return;
@@ -185,11 +198,10 @@
       SOUND.warn();
       var html = 'รอบ ' + esc(S.boot.project.id) + ' ปิดการนับจากหน้า Admin แล้ว<br>• <b>ยิงสินค้าและเปิด Location ใหม่ไม่ได้</b><br>• รายการที่ค้างส่ง ระบบส่งให้เองตามปกติ' +
         (S.loc ? '<br>• ' + esc(S.loc) + ' ยังเปิดอยู่: ' + (isHelper(S.loc) ? 'กด "ส่งงาน"' : 'ตรวจยอดแล้วกด "ปิด Location"') : '') + '<br>• ค้นหา SKU ได้ที่เมนู ⋮';
-      if ($('modal').classList.contains('hidden')) modal({ title: 'ปิดการนับแล้ว', html: html, yes: 'รับทราบ', noCancel: true });
-      else toast('ปิดการนับแล้ว — ยิงไม่ได้', true);
+      notice('ปิดการนับแล้ว', html);
     } else if (st === 'CLOSED' || st === 'CLOSING') {
       SOUND.warn();
-      if ($('modal').classList.contains('hidden')) modal({ title: 'ปิดรอบแล้ว', html: 'รอบ ' + esc(S.boot.project.id) + ' ปิดรอบแล้ว<br>• ยิงไม่ได้<br>• รอเปิดรอบใหม่ แล้วกด ⋮ → ตรวจความพร้อมใหม่', yes: 'รับทราบ', noCancel: true });
+      notice('ปิดรอบแล้ว', 'รอบ ' + esc(S.boot.project.id) + ' ปิดรอบแล้ว<br>• ยิงไม่ได้<br>• รอเปิดรอบใหม่ แล้วกด ⋮ → ตรวจความพร้อมใหม่');
     } else if (prev === 'COUNT_CLOSED' && st === 'COUNTING') {
       SOUND.ok();
       result(true, 'เปิดการนับอีกครั้งแล้ว', 'ยิงต่อได้ตามปกติ');
