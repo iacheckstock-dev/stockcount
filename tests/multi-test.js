@@ -1208,6 +1208,7 @@ if (process.env.DUMP_ADMIN) {
   st.SKU_DETAIL = run('apiSkuDetail(_k)', { _k: MAT1 });
   st.STATE = run('apiGetState()');      // v2.5.0 หน้า Admin ทั้งหน้า (การ์ดปิดการนับ / บันทึก Admin)
   st.KCHECK = run('apiCloseCheck()');
+  st.STAFFEDITS = run('apiStaffEdits()'); st.INCIDENTS = run('apiDeviceIncidents()');   // v2.6.1
   // v2.6.0 หน้า Audit (ข้อมูลจริงจากรอบนี้)
   st.AUDIT = { sku: run('apiAudit("sku", _k)', { _k: MAT1 }), edits: run('apiAudit("sku", _k, { edits: true })', { _k: MAT1 }), loc: run('apiAudit("loc", "D80")'),
     staff: run('apiAudit("staff", "EMP-C")'), choices: run('apiAudit("sku", "A112101UT0")') };

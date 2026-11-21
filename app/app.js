@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2.6.0';
+  var APP_VERSION = '2.6.1';
   var QTY_CONFIRM = 150;      // จำนวนที่ป้อนเองเกินนี้ต้องยืนยันอีกครั้ง
   var QTY_MAX_DIGITS = 5;     // ยาวกว่านี้ = น่าจะยิงบาร์โค้ดเข้าช่องจำนวน
   var INFO_EVERY = 15000;     // ถามสถานะผู้ช่วย/ผู้ดูแลระหว่างนับร่วมกัน
@@ -275,7 +275,7 @@
     return o;
   }
   /** เซิร์ฟเวอร์ช้า/มีปัญหา (เครือข่ายยังใช้ได้) → ไฟเหลือง ระบบทำงานต่อ ข้อมูลไม่หาย */
-  function setSlow(code) { S.slow = code; S.slowAt = Date.now(); renderTop(); }
+  function setSlow(code) { S.slow = code; S.slowAt = Date.now(); incSlow(code); renderTop(); }
 
   /** เครื่องถูกยกเลิก (หน้า Admin) หรือ token ใช้ไม่ได้: หยุดรับการยิงทันที จนกว่าจะจับคู่ใหม่ — ข้อมูลในเครื่องไม่หาย */
   var REVOKE_CODES = ['BAD_TOKEN', 'DEVICE_DISABLED', 'UNKNOWN_DEVICE'];
@@ -283,14 +283,80 @@
     if (!S.cfg.token || S.revoked === code) return;   // เฉพาะเครื่องที่เคยจับคู่แล้วถูกปฏิเสธจริง
     S.revoked = code;
     DB.set('revoked', code);
+    if (!INC.revokedAt && incActive()) { INC.revokedAt = Date.now(); INC.revokedProject = S.projectId; INC.revokedCode = code; incSave(); }
     if (S.view !== 'setup') { SOUND.bad(); show('revoked'); }
   }
 
   function setOnline(on) {
     S.online = on;
-    if (on) { S.lastErr = ''; S.slow = ''; }
+    if (on) { S.lastErr = ''; S.slow = ''; incBack(); } else incOpen('OFFLINE');
     renderTop();
   }
+
+  // ---------- บันทึกเหตุการณ์ของเครื่อง (v2.6.1) ----------
+  // จดเฉพาะตอนมีปัญหา ระหว่างมีรอบเปิดอยู่: เน็ตหลุด · เซิร์ฟเวอร์ช้า/ไม่ว่าง · แอปปิดแล้วเปิดใหม่ · เซิร์ฟเวอร์ไม่รับรายการ · เครื่องถูกยกเลิก
+  // เก็บในเครื่อง → จบแล้วรอจนส่งค้างครบ (สูงสุด 30 นาที) → ติดไปกับคำขอ sync ถัดไป (ไม่เพิ่มคำขอ · ส่งเองเฉพาะตอนไม่มีข้อมูลรอส่ง)
+  var INC_MIN_MS = 60000, INC_DRAIN_MAX = 30 * 60000, INC_SEND_MAX = 20;
+  var INC = { open: {}, wait: [], queue: [], n: 0, revokedAt: 0 };
+  function incActive() { return !!(S.cfg.token && S.projectId && ['SETUP', 'COUNTING', 'COUNT_CLOSED'].indexOf(roundStatus()) >= 0); }
+  function incSave() { DB.set('inc', INC); }
+  function incOpen(type, extra) {
+    if (INC.open[type] || !incActive()) return;
+    INC.open[type] = Object.assign({ type: type, start: Date.now(), n0: S.entries.length, project: S.projectId, staff: S.staff ? S.staff.code : '' }, extra || {});
+    incSave();
+  }
+  function incSlow(code) {
+    incOpen('SLOW', { fails: 0, codes: {} });
+    var o = INC.open.SLOW;
+    if (!o) return;
+    o.fails++; o.codes[code] = (o.codes[code] || 0) + 1;
+    incSave();
+  }
+  /** เครื่องกลับมาติดต่อเซิร์ฟเวอร์ได้ → ปิดเหตุการณ์ที่เปิดอยู่ (เรื่องเล็กไม่จด: เน็ตหลุดไม่ถึง 1 นาทีและไม่ได้ยิง · ช้าครั้งเดียวไม่ถึง 1 นาที) */
+  function incBack() {
+    var now = Date.now(), o = INC.open.OFFLINE, w = INC.open.SLOW;
+    if (!o && !w) return;
+    if (o) { delete INC.open.OFFLINE; o.scans = Math.max(0, S.entries.length - o.n0); if (now - o.start >= INC_MIN_MS || o.scans) incEnd(o, now); }
+    if (w) {
+      delete INC.open.SLOW;
+      w.detail = Object.keys(w.codes).map(function (k) { return k + 'x' + w.codes[k]; }).join(' ');
+      if (w.fails >= 2 || now - w.start >= INC_MIN_MS) incEnd(w, now);
+    }
+    incSave();
+  }
+  /** จบเหตุการณ์ → รอให้ส่งค้างครบ แล้วจึงเข้าคิวส่ง */
+  function incEnd(o, end) {
+    o.end = end; o.pending = pending().length; o.id = (S.cfg.deviceId || 'DEV') + '-I' + end.toString(36) + '-' + (INC.n = (INC.n || 0) + 1);
+    delete o.n0; delete o.codes;
+    INC.wait.push(o); incDrain();
+  }
+  function incDrain() {
+    var now = Date.now(), left = pending().length, keep = [];
+    INC.wait.forEach(function (o) {
+      if (!left) { o.drainedAt = o.pending ? now : 0; INC.queue.push(o); }
+      else if (now - o.end > INC_DRAIN_MAX) { o.drainedAt = 0; INC.queue.push(o); }
+      else keep.push(o);
+    });
+    if (keep.length !== INC.wait.length) { INC.wait = keep; incSave(); }
+  }
+  function incWire(o) {
+    var t = function (ms) { return ms ? stamp(new Date(ms)) : ''; };
+    return { id: o.id, type: o.type, project: o.project, staff: o.staff, start: t(o.start), end: t(o.end), minutes: Math.floor(((o.end || o.start) - o.start) / 60000),
+      scans: o.scans || 0, pending: o.pending || 0, drainedAt: t(o.drainedAt), detail: o.detail || '' };
+  }
+  /** เปิดแอป: ถ้าครั้งก่อนแอปทำงานอยู่ในรอบนี้ แล้วหายไป ≥ 1 นาที / มีค้างส่ง / เปลี่ยนเวอร์ชัน → จด "แอปปิดแล้วเปิดใหม่" */
+  function incBoot(alive) {
+    var now = Date.now();
+    if (alive && alive.at && alive.project === S.projectId && incActive()) {
+      var p = pending().length, ver = alive.ver && alive.ver !== APP_VERSION;
+      if (now - alive.at >= INC_MIN_MS || p || ver)
+        incEnd({ type: 'RESTART', start: alive.at, project: S.projectId, staff: S.staff ? S.staff.code : '', detail: ver ? 'อัปเดตแอป ' + alive.ver + ' → ' + APP_VERSION : '' }, now);
+    }
+    incAlive();
+    incSave();
+  }
+  function incAlive() { if (S.projectId) DB.set('alive', { at: Date.now(), ver: APP_VERSION, project: S.projectId }); }
+  setInterval(function () { incAlive(); incDrain(); }, 30000);
 
   // ---------- โหลดข้อมูลในเครื่อง ----------
   function loadConfigJson() {
@@ -600,7 +666,8 @@
       if (x.nextTry > now || x.upToSeq >= minRest) break;
       evs.push(x);
     }
-    if (!batch.length && !evs.length && !force) return Promise.resolve();
+    var incs = INC.queue.slice(0, INC_SEND_MAX);
+    if (!batch.length && !evs.length && !incs.length && !force) return Promise.resolve();
     S.syncing = true; renderTop();
     var payload = {
       entries: batch.map(function (e) {
@@ -613,6 +680,7 @@
       }),
       pendingAfter: rest.length, location: S.loc || ''
     };
+    if (incs.length) payload.incidents = incs.map(incWire);
     return api('sync', payload, 30000).then(function (res) {
       // แยกเวลางานในเซิร์ฟเวอร์ของการส่งครั้งล่าสุด (ขั้น C v2.3.0) — ดูที่หน้าสถานะ
       if (res.prof) S.lastProf = { p: res.prof, srv: res.ms, wait: res.lockWait, hold: res.lockHold, n: batch.length, ev: evs.length };
@@ -627,6 +695,14 @@
         else if (rej[e.logId]) { e.rejected = rej[e.logId]; changed.push(e); }
       });
       S.oldPending = S.oldPending.filter(function (e) { return !e.synced && !e.rejected; });
+      // v2.6.1: เหตุการณ์ที่เซิร์ฟเวอร์รับแล้ว → ออกจากคิว · รายการที่ถูกปฏิเสธในชุดนี้ → จดเป็นเหตุการณ์
+      if (res.incidentsAck && res.incidentsAck.length) { INC.queue = INC.queue.filter(function (o) { return res.incidentsAck.indexOf(o.id) < 0; }); incSave(); }
+      var nrej = Object.keys(rej).length;
+      if (nrej && incActive()) {
+        var why = Object.keys(rej).map(function (k) { return rej[k]; }).filter(function (v, i, a) { return a.indexOf(v) === i; }).join(' · ');
+        var ro = { type: 'REJECTED', start: Date.now(), project: S.projectId, staff: S.staff ? S.staff.code : '', scans: nrej, detail: why };
+        incEnd(ro, ro.start); incSave();
+      }
       var removeIds = [];
       (res.events || []).forEach(function (r) {
         var ev = S.events.find(function (x) { return x.id === r.id; });
@@ -673,6 +749,7 @@
       if (res.stockVersion && res.stockVersion !== S.stockVersion) downloadStock().catch(function () {});
       if (res.round) setRound(res.round, res.project);
       S.lastSyncOk = Date.now();
+      incDrain();
       return Promise.all([DB.putMany('entries', changed), DB.remove('events', removeIds), saveState()]).then(function () {
         S.syncing = false; render();
         if (unsynced.length > batch.length) scheduleSync(300);
@@ -686,7 +763,7 @@
   }
 
   setInterval(function () {
-    if (pending().length || S.oldPending.length || S.events.some(function (e) { return e.nextTry <= Date.now(); })) syncNow();
+    if (pending().length || S.oldPending.length || INC.queue.length || S.events.some(function (e) { return e.nextTry <= Date.now(); })) syncNow();
   }, SYNC_EVERY);
   // รายงานตัวทุก 1 นาที: หน้า Admin เห็นว่าเครื่องยังติดต่อได้และค้างกี่รายการ · ถ้าเครื่องถูกยกเลิก จะรู้ภายใน 1 นาที
   var lastHello = 0;
@@ -1883,6 +1960,10 @@
     api('pair', { code: code, pendingCount: p.length, pendingFrom: seqs.length ? Math.min.apply(null, seqs) : 0, pendingTo: seqs.length ? Math.max.apply(null, seqs) : 0,
       staff: S.staff ? S.staff.code : '' }, 20000).then(function (r) {
       S.cfg.token = r.token; S.lastErr = ''; S.revoked = ''; DB.set('revoked', '');
+      if (INC.revokedAt) {   // v2.6.1: เหตุการณ์ "เครื่องถูกยกเลิก" จบเมื่อจับคู่ใหม่
+        incEnd({ type: 'REVOKED', start: INC.revokedAt, project: INC.revokedProject, staff: S.staff ? S.staff.code : '', detail: INC.revokedCode || '' }, Date.now());
+        INC.revokedAt = 0; incSave();
+      }
       // จับคู่ (ใหม่) ทุกครั้ง = ตรวจความพร้อมใหม่ทั้งหมด รวมยิงบัตรผู้ตรวจสอบ (v2.3.8)
       S.dwOk = false; S.readiness = null; S.staff = null; DB.set('readiness', null); DB.set('staff', null);
       $('btnSetupBack').classList.add('hidden');
@@ -2102,9 +2183,11 @@
   function init() {
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(function () {});
     return DB.open().then(function () {
-      return Promise.all([DB.get('cfg'), DB.get('boot'), DB.get('masterHash'), DB.get('masterProject'), DB.get('projectId'), DB.get('staff'), DB.get('readiness'), DB.all('events'), DB.get('stock'), DB.get('ckRotate'), DB.get('revoked')]);
+      return Promise.all([DB.get('cfg'), DB.get('boot'), DB.get('masterHash'), DB.get('masterProject'), DB.get('projectId'), DB.get('staff'), DB.get('readiness'), DB.all('events'), DB.get('stock'), DB.get('ckRotate'), DB.get('revoked'), DB.get('inc'), DB.get('alive')]);
     }).then(function (v) {
       S.revoked = v[10] || '';
+      if (v[11]) { INC = v[11]; INC.open = INC.open || {}; INC.wait = INC.wait || []; INC.queue = INC.queue || []; }
+      S.aliveBefore = v[12] || null;
       S.cfg = v[0] || {}; S.boot = v[1] || null; S.masterHash = v[2] || ''; S.masterProject = v[3] || '';
       S.staff = v[5] || null; S.readiness = v[6] || null; S.events = v[7] || [];
       S.events.forEach(function (ev) { if (!ev.at) ev.at = 0; if (ev.at > lastAt) lastAt = ev.at; });
@@ -2132,6 +2215,7 @@
         else if (S.loc) setCard('idle', 'อยู่ที่ ' + S.loc + ' — ยิงสินค้าต่อได้');
       } else { show('ready'); runChecks(false); }
     }).then(function () {
+      incBoot(S.aliveBefore);   // v2.6.1
       window.__SC_READY = true;
       $('splash').classList.add('hidden');
     }, function (err) {
@@ -2140,6 +2224,6 @@
     });
   }
 
-  window.__SC = { S: S, handleScan: handleScan, syncNow: syncNow, locSummary: locSummary, exportFile: exportFile, helloNow: function () { lastHello = 0; hello(); } };
+  window.__SC = { S: S, INC: function () { return INC; }, incDrain: incDrain, dbSet: function (k, v) { return DB.set(k, v); }, handleScan: handleScan, syncNow: syncNow, locSummary: locSummary, exportFile: exportFile, helloNow: function () { lastHello = 0; hello(); } };
   init();
 })();

@@ -13,7 +13,7 @@
 | ตั้งค่า | Config, Staff | Admin / ตั้งค่าครั้งแรก | Staff: ได้ · Config: ไม่ควร (ใช้หน้า Admin) | ⚪ / 🟡 |
 | ข้อมูลต้นทาง | SAP_Snapshot, POS_Snapshot | อัปโหลดในหน้า Admin | ไม่ได้ | 🔒 |
 | Master | Barcode_Map, SAP_POS_Compare, Map_Decisions, Master_Check, Device_Master | ระบบ (สร้างใหม่ทุกครั้งที่ข้อมูลเปลี่ยน) | ไม่ได้ | 🔒 / ⚪ |
-| เครื่อง | Devices, Device_Checks | API + หน้า Admin | ไม่ได้ (ใช้หน้า Admin) | ⚪ |
+| เครื่อง | Devices, Device_Checks, Device_Log | API + หน้า Admin | ไม่ได้ (ใช้หน้า Admin) | ⚪ |
 | การนับ | Count_Log, Quarantine, Import_Files | API / นำเข้าไฟล์ | **ห้ามแก้** (append-only) | 🟡 |
 | Location | Locations, Loc_Members, Loc_Checks | API + หน้า Admin | ไม่ได้ | 🟡 |
 | สรุป (เฟส 3–4) | Dash_Data, Count_History | ยังไม่ใช้ | — | 🔒 |
@@ -142,6 +142,21 @@ v2.5.5: จัดการได้จากหน้า Admin → แท็บ 
 ### Device_Checks — ผลตรวจความพร้อมของเครื่อง (เพิ่มอย่างเดียว)
 `Time` · `Device_ID` · `Staff` · `App_Version` · `Result` (ผ่าน / ไม่ผ่าน) · `Detail` (✓ ⚠ ✗ ทีละข้อ)
 
+### Device_Log — เหตุการณ์ของเครื่องระหว่างนับ (v2.6.1 · เพิ่มอย่างเดียว)
+เครื่องจดเฉพาะตอนมีปัญหา ระหว่างมีรอบเปิด (SETUP / COUNTING / COUNT_CLOSED) แล้วส่งมากับคำขอ sync ถัดไป · กันซ้ำด้วย Incident_ID · รับเฉพาะของรอบปัจจุบัน · ล้างตอนปิดรอบ (อยู่ในไฟล์สำรอง)
+
+| คอลัมน์ | ความหมาย |
+|---|---|
+| Incident_ID | รหัสเหตุการณ์จากเครื่อง (กันซ้ำ) |
+| Project_ID · Device_ID · Staff_Code | รอบ · เครื่อง · ผู้ตรวจที่ใช้เครื่องตอนนั้น |
+| Type | OFFLINE เน็ตหลุด · SLOW เซิร์ฟเวอร์ช้า/ไม่ว่าง · RESTART แอปปิดแล้วเปิดใหม่ · REJECTED เซิร์ฟเวอร์ไม่รับรายการ · REVOKED เครื่องถูกยกเลิก/จับคู่ใหม่ |
+| Start_Time · End_Time · Minutes | ช่วงเวลา (นาฬิกาเครื่อง) |
+| Scans | ยิงระหว่างเหตุการณ์ (REJECTED = จำนวนที่ไม่รับ) |
+| Pending · Drained_At | ค้างส่งตอนจบเหตุการณ์ · เวลาที่ส่งค้างครบ (ว่าง = ยังไม่ครบภายใน 30 นาที) |
+| Detail · App_Version · Received_Time | รายละเอียด (เช่น หมดเวลา×2 · อัปเดตแอป) · เวอร์ชันแอป · เวลาเซิร์ฟเวอร์รับ |
+
+เกณฑ์จด: เน็ตหลุด ≥ 1 นาที หรือมีการยิงระหว่างนั้น · ช้า/ไม่ว่าง พลาด ≥ 2 ครั้ง หรือ ≥ 1 นาที · แอปปิด ≥ 1 นาที หรือมีค้าง หรือเปลี่ยนเวอร์ชัน · ไม่รับรายการ / ถูกยกเลิก ทุกครั้ง
+
 ## การนับ
 
 ### Count_Log — ทุกรายการนับ (append-only, ห้ามแก้หรือลบ) 🟡
@@ -257,7 +272,7 @@ v2.5.5: จัดการได้จากหน้า Admin → แท็บ 
 เขียนตอนปิดรอบ 1 แถวต่อรอบ (ไม่ล้าง) · `Checksum` = ลายนิ้วมือของ Count_Log / Adjustments / Variance ในไฟล์สำรอง (`Count_Log:xxxx|Adjustments:xxxx|Variance:xxxx`) ใช้ปุ่ม "ตรวจไฟล์สำรอง" เทียบว่าไฟล์สำรองถูกแก้หลังปิดรอบหรือไม่ · รหัสรอบที่มีในชีตนี้แล้ว เปิดรอบซ้ำไม่ได้
 
 **ปิดรอบ (v2.5.2)** — สำเนาทั้งไฟล์ไปโฟลเดอร์ `Archive` ใต้ DRIVE_FOLDER_ID ชื่อ `ARCHIVED · <รอบ> [· รอบทดลอง] · ปิด <วันที่>` · ในไฟล์สำรอง: Admin_Log เหลือเฉพาะแถวของรอบนั้น · สถานะ `ARCHIVED` · ทุกชีตป้องกันแบบเตือน · เปิดดูใน Google Sheets หรือ File → Download → Microsoft Excel ได้
-หลังไฟล์สำรองตรวจผ่าน ไฟล์หลักล้าง: Count_Log · Adjustments · Variance · Dash_Data · Locations · Loc_Members · Loc_Checks · Device_Checks · Quarantine · SAP_Snapshot · POS_Snapshot · Barcode_Map · Map_Decisions · SAP_POS_Compare · Master_Check · Device_Master · Import_Files และค่า Config ของรอบ · **เก็บไว้:** Staff · Devices · Count_History · Admin_Log · ไฟล์ใน Drive
+หลังไฟล์สำรองตรวจผ่าน ไฟล์หลักล้าง: Count_Log · Adjustments · Variance · Dash_Data · Locations · Loc_Members · Loc_Checks · Device_Checks · Device_Log · Quarantine · SAP_Snapshot · POS_Snapshot · Barcode_Map · Map_Decisions · SAP_POS_Compare · Master_Check · Device_Master · Import_Files และค่า Config ของรอบ · **เก็บไว้:** Staff · Devices · Count_History · Admin_Log · ไฟล์ใน Drive
 
 ## ตรวจสอบ
 

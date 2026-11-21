@@ -688,6 +688,8 @@ function apiSync_(a, req) {
   var h0 = Date.now(), res;
   try {
     res = ingest_(a.deviceId, req.entries || [], req.events || [], 'SYNC', a.device, a.appVersion);
+    // v2.6.1: เหตุการณ์ของเครื่องที่จบแล้ว (นาน ๆ ครั้ง) — เขียนในล็อกเดียวกัน ไม่เพิ่มคำขอ
+    if (req.incidents && req.incidents.length) res.incidentsAck = deviceLogAdd_(a.deviceId, req.incidents, a.appVersion);
   } finally {
     var f0 = Date.now();
     releaseLock_(lock);
@@ -1539,3 +1541,31 @@ function apiCheck_(a, req) {
 // v2.4.1: เอา loadTestSeed() / loadTestClear() ออก — loadTestClear อ่าน Count_Log ทั้งชีตแล้วเขียนกลับ ประวัติแก้ไขของชีตยืนยันว่าเป็นจุดที่
 // Scan_Time / Received_Time ของรายการจริงหาย (UAT 12 พ.ย. 9:42) · ยอดนับไม่หาย Seq ครบ
 // กฎ: ไม่มีโค้ดไหนเขียนทับ Count_Log ได้ — เพิ่มแถวต่อท้ายเท่านั้น · ทดสอบแรงงานครั้งต่อไปทำบนสำเนาไฟล์ Sheets
+
+
+// ---------- บันทึกเหตุการณ์ของเครื่อง (v2.6.1) ----------
+var INC_TYPES = ['OFFLINE', 'SLOW', 'RESTART', 'REJECTED', 'REVOKED'], INC_MAX = 20;
+
+/**
+ * เพิ่มเหตุการณ์ลง Device_Log (ถือล็อกอยู่) · กันซ้ำด้วย Incident_ID · รับเฉพาะของรอบปัจจุบัน (รอบอื่น = ตอบรับแต่ไม่เก็บ)
+ * คืนรหัสที่เครื่องลบออกจากคิวได้ (ทั้งที่เก็บ ซ้ำ และทิ้ง)
+ */
+function deviceLogAdd_(deviceId, list, appVersion) {
+  var project = String(readConfig_().PROJECT_ID || ''), ack = [], rows = [];
+  var sh = SpreadsheetApp.getActive().getSheetByName('Device_Log');
+  if (!sh) return [];
+  var have = {}, n = sh.getLastRow();
+  if (n > 1) sh.getRange(2, 1, n - 1, 1).getDisplayValues().forEach(function (r) { have[r[0]] = 1; });
+  var s = function (v, max) { return String(v === undefined || v === null ? '' : v).slice(0, max || 40); };
+  list.slice(0, INC_MAX).forEach(function (x) {
+    var id = s(x && x.id, 60);
+    if (!id) return;
+    ack.push(id);
+    if (have[id] || INC_TYPES.indexOf(x.type) < 0 || s(x.project) !== project) return;
+    have[id] = 1;
+    rows.push([id, project, deviceId, normStaff_(x.staff), x.type, s(x.start, 19), s(x.end, 19), Math.max(0, Math.round(Number(x.minutes) || 0)),
+      Math.max(0, Number(x.scans) || 0), Math.max(0, Number(x.pending) || 0), s(x.drainedAt, 19), s(x.detail, 300), s(appVersion, 20), now_()]);
+  });
+  if (rows.length) appendRows_(sh, rows);
+  return ack;
+}

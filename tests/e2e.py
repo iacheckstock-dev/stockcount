@@ -82,7 +82,7 @@ with sync_playwright() as p:
     pg.wait_for_function("/พร้อมนับ ✓/.test(document.querySelector('#readyHead').textContent)", timeout=10000)
     shot('03-ready-pass')
     check(pg.is_visible('#btnStart'), 'ผ่านทุกข้อ ขึ้นปุ่มเริ่มนับ')
-    check('แอป 2.6.0 · เซิร์ฟเวอร์ 2.6.0' in pg.inner_text('#readyList'), 'แสดงเวอร์ชันแอปและเซิร์ฟเวอร์ตรงกัน')
+    check('แอป 2.6.1 · เซิร์ฟเวอร์ 2.6.1' in pg.inner_text('#readyList'), 'แสดงเวอร์ชันแอปและเซิร์ฟเวอร์ตรงกัน')
     pg.click('#btnStart'); pg.wait_for_selector('#v-count.on')
     check('นุ่น' in pg.inner_text('#tbStaff'), 'เข้างานเป็น นุ่น')
 
@@ -158,6 +158,17 @@ with sync_playwright() as p:
     check(len(rows) == 9 + 3 + 25, 'กลับมาออนไลน์: ส่งครบ ไม่ซ้ำ (เซิร์ฟเวอร์มี ' + str(len(rows)) + ' รายการ)')
     check(len(set(r[0] for r in rows)) == len(rows), 'Log_ID ไม่ซ้ำ')
     seqs = sorted(int(r[3]) for r in rows); check(seqs == list(range(1, len(rows) + 1)), 'Seq ต่อเนื่อง 1..' + str(len(rows)))
+    # v2.6.1: เหตุการณ์ "เน็ตหลุด" ถูกจด แล้วส่งมากับ sync ครั้งถัดไป (หลังส่งค้างครบ)
+    for _ in range(40):
+        dl_rows = get('/debug/devicelog')[1:]
+        if dl_rows: break
+        pg.wait_for_timeout(500)
+    off = [r for r in dl_rows if r[4] == 'OFFLINE']
+    check(len(off) == 1 and int(off[0][8]) == 25 and int(off[0][9]) == 25 and off[0][10] != '', 'Device_Log: เน็ตหลุด 1 ครั้ง · ยิงระหว่างนั้น 25 · ค้าง 25 → มีเวลาส่งครบ: ' + json.dumps(off, ensure_ascii=False))
+    check(pg.evaluate('__SC.INC().queue.length') == 0, 'คิวเหตุการณ์ในเครื่องว่าง (เซิร์ฟเวอร์ตอบรับแล้ว)')
+    rep = get('/debug/incidents')
+    d1 = [d for d in rep['rows'] if d['device'] == 'TC21-01'][0]
+    check(d1['verdict'] == 'ok' and 'เน็ตหลุด' in d1['incidents'][0]['what'] and 'ส่งครบเมื่อ' in d1['incidents'][0]['how'], 'รายงาน: ✓ เน็ตหลุด → ส่งครบเมื่อ … : ' + d1['incidents'][0]['what'] + ' → ' + d1['incidents'][0]['how'])
 
     print('Export และนำเข้าไฟล์')
     with pg.expect_download() as dl:
@@ -194,6 +205,17 @@ with sync_playwright() as p:
     check(box['y'] + box['height'] <= 568, 'หลังเปิดกลับมา ปุ่มล่างยังอยู่ในจอ ' + str(box) + ' banner=' + pg.inner_text('#banner') + ' scrollY=' + str(pg.evaluate('scrollY')))
     shot('10-reload')
 
+    n_inc = len(get('/debug/devicelog')) - 1
+    check(n_inc == 1, 'เปิดแอปใหม่ทันที (ไม่ถึง 1 นาที · ไม่มีค้าง · เวอร์ชันเดิม) → ไม่จด "แอปปิดแล้วเปิดใหม่" (Device_Log ' + str(n_inc) + ' แถว)')
+    # จำลอง: แอปถูกปิดไป 3 นาที และเป็นเวอร์ชันเก่า → เปิดใหม่ต้องจด RESTART พร้อม "อัปเดตแอป"
+    pg.evaluate("__SC.dbSet('alive', { at: Date.now() - 180000, ver: '2.6.0x', project: __SC.S.projectId })"); pg.wait_for_timeout(300)
+    pg.reload(); pg.wait_for_selector('#v-count.on', timeout=10000)
+    for _ in range(30):
+        rs = [r for r in get('/debug/devicelog')[1:] if r[4] == 'RESTART']
+        if rs: break
+        pg.wait_for_timeout(500)
+    check(len(rs) == 1 and int(rs[0][7]) == 3 and '2.6.0x →' in rs[0][11], 'แอปปิดไป 3 นาที + เปลี่ยนเวอร์ชัน → จด "แอปปิดแล้วเปิดใหม่": ' + json.dumps(rs, ensure_ascii=False))
+
     print('เน็ตช้า/เพิ่งต่อ Wi-Fi ตอนเปิดแอปกลับมา (จอขาว)')
     get('/debug/slow?ms=20000')
     t0 = time.time(); pg.reload(wait_until='commit')
@@ -215,7 +237,7 @@ with sync_playwright() as p:
     check('9.9.9' in pg.inner_text('#readyList'), 'มีเวอร์ชันใหม่ → ขึ้น ✗ พร้อมปุ่ม "อัปเดตแอปตอนนี้"')
     shot('11-update')
     pg.click('#btnUpdate'); pg.wait_for_load_state('load'); pg.wait_for_timeout(1500)
-    get('/debug/version?v=2.6.0')
+    get('/debug/version?v=2.6.1')
     pg.wait_for_selector('.view.on', timeout=10000)
     check('รายการ 38' in pg.inner_text('#syncText'), 'หลังกดอัปเดต แอปโหลดใหม่ ข้อมูลในเครื่องยังครบ 38 รายการ')
 

@@ -305,6 +305,10 @@
 
   <!-- ตรวจสอบ (v2.6.0): ค้นดูทีละบรรทัด ตาม SKU / Location / ผู้ตรวจ — อ่านอย่างเดียว ไม่ล็อก ไม่เขียนชีต ไม่บันทึก Admin_Log -->
   <section id="audit">
+    <div class="row" style="margin-bottom:6px"><b>รายงาน</b>
+      <button class="btn sec" onclick="staffEdits()">ผู้ตรวจแก้ข้อมูลบ่อย</button>
+      <button class="btn sec" onclick="devIncidents()">เหตุการณ์ของเครื่อง</button>
+      <span class="muted">หรือค้นทีละรายการด้านล่าง</span></div>
     <div class="row">
       <span class="chips" id="auKinds"></span>
       <input type="search" id="auQ" placeholder="Material / บาร์โค้ด / ชื่อสินค้า" style="width:280px" onkeydown="if(event.key==='Enter')auditGo()">
@@ -416,7 +420,8 @@
     <label><input type="radio" name="wkF" value="short"> ขาด</label>
     <label><input type="radio" name="wkF" value="over"> เกิน</label>
     <label><input type="radio" name="wkF" value="all"> ทั้งหมด (รวมที่ตรง)</label>
-    <div class="row">ต่างตั้งแต่ <input type="text" id="wkMin" style="width:110px" placeholder="0" inputmode="decimal"> บาทขึ้นไป <span class="muted">(เว้นว่าง = ทุกมูลค่า · ดูทั้งขาดและเกิน)</span></div>
+    <div class="row">ต่างตั้งแต่ <input type="text" id="wkMin" style="width:110px" placeholder="0" inputmode="decimal"> บาทขึ้นไป <span class="muted">(เว้นว่าง = ทุกมูลค่า · ดูทั้งขาดและเกิน · สินค้ายอดบัญชี 0 ที่นับได้ ไม่ถูกตัดด้วยเกณฑ์นี้)</span></div>
+    <div class="row">ต่างตั้งแต่ <input type="text" id="wkMinQ" style="width:110px" placeholder="0" inputmode="decimal"> ชิ้นขึ้นไป <span class="muted">(เว้นว่าง = ทุกจำนวน · ใส่ทั้งสองช่อง = ต้องเข้าทั้งสองเกณฑ์)</span></div>
     <label><input type="checkbox" id="wkUn" checked> รวมบาร์โค้ดที่ไม่มีใน Master</label>
   </div>
   <div class="muted">ใบพิมพ์ไม่มีต้นทุนและมูลค่า (บาท) — ใช้มูลค่าเป็นเกณฑ์เลือกเท่านั้น</div>
@@ -1063,7 +1068,8 @@ function renderSummary(R) {
   var chips = [['diff', 'ที่ต่างทั้งหมด'], ['short', 'ขาด'], ['over', 'เกิน'], ['special', 'มี IT/QI/BL'], ['match', 'ตรง'], ['adj', 'มีปรับยอด'], ['all', 'ทั้งหมด'], ['unmapped', 'ไม่มีใน Master']];
   h += '<div class="card" style="margin-top:12px"><h3>3. ผลต่างราย SKU <span class="muted" style="font-weight:400">แตะแถวเพื่อดูว่านับที่ Location ไหน เครื่องไหน ใครนับ</span></h3><div class="row">' +
     chips.map(function (c) { return '<button class="btn ' + (SUMF === c[0] ? '' : 'sec') + '" onclick="SUMF=\'' + c[0] + '\';renderSkus()">' + c[1] + '</button>'; }).join('') +
-    '<input type="search" id="sumQ" placeholder="ค้นหา Material / ชื่อ / บาร์โค้ด" oninput="renderSkus()" style="min-width:220px"></div>' +
+    '<input type="search" id="sumQ" placeholder="ค้นหา Material / ชื่อ / บาร์โค้ด" oninput="renderSkus()" style="min-width:220px">' +
+    '<span>ต่างตั้งแต่ <input type="text" id="sumMinQ" inputmode="decimal" placeholder="ทุกจำนวน" style="width:90px" oninput="renderSkus()"> ชิ้น</span></div>' +
     '<div class="muted" id="skuInfo"></div><div class="scroll" style="max-height:520px"><table id="skuTbl"></table></div></div>';
   h += adjCardHtml(R);
   $('sumBody').innerHTML = h;
@@ -1071,14 +1077,18 @@ function renderSummary(R) {
 }
 function sumRows() {
   var q = (($('sumQ') || {}).value || '').trim().toLowerCase();
-  if (SUMF === 'unmapped') return SUM.unmapped.filter(function (u) { return !q || u[0].toLowerCase().indexOf(q) >= 0; });
+  var minQ = Number(String((($('sumMinQ') || {}).value || '')).replace(/,/g, '')) || 0;
+  if (SUMF === 'unmapped') return SUM.unmapped.filter(function (u) { return (!q || u[0].toLowerCase().indexOf(q) >= 0) && (q || !minQ || Math.abs(u[1]) >= minQ); });
   // v2.5.1 (UAT G10-4): พิมพ์ค้นหา = หาทุก SKU ไม่สนตัวกรองกลุ่ม (เดิมหาเฉพาะกลุ่มที่เลือก ทำให้ดูเหมือนหาไม่เจอ)
   return SUM.skus.filter(function (r) {
     var ok = !!q || SUMF === 'all' || (SUMF === 'diff' && r[6] !== 0) || (SUMF === 'short' && r[6] < 0) || (SUMF === 'over' && r[6] > 0) ||
       (SUMF === 'match' && r[6] === 0) || (SUMF === 'special' && (r[9] || r[10] || r[11])) || (SUMF === 'adj' && r[15] > 0);
+    if (minQ && !q && Math.abs(r[6]) < minQ) return false;   // v2.6.1: ต่างตั้งแต่ N ชิ้น (ใช้กับตัวกรองกลุ่ม · ค้นหา = ทุก SKU)
     return ok && (!q || String(r[0]).toLowerCase().indexOf(q) >= 0 || String(r[1]).toLowerCase().indexOf(q) >= 0 || (r[14] || []).some(function (b) { return b.indexOf(q) >= 0; }));
   });
 }
+/** v2.6.1 (UAT 18): ยอดบัญชี 0 แต่นับได้ → ไม่มีราคาทุน ผลต่างเป็นบาท = 0.00 · กรองด้วยบาทจะหลุด จึงติดป้ายและไม่ให้หลุดตัวกรองบาท */
+function book0(r) { return r[2] === 0 && r[5] > 0; }
 function renderSkus() {
   var rows = sumRows(), MAX = 300, h;
   if (SUMF === 'unmapped') {
@@ -1092,10 +1102,10 @@ function renderSkus() {
         var bc = r[14] || [];
         return '<tr class="click" onclick="skuDetail(\'' + esc(r[0]).replace(/'/g, '') + '\')"><td class="mono">' + esc(r[0]) + '</td><td class="mono">' + esc(bc[0] || '') + (bc.length > 1 ? ' <span class="muted" title="' + esc(bc.join(' ')) + '">+' + (bc.length - 1) + '</span>' : '') +
           '</td><td>' + esc(r[1]) + '</td><td class="n">' + nf(r[3]) + '</td><td class="n">' + (r[4] ? sgn(r[4]) : '') +
-          '</td><td class="n">' + nf(r[5]) + '</td><td class="n">' + nf(r[2]) + '</td><td class="n ' + cls(r[6]) + '"><b>' + sgn(r[6]) + '</b>' + (r[16] ? '<br><span class="pill warn" title="ปรับยอดแล้วเท่ายอดบัญชีพอดี — ให้ผู้ตรวจทานดู">ปรับเท่าบัญชี</span>' : '') + '</td><td class="n ' + cls(r[8]) + '">' + sgn(r[8], 2) + '</td><td class="locs">' + esc(locStr(r[13])) + '</td><td>' + (sp ? '<span class="pill info">' + esc(sp) + '</span>' : '') + '</td></tr>';
+          '</td><td class="n">' + nf(r[5]) + '</td><td class="n">' + nf(r[2]) + '</td><td class="n ' + cls(r[6]) + '"><b>' + sgn(r[6]) + '</b>' + (r[16] ? '<br><span class="pill warn" title="ปรับยอดแล้วเท่ายอดบัญชีพอดี — ให้ผู้ตรวจทานดู">ปรับเท่าบัญชี</span>' : '') + '</td><td class="n ' + cls(r[8]) + '">' + sgn(r[8], 2) + (book0(r) ? '<br><span class="pill warn" title="ยอดบัญชี 0 แต่นับได้ — ไม่มีราคาทุน มูลค่าผลต่างจึงเป็น 0.00 ให้ดูจำนวนชิ้นแทน">ยอดบัญชี 0</span>' : '') + '</td><td class="locs">' + esc(locStr(r[13])) + '</td><td>' + (sp ? '<span class="pill info">' + esc(sp) + '</span>' : '') + '</td></tr>';
       }).join('');
-    var q = (($('sumQ') || {}).value || '').trim();
-    $('skuInfo').textContent = rows.length + ' SKU' + (q ? ' · ค้นหาทุกกลุ่ม (ไม่ใช้ตัวกรองด้านบน) — ลบคำค้นเพื่อกลับไปใช้ตัวกรอง' : '') +
+    var q = (($('sumQ') || {}).value || '').trim(), mq = (($('sumMinQ') || {}).value || '').trim();
+    $('skuInfo').textContent = rows.length + ' SKU' + (mq && !q ? ' · ต่างตั้งแต่ ' + mq + ' ชิ้น' : '') + (q ? ' · ค้นหาทุกกลุ่ม (ไม่ใช้ตัวกรองด้านบน) — ลบคำค้นเพื่อกลับไปใช้ตัวกรอง' : '') +
       (rows.length > MAX ? ' — แสดง ' + MAX + ' แรก (เรียงตามมูลค่าผลต่าง) ค้นหาเพื่อดูตัวอื่น' : ' · เรียงตามมูลค่าผลต่าง');
   }
   $('skuTbl').innerHTML = h;
@@ -1257,14 +1267,15 @@ function walkOpen() {
 function radio(name) { var x = document.querySelector('input[name=' + name + ']:checked'); return x ? x.value : ''; }
 function walkBuild() {
   var by = radio('wkSort'), f = radio('wkF'), min = Number(String($('wkMin').value).replace(/,/g, '')) || 0, withUn = $('wkUn').checked;
+  var minQ = Number(String($('wkMinQ').value).replace(/,/g, '')) || 0;
   var fl = { diff: 'ที่ต่างทั้งหมด', short: 'ขาด', over: 'เกิน', all: 'ทั้งหมด' }[f];
   var rows = SUM.skus.filter(function (r) {
     var ok = f === 'all' || (f === 'diff' && r[6] !== 0) || (f === 'short' && r[6] < 0) || (f === 'over' && r[6] > 0);
-    return ok && (!min || Math.abs(r[8]) >= min);
+    return ok && (!min || Math.abs(r[8]) >= min || book0(r)) && (!minQ || Math.abs(r[6]) >= minQ);
   });
-  var un = withUn ? SUM.unmapped : [];
+  var un = withUn ? SUM.unmapped.filter(function (u) { return !minQ || Math.abs(u[1]) >= minQ; }) : [];
   var L = SUM.lastSave, same = L && L.at === SUM.at;
-  var head = '<h2>ใบเดินตรวจ — รอบ ' + esc(SUM.project) + '</h2><div>เรียงตาม ' + (by === 'sku' ? 'SKU (มูลค่าผลต่างมากก่อน)' : 'Location') + ' · เลือก: ' + fl + (min ? ' · ต่างตั้งแต่ ' + nf(min, 0) + ' บาท' : '') +
+  var head = '<h2>ใบเดินตรวจ — รอบ ' + esc(SUM.project) + '</h2><div>เรียงตาม ' + (by === 'sku' ? 'SKU (มูลค่าผลต่างมากก่อน)' : 'Location') + ' · เลือก: ' + fl + (min ? ' · ต่างตั้งแต่ ' + nf(min, 0) + ' บาท' : '') + (minQ ? ' · ต่างตั้งแต่ ' + nf(minQ) + ' ชิ้น' : '') +
     ' · ' + nf(rows.length) + ' SKU' + (un.length ? ' + ไม่มีใน Master ' + un.length + ' บาร์โค้ด' : '') + '</div>' +
     '<div>ตัวเลข ณ ' + esc(SUM.at) + ' · ยอดบัญชี ' + (SUM.bookSource === 'POS' ? 'POS' : 'SAP UR ' + esc(SUM.sap.name || '')) + ' · ' +
     (same ? '<b>ผลบันทึกครั้งที่ ' + L.run + '</b> (ชีต Variance Run = ' + L.run + ')' : 'ยังไม่ได้บันทึกตัวเลขชุดนี้' + (L ? ' (บันทึกล่าสุด ครั้งที่ ' + L.run + ' เมื่อ ' + esc(L.at) + ')' : '')) +
@@ -1440,6 +1451,55 @@ function auLines(R) {
         '<td>' + (l.rq ? auStaff(l.rq, '') : '') + '</td><td class="muted" style="white-space:nowrap">' + esc(l.rt) + '</td></tr>';
     }).join('') + '</table></div>';
   return h + (nav ? '<div class="row">' + nav + '</div>' : '');
+}
+
+// ---------- รายงานในแท็บตรวจสอบ (v2.6.1) ---------- อ่านอย่างเดียว
+function auReportHead(R, title) {
+  $('auInfo').textContent = R.project ? 'รอบ ' + R.project + ' · ' + R.statusTh + ' · ข้อมูล ณ ' + R.at : '';
+  if (R.none) { $('auBody').innerHTML = '<div class="card">ยังไม่มีรอบที่เปิดอยู่ — รายงานนี้ดูได้เฉพาะรอบที่เปิดอยู่</div>'; return false; }
+  if (R.closed) { $('auBody').innerHTML = '<div class="card">รอบ <b>' + esc(R.project) + '</b> ปิดแล้ว — ' + esc(title) + ' อยู่ในไฟล์สำรองของรอบนั้น</div>'; return false; }
+  return true;
+}
+/** ผู้ตรวจแก้ข้อมูลบ่อย: % แก้ = (ยกเลิก + แก้ยอด + ล้าง Location) ÷ บรรทัด · กดชื่อ → หน้า Audit เฉพาะรายการแก้ */
+function staffEdits() {
+  call('apiStaffEdits', [], function (R) {
+    if (!auReportHead(R, 'ตารางผู้ตรวจ (ชีต Count_Log)')) return;
+    var flagged = R.rows.filter(function (r) { return r.flag; }).length;
+    $('auBody').innerHTML = '<div class="card"><h3>ผู้ตรวจแก้ข้อมูลบ่อย <span class="muted" style="font-weight:400">' + R.rows.length + ' คน' + (flagged ? ' · <b>ควรดู ' + flagged + ' คน</b>' : ' · ไม่มีคนที่แก้บ่อยเกินเกณฑ์') + '</span></h3>' +
+      '<div class="muted">แก้ = ยกเลิก + แก้ยอด + ล้าง Location (นับเป็นครั้ง) · % แก้ = แก้ ÷ บรรทัดทั้งหมด · ไฮไลต์เมื่อ % แก้ ≥ ' + R.pct + '% และแก้ ≥ ' + R.min + ' ครั้ง · การแก้ระหว่างนับเป็นเรื่องปกติ ตารางนี้ช่วยบอกว่าควรดูใครก่อน — กดชื่อเพื่อดูรายการแก้ทีละบรรทัด</div>' +
+      '<div class="scroll" style="margin-top:6px"><table><tr><th>ผู้ตรวจ</th><th>เครื่อง</th><th class="n">บรรทัด</th><th class="n">ยิง</th><th class="n">ป้อนเอง</th><th class="n">ยกเลิก</th><th class="n">แก้ยอด</th><th class="n">ล้าง Location</th><th class="n">% แก้</th><th>ยิงครั้งแรก – ล่าสุด</th></tr>' +
+      (R.rows.length ? R.rows.map(function (r) {
+        return '<tr class="' + (r.flag ? 'ed' : '') + '"><td><a class="j" onclick="auJumpEdits(\'' + esc(r.code).replace(/'/g, '') + '\')">' + esc(r.name || r.code) + '</a>' + (r.name ? ' <span class="muted">' + esc(r.code) + '</span>' : '') + '</td>' +
+          '<td>' + esc(r.devices.join(', ')) + '</td><td class="n">' + nf(r.lines) + '</td><td class="n">' + nf(r.scan) + '</td><td class="n">' + nf(r.manual) + '</td><td class="n">' + nf(r.voids) + '</td>' +
+          '<td class="n">' + nf(r.edits) + '</td><td class="n">' + nf(r.clears) + '</td><td class="n"><b>' + r.pct + '%</b></td><td class="muted" style="white-space:nowrap">' + esc(String(r.first).slice(11, 16)) + ' – ' + esc(String(r.last).slice(11, 16)) + '</td></tr>';
+      }).join('') : '<tr><td colspan="10" class="muted">ยังไม่มีรายการในรอบนี้</td></tr>') + '</table></div></div>';
+  }, 'กำลังสรุปผู้ตรวจ…');
+}
+function auJumpEdits(code) { AU.kind = 'staff'; renderAuKinds(); $('auQ').value = code; $('auEd').checked = true; auditGo(); }
+var INC_RES = { ok: ['ok', '✓ กลับมาปกติ'], warn: ['warn', '⚠ ยังไม่จบ'], bad: ['bad', '✗ กระทบข้อมูล'] };
+/** เหตุการณ์ของเครื่อง: เกิดอะไร → ระบบแก้อย่างไร → ข้อมูลครบไหม */
+function devIncidents() {
+  call('apiDeviceIncidents', [], function (R) {
+    if (!auReportHead(R, 'บันทึกเหตุการณ์ของเครื่อง (ชีต Device_Log)')) return;
+    var cnt = { ok: 0, warn: 0, bad: 0 };
+    R.rows.forEach(function (d) { cnt[d.verdict]++; });
+    var h = '<div class="card"><h3>เหตุการณ์ของเครื่อง <span class="muted" style="font-weight:400">' + R.rows.length + ' เครื่อง · ✓ ' + cnt.ok + ' · ⚠ ' + cnt.warn + ' · ✗ ' + cnt.bad + ' · เหตุการณ์ทั้งหมด ' + R.total + '</span></h3>' +
+      '<div class="muted">เครื่องจดเฉพาะตอนมีปัญหา (เน็ตหลุด · เซิร์ฟเวอร์ช้า/ไม่ว่าง · แอปปิดแล้วเปิดใหม่ · เซิร์ฟเวอร์ไม่รับรายการ · เครื่องถูกยกเลิก) และส่งมาพร้อมการส่งข้อมูลครั้งถัดไป · เวลาตามนาฬิกาเครื่อง · ' +
+      '✓ = ระบบแก้ได้เอง ข้อมูลครบ · ⚠ = เครื่องเงียบเกิน ' + R.silentMin + ' นาที หรือยังส่งค้างไม่ครบ → ตามเครื่อง · ✗ = Seq ขาด / เซิร์ฟเวอร์ไม่รับรายการ → ต้องแก้ก่อนปิดรอบ</div></div>';
+    if (!R.rows.length) h += '<div class="card">ยังไม่มีเครื่องในรอบนี้</div>';
+    R.rows.forEach(function (d) {
+      var v = INC_RES[d.verdict];
+      h += '<div class="card"><h3>' + esc(d.device) + ' <span class="pill ' + v[0] + '">' + v[1] + '</span> <span class="muted" style="font-weight:400">' + d.incidents.length + ' เหตุการณ์' +
+        (d.verdict === 'ok' ? ' · ข้อมูลครบ (Seq ไม่ขาด · ค้างส่ง ' + (d.pending === null ? '-' : nf(d.pending)) + ')' : '') + (d.lastAt ? ' · สัญญาณล่าสุด ' + esc(d.lastAt.slice(11, 16)) : '') + (d.version ? ' · แอป ' + esc(d.version) : '') + '</span></h3>' +
+        (d.why.length ? '<div>' + d.why.map(function (w) { return '<div class="' + (d.verdict === 'bad' ? 'neg' : '') + '"><b>' + esc(w) + '</b></div>'; }).join('') + '</div>' : '') +
+        (d.incidents.length ? '<table style="margin-top:6px"><tr><th style="width:90px">เวลา</th><th style="width:170px">เหตุการณ์</th><th>เกิดอะไร</th><th>ระบบแก้อย่างไร</th><th style="width:120px">ผล</th><th style="width:150px">ผู้ตรวจ</th></tr>' +
+          d.incidents.map(function (x) {
+            var r = INC_RES[x.res];
+            return '<tr><td style="white-space:nowrap">' + esc(x.time) + '</td><td><b>' + esc(x.th) + '</b></td><td>' + esc(x.what) + '</td><td>' + esc(x.how) + '</td><td><span class="pill ' + r[0] + '">' + (x.res === 'ok' ? '✓ ปกติ' : r[1]) + '</span></td><td>' + auStaff(x.staff, x.name) + '</td></tr>';
+          }).join('') + '</table>' : '<div class="muted" style="margin-top:4px">ไม่มีเหตุการณ์ — ทำงานปกติตลอด</div>') + '</div>';
+    });
+    $('auBody').innerHTML = h;
+  }, 'กำลังสรุปเหตุการณ์ของเครื่อง…');
 }
 
 // ---------- พนักงาน (v2.5.5) ----------

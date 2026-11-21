@@ -110,9 +110,9 @@ test('พร้อมรอบนี้: ยังไม่ตรวจ ✗ → 
   d = dev();
   assert.ok(!d.ready.ok && d.ready.why.some(w => /ค้างส่ง 3/.test(w)), JSON.stringify(d.ready));
 });
-test('ชีต Devices มีคอลัมน์ Check_Project · SCHEMA_VERSION 12', () => {
+test('ชีต Devices มีคอลัมน์ Check_Project · SCHEMA_VERSION ≥ 12 (13 = v2.6.1 Device_Log)', () => {
   assert.ok(env.sheets.Devices.data[0].indexOf('Check_Project') > 0);
-  assert.strictEqual(run('SCHEMA_VERSION'), 12);
+  assert.ok(run('SCHEMA_VERSION') >= 12 && run('Object.keys(SHEETS).indexOf("Device_Log") >= 0'));
 });
 
 console.log('\nv2.5.6');

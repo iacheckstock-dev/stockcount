@@ -6,13 +6,13 @@
  * (API สำหรับ TC21 จะเพิ่มในเฟส 2 แยกต่างหาก และต้องใช้ device token)
  */
 
-var SCHEMA_VERSION = 12;   // 6 = v2.4.1 Variance.Barcode · 7 = v2.4.2 ชีต Adjustments · 8 = v2.5.0 Admin_Log.Project_ID · 9 = v2.5.2 Count_History คอลัมน์ปิดรอบ · 10 = v2.5.3 ซ่อม Config ซ้ำ · 11 = v2.5.4 สถานะอัปเกรดใน Script Properties (โครงสร้างชีตไม่เปลี่ยน — เลขขยับเพื่อให้อัปเกรดทำงานหนึ่งครั้งหลัง Deploy) · 12 = v2.5.5 Devices.Check_Project
+var SCHEMA_VERSION = 13;   // 13 = v2.6.1 ชีต Device_Log · 6 = v2.4.1 Variance.Barcode · 7 = v2.4.2 ชีต Adjustments · 8 = v2.5.0 Admin_Log.Project_ID · 9 = v2.5.2 Count_History คอลัมน์ปิดรอบ · 10 = v2.5.3 ซ่อม Config ซ้ำ · 11 = v2.5.4 สถานะอัปเกรดใน Script Properties (โครงสร้างชีตไม่เปลี่ยน — เลขขยับเพื่อให้อัปเกรดทำงานหนึ่งครั้งหลัง Deploy) · 12 = v2.5.5 Devices.Check_Project
 
 /**
  * เวอร์ชันของระบบ (ใช้เลขเดียวทั้งแอป TC21 และเซิร์ฟเวอร์ ตาม Semantic Versioning MAJOR.MINOR.PATCH)
  * ต้องตรงกับ APP_VERSION ใน app/app.js และ appVersion ใน app/config.json — ดู CHANGELOG.md
  */
-var SYSTEM_VERSION = '2.6.0';
+var SYSTEM_VERSION = '2.6.1';
 
 var SHEETS = {
   Config: ['Key', 'Value', 'Note'],
@@ -28,6 +28,9 @@ var SHEETS = {
   Loc_Checks: ['Time', 'Project_ID', 'Device_ID', 'Location', 'Event', 'Staff', 'Dev_Lines', 'Dev_Qty', 'Srv_Lines', 'Srv_Qty',
     'Match', 'Up_To_Seq', 'Note'],
   Device_Checks: ['Time', 'Device_ID', 'Staff', 'App_Version', 'Result', 'Detail'],
+  // เหตุการณ์ของเครื่องระหว่างนับ (v2.6.1): เครื่องจดเฉพาะตอนมีปัญหา ส่งมากับ sync · เวลาเริ่ม/จบ/ส่งครบ = นาฬิกาเครื่อง
+  Device_Log: ['Incident_ID', 'Project_ID', 'Device_ID', 'Staff_Code', 'Type', 'Start_Time', 'End_Time', 'Minutes', 'Scans', 'Pending',
+    'Drained_At', 'Detail', 'App_Version', 'Received_Time'],
   Quarantine: ['Received_Time', 'Device_ID', 'Log_ID', 'Project_ID', 'Payload', 'Reason'],
   SAP_Snapshot: null,
   POS_Snapshot: null,
@@ -1002,7 +1005,7 @@ function apiCountReopen(staff, why) {
 var TEST_ROUND_IDS = ['2026Q4'];
 var ROUND_TYPE_TH = { REAL: 'รอบจริง', PILOT: 'รอบทดลอง', TEST: 'รอบทดสอบ (ล้างข้อมูล)' };
 /** ชีตงานที่ล้างตอนปิดรอบ (อยู่ครบในไฟล์สำรอง) · เก็บไว้: Config Staff Devices Count_History Admin_Log */
-var CLOSE_CLEAR_TABLES = ['Count_Log', 'Adjustments', 'Variance', 'Dash_Data', 'Locations', 'Loc_Members', 'Loc_Checks', 'Device_Checks',
+var CLOSE_CLEAR_TABLES = ['Count_Log', 'Adjustments', 'Variance', 'Dash_Data', 'Locations', 'Loc_Members', 'Loc_Checks', 'Device_Checks', 'Device_Log',
   'Quarantine', 'Barcode_Map', 'Map_Decisions', 'SAP_POS_Compare', 'Master_Check', 'Device_Master', 'Import_Files'];
 var CLOSE_CLEAR_RAW = ['SAP_Snapshot', 'POS_Snapshot'];
 var CLOSE_SUM_SHEETS = ['Count_Log', 'Adjustments', 'Variance'];
@@ -1981,4 +1984,117 @@ function auditStaff_(ctx, q) {
     requested: req.length, first: times[0] || '', last: times[times.length - 1] || '',
     locs: Object.keys(locs).sort(natCmp_).map(function (k) { return locs[k]; }) };
   return { head: head, lines: auditDress_(ctx, lines) };
+}
+
+// ---------- ผู้ตรวจแก้ข้อมูลบ่อย (v2.6.1) ---------- อ่านอย่างเดียว · ใช้ตัวอ่าน Count_Log เดียวกับหน้า Audit
+var EDIT_FLAG_PCT = 10, EDIT_FLAG_MIN = 3;   // ไฮไลต์เมื่อ % แก้ ≥ 10 และแก้ ≥ 3 ครั้ง (กันคนยิงน้อยแก้ครั้งเดียวขึ้นสี)
+
+/**
+ * ตารางผู้ตรวจทุกคนในรอบที่เปิดอยู่ · แก้ = ยกเลิก + แก้ยอด + ล้าง Location (นับครั้ง ไม่ใช่บรรทัด: ล้าง 1 ครั้งเขียนหลายบรรทัด)
+ * คืน { project, at, rows:[{ code, name, devices, lines, scan, manual, voids, edits, clears, changes, pct, first, last, flag }], pct, min }
+ */
+function apiStaffEdits() {
+  var cfg = readConfig_(), project = String(cfg.PROJECT_ID || ''), st = cfg.ROUND_STATUS || 'NONE';
+  var base = { project: project, status: st, statusTh: ROUND_STATUS_TH[st] || st, at: now_(), pct: EDIT_FLAG_PCT, min: EDIT_FLAG_MIN };
+  if (!project || st === 'NONE') return Object.assign(base, { none: true });
+  if (st === 'CLOSED') return Object.assign(base, { closed: true });
+  var names = staffNames_(), by = {};
+  auditLines_(project).forEach(function (l) {
+    var x = by[l.st] || (by[l.st] = { code: l.st, name: names[l.st] || '', devices: {}, lines: 0, scan: 0, manual: 0, voids: 0, edits: 0, clearKeys: {}, first: '', last: '' });
+    x.devices[l.dev] = 1; x.lines++;
+    if (l.ty === 'SCAN') x.scan++;
+    else if (l.ty === 'MANUAL') x.manual++;
+    else if (l.ty === 'VOID') x.voids++;
+    else if (l.clr) x.clearKeys[l.dev + '|' + l.loc + '|' + l.t] = 1;
+    else if (l.ed) x.edits++;
+    if (l.t && (!x.first || l.t < x.first)) x.first = l.t;
+    if (l.t && l.t > x.last) x.last = l.t;
+  });
+  var rows = Object.keys(by).map(function (k) {
+    var x = by[k], clears = Object.keys(x.clearKeys).length, changes = x.voids + x.edits + clears;
+    var pct = x.lines ? Math.round(changes / x.lines * 1000) / 10 : 0;
+    return { code: x.code, name: x.name, devices: Object.keys(x.devices).sort(), lines: x.lines, scan: x.scan, manual: x.manual, voids: x.voids, edits: x.edits,
+      clears: clears, changes: changes, pct: pct, first: x.first, last: x.last, flag: pct >= EDIT_FLAG_PCT && changes >= EDIT_FLAG_MIN };
+  });
+  rows.sort(function (a, b) { return b.pct - a.pct || b.changes - a.changes || natCmp_(a.code, b.code); });
+  return Object.assign(base, { rows: rows });
+}
+
+// ---------- รายงานเหตุการณ์ของเครื่อง (v2.6.1) ---------- อ่านอย่างเดียว
+var SILENT_MIN = 3;   // ไม่รายงานตัวนานกว่านี้ระหว่างนับ = เครื่องเงียบ
+var INC_TH = { OFFLINE: 'เน็ตหลุด', SLOW: 'เซิร์ฟเวอร์ช้า / ไม่ว่าง', RESTART: 'แอปปิดแล้วเปิดใหม่', REJECTED: 'เซิร์ฟเวอร์ไม่รับรายการ', REVOKED: 'เครื่องถูกยกเลิก / จับคู่ใหม่' };
+var INC_CODE_TH = { TIMEOUT: 'หมดเวลา', BUSY: 'ระบบไม่ว่าง', SERVER_ERROR: 'เซิร์ฟเวอร์ผิดพลาด', BAD_REPLY: 'ตอบผิดรูปแบบ' };
+
+/**
+ * ต่อเครื่องในรอบที่เปิดอยู่: เหตุการณ์ (เกิดอะไร → แก้อย่างไร → ผล) + ตัดสิน ✓ กลับมาปกติ / ⚠ ยังไม่จบ / ✗ กระทบข้อมูล
+ * เครื่องในรายงาน = เครื่องที่ตรวจความพร้อมรอบนี้ หรือมีรายการ / เหตุการณ์ในรอบนี้
+ */
+function apiDeviceIncidents() {
+  var cfg = readConfig_(), project = String(cfg.PROJECT_ID || ''), st = cfg.ROUND_STATUS || 'NONE';
+  var base = { project: project, status: st, statusTh: ROUND_STATUS_TH[st] || st, at: now_(), silentMin: SILENT_MIN };
+  if (!project || st === 'NONE') return Object.assign(base, { none: true });
+  if (st === 'CLOSED') return Object.assign(base, { closed: true });
+  var names = staffNames_(), byDev = {};
+  var lg = readRaw_('Device_Log');
+  if (lg.length > 1) {
+    var c = {}; lg[0].forEach(function (n, i) { c[n] = i; });
+    lg.slice(1).forEach(function (r) {
+      if (r[c.Project_ID] !== project) return;
+      (byDev[r[c.Device_ID]] = byDev[r[c.Device_ID]] || []).push(incText_({
+        id: r[c.Incident_ID], type: r[c.Type], staff: r[c.Staff_Code], start: String(r[c.Start_Time]), end: String(r[c.End_Time]),
+        minutes: Number(r[c.Minutes]) || 0, scans: Number(r[c.Scans]) || 0, pending: Number(r[c.Pending]) || 0, drainedAt: String(r[c.Drained_At] || ''),
+        detail: String(r[c.Detail] || ''), ver: r[c.App_Version] }, names));
+    });
+  }
+  var X = logIdx_(project, {}), dt = table_('Devices'), ids = [], info = {};
+  dt.rows.forEach(function (r) {
+    var d = rowObj_(dt, r), id = String(d.Device_ID);
+    var st0 = X.stats(id);
+    if (String(d.Check_Project) !== project && !byDev[id] && !st0.max) return;
+    ids.push(id); info[id] = { d: d, seq: st0 };
+  });
+  Object.keys(byDev).forEach(function (id) { if (!info[id]) { ids.push(id); info[id] = { d: {}, seq: X.stats(id) }; } });
+  var hb = heartbeats_(ids), nowMs = Date.now(), counting = st === 'COUNTING' || st === 'COUNT_CLOSED';
+  var rows = ids.sort(natCmp_).map(function (id) {
+    var I = info[id], h = hb[id], incs = (byDev[id] || []).sort(function (a, b) { return a.start < b.start ? -1 : 1; });
+    var gaps = I.seq.gaps ? I.seq.gaps.length : 0, rejected = incs.filter(function (x) { return x.type === 'REJECTED'; }).length;
+    var lastAt = h ? h.at : 0, silentMin = lastAt ? Math.floor((nowMs - lastAt) / 60000) : null;
+    var silent = counting && String(I.d.Active || 'Y') !== 'N' && (lastAt ? silentMin >= SILENT_MIN : !!I.seq.max);
+    var pend = h ? h.pending : null, unfinished = incs.filter(function (x) { return x.res === 'warn'; }).length;
+    var verdict = gaps || rejected ? 'bad' : silent || unfinished ? 'warn' : 'ok';
+    var why = [];
+    if (gaps) why.push('Seq ขาด ' + gaps + (gaps >= 50 ? '+' : '') + ' เลข (ข้อมูลจากเครื่องมาไม่ครบ — ดูแท็บเครื่อง TC21)');
+    if (rejected) why.push('เซิร์ฟเวอร์ไม่รับรายการ ' + rejected + ' ครั้ง');
+    if (silent) why.push('เงียบไป' + (lastAt ? 'ตั้งแต่ ' + ts_(lastAt).slice(11, 16) + ' (' + silentMin + ' นาที)' : ' (ไม่มีสัญญาณในช่วง 6 ชม.)') +
+      (pend ? ' · ค้างส่งล่าสุด ' + pend + ' รายการ' : ''));
+    if (unfinished) why.push('ส่งค้างไม่ครบหลังเหตุการณ์ ' + unfinished + ' ครั้ง');
+    return { device: id, verdict: verdict, why: why, incidents: incs, gaps: gaps, pending: pend, lastAt: lastAt ? ts_(lastAt) : '',
+      lastSeq: I.seq.max || 0, version: String(I.d.App_Version || '') };
+  });
+  return Object.assign(base, { rows: rows, total: rows.reduce(function (t, r) { return t + r.incidents.length; }, 0) });
+}
+
+/** ข้อความอ่านง่าย: เกิดอะไร → ระบบแก้อย่างไร → ผล (ok / warn / bad) */
+function incText_(x, names) {
+  var hm = function (t) { return String(t || '').slice(11, 16); }, mins = x.minutes ? x.minutes + ' นาที' : 'ไม่ถึง 1 นาที';
+  var drained = x.drainedAt ? 'ส่งครบเมื่อ ' + hm(x.drainedAt) : '', what = '', how = '', res = 'ok';
+  if (x.type === 'OFFLINE') {
+    what = 'เน็ตหลุด ' + mins + (x.scans ? ' · ยิงระหว่างนั้น ' + x.scans + ' รายการ เก็บไว้ในเครื่อง' : ' · ไม่ได้ยิงระหว่างนั้น');
+    how = x.pending ? (drained || 'ยังส่งไม่ครบ (ค้าง ' + x.pending + ')') : 'กลับมาออนไลน์ ไม่มีค้างส่ง';
+  } else if (x.type === 'SLOW') {
+    what = 'เซิร์ฟเวอร์ช้า / ไม่ว่าง ' + mins + (x.detail ? ' (' + x.detail.split(' ').map(function (p) { var k = p.split('x'); return (INC_CODE_TH[k[0]] || k[0]) + ' ' + (k[1] || 1) + ' ครั้ง'; }).join(' · ') + ')' : '');
+    how = 'ส่งซ้ำอัตโนมัติสำเร็จ' + (x.pending ? (drained ? ' · ' + drained : ' · ยังค้าง ' + x.pending) : '');
+  } else if (x.type === 'RESTART') {
+    what = 'แอปปิดแล้วเปิดใหม่ (ปิดไป ' + mins + ')' + (x.detail ? ' · ' + x.detail : '') + (x.pending ? ' · มีรายการค้าง ' + x.pending : '');
+    how = x.pending ? (drained || 'ยังส่งไม่ครบ') : 'ข้อมูลในเครื่องอยู่ครบ ไม่มีค้างส่ง';
+  } else if (x.type === 'REJECTED') {
+    what = 'เซิร์ฟเวอร์ไม่รับ ' + x.scans + ' รายการ' + (x.detail ? ': ' + x.detail : '');
+    how = 'ต้องตามแก้ — ดูหน้าสถานะของเครื่อง'; res = 'bad';
+  } else if (x.type === 'REVOKED') {
+    what = 'เครื่องถูกยกเลิก / ต้องจับคู่ใหม่' + (x.detail ? ' (' + x.detail + ')' : '');
+    how = 'จับคู่ใหม่เมื่อ ' + hm(x.end) + (x.pending ? (drained ? ' · ' + drained : ' · ยังค้าง ' + x.pending) : '');
+  }
+  if (res === 'ok' && x.pending && !x.drainedAt) res = 'warn';
+  return { id: x.id, type: x.type, th: INC_TH[x.type] || x.type, start: x.start, end: x.end, time: hm(x.start) + (x.end && hm(x.end) !== hm(x.start) ? '–' + hm(x.end) : ''),
+    what: what, how: how, res: res, staff: x.staff, name: names[x.staff] || '', ver: x.ver };
 }

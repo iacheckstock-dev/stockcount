@@ -216,6 +216,9 @@ sequenceDiagram
 ## หน้า Admin อ่านอย่างเดียว (v2.5.6)
 - `apiAdminLog(round, q, offset)` → `{ rows, total, offset, round, q, rounds:[{p,n}] }` · round = รหัสรอบ หรือ `*` ทุกรอบ · ค้นคำทุกคอลัมน์ · 100 แถวต่อครั้ง ใหม่ก่อน · ไม่ใช้ล็อก
 - `apiRoundStatus()` → `{ projectId, status, statusTh }` · อ่าน Config อย่างเดียว · หน้า Admin ถามทุก 30 วินาทีระหว่าง SETUP
+- `apiStaffEdits()` (v2.6.1) → `{ rows:[{ code, name, devices, lines, scan, manual, voids, edits, clears, changes, pct, first, last, flag }], pct, min }` · แก้ = ยกเลิก + แก้ยอด + ล้าง Location (ครั้ง) · flag เมื่อ pct ≥ 10 และ changes ≥ 3 · อ่านอย่างเดียว
+- `apiDeviceIncidents()` (v2.6.1) → `{ rows:[{ device, verdict: ok|warn|bad, why[], incidents:[{ type, th, time, what, how, res }], gaps, pending, lastAt }], total, silentMin }` · อ่านอย่างเดียว
+- sync (v2.6.1): body เพิ่ม `incidents:[{ id, type, project, staff, start, end, minutes, scans, pending, drainedAt, detail }]` (≤ 20) → ตอบ `incidentsAck:[id]` (รวมที่ซ้ำ/รอบอื่น/ทิ้ง) · เขียน Device_Log ในล็อกเดียวกับ Count_Log
 - `apiAudit(kind, q, opt)` (v2.6.0) · kind = `sku` / `loc` / `staff` · opt = `{ pick, edits, offset }` → `{ project, status, at, head, lines, total, all, editCount, offset, page }` · SKU พบหลายตัว → `{ choices:[[Material, ชื่อ, บาร์โค้ด]], choiceTotal }` · ไม่มีรอบ → `{ none }` · รอบปิดแล้ว → `{ closed, url }` · อ่านอย่างเดียว ไม่ล็อก ไม่เขียนชีต · 200 บรรทัดต่อครั้ง เรียงตามเวลายิง
 - `apiGetState().log.rounds` = รอบทั้งหมดใน Admin_Log (ช่องเลือกรอบ)
 - เครื่อง: `locInfo` รอ 15 วินาทีเมื่อผู้ใช้รอ · 25 วินาทีเมื่อถามเป็นรอบเบื้องหลัง

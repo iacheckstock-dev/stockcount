@@ -161,12 +161,84 @@ test('ทีละ 200 บรรทัด: offset ต่อได้ · คร�
   assert.strictEqual(ids.size, 230);
 });
 
+console.log('\nv2.6.1 ผู้ตรวจแก้ข้อมูลบ่อย');
+test('ตารางผู้ตรวจ: นับประเภทถูก · % แก้ · ไฮไลต์เมื่อ ≥ 10% และ ≥ 3 ครั้ง · อ่านอย่างเดียว', () => {
+  const r = readOnly(() => run('apiStaffEdits()'));
+  const a = r.rows.find(x => x.code === 'EMP-A'), b = r.rows.find(x => x.code === 'EMP-B');
+  assert.ok(a && b, JSON.stringify(r.rows.map(x => x.code)));
+  assert.strictEqual(a.lines, 5); assert.strictEqual(a.scan, 2); assert.strictEqual(a.manual, 1); assert.strictEqual(a.voids, 1); assert.strictEqual(a.edits, 1);
+  assert.strictEqual(a.changes, 2); assert.strictEqual(a.pct, 40);
+  assert.strictEqual(a.flag, false, 'แก้ 2 ครั้ง < 3 → ไม่ไฮไลต์');
+  assert.strictEqual(b.changes, 0); assert.strictEqual(b.flag, false);
+  assert.ok(r.rows.indexOf(a) < r.rows.indexOf(b), 'เรียง % แก้มากก่อน');
+});
+test('ล้าง Location นับเป็น 1 ครั้ง (ไม่ใช่ตามจำนวนบรรทัด) · แก้ ≥ 3 → ไฮไลต์', () => {
+  const t = '2026-11-04 11:59:00';
+  A.sync([A.scan('D4', BC1, MAT1, 2), A.scan('D4', BC2, MAT2, 1)], [A.ev('OPEN', 'D4')]);
+  A.sync([A.scan('D4', BC1, MAT1, -2, { type: 'RECOUNT_SET', basis: 0, reason: 'ล้าง Location D4', scanTime: t }),
+    A.scan('D4', BC2, MAT2, -1, { type: 'RECOUNT_SET', basis: 0, reason: 'ล้าง Location D4', scanTime: t })], [A.ev('EDIT', 'D4', { clear: true })]);
+  const a = run('apiStaffEdits()').rows.find(x => x.code === 'EMP-A');
+  assert.strictEqual(a.clears, 1, JSON.stringify(a));
+  assert.strictEqual(a.changes, 3); assert.strictEqual(a.flag, true);
+});
+
+console.log('\nv2.6.1 เหตุการณ์ของเครื่อง');
+const inc = (id, type, extra) => Object.assign({ id, type, project: P, staff: 'EMP-A', start: '2026-11-04 10:42:00', end: '2026-11-04 10:51:00', minutes: 9, scans: 37, pending: 37, drainedAt: '2026-11-04 10:52:00', detail: '' }, extra || {});
+const hbNow = () => ['TC21-01', 'TC21-02'].forEach(id => run(`CacheService.getScriptCache().put('hb_${id}', JSON.stringify({ at: Date.now(), pending: 0, loc: '' }), 600)`));
+test('ไม่มีเหตุการณ์ → ทุกเครื่อง ✓ "ไม่มีเหตุการณ์"', () => {
+  hbNow();
+  const r = readOnly(() => run('apiDeviceIncidents()'));
+  assert.ok(r.rows.length >= 2 && r.rows.every(d => d.incidents.length === 0 && d.verdict === 'ok'), JSON.stringify(r.rows.map(d => [d.device, d.verdict, d.why])));
+});
+test('ส่งมากับ sync → บันทึก Device_Log · ส่งซ้ำไม่เกิดแถวซ้ำ · รอบอื่น/ประเภทแปลก = ตอบรับแต่ไม่เก็บ', () => {
+  const body = { entries: [], events: [], incidents: [inc('TC21-01-I1', 'OFFLINE'), inc('TC21-01-I2', 'SLOW', { minutes: 2, scans: 0, pending: 0, drainedAt: '', detail: 'TIMEOUTx2 BUSYx1' }),
+    inc('TC21-01-I3', 'RESTART', { minutes: 6, pending: 4, detail: 'อัปเดตแอป 2.6.0 → 2.6.1' }), inc('TC21-01-OLD', 'OFFLINE', { project: '2026Q4-R1' }), inc('TC21-01-X', 'WEIRD')] };
+  const r1 = A.call('sync', body), r2 = A.call('sync', body);
+  assert.strictEqual(r1.incidentsAck.length, 5); assert.strictEqual(r2.incidentsAck.length, 5);
+  const rows = env.sheets.Device_Log.data.slice(1);
+  assert.strictEqual(rows.length, 3, JSON.stringify(rows));
+  assert.ok(rows.every(x => x[2] === 'TC21-01' && x[1] === P));
+});
+test('รายงาน: ข้อความ เกิดอะไร → ระบบแก้อย่างไร · เรียงตามเวลา · ✓', () => {
+  const r = readOnly(() => run('apiDeviceIncidents()'));
+  const d = r.rows.find(x => x.device === 'TC21-01');
+  assert.strictEqual(d.incidents.length, 3);
+  const off = d.incidents.find(x => x.type === 'OFFLINE'), slow = d.incidents.find(x => x.type === 'SLOW'), rs = d.incidents.find(x => x.type === 'RESTART');
+  assert.ok(/เน็ตหลุด 9 นาที · ยิงระหว่างนั้น 37 รายการ/.test(off.what) && /ส่งครบเมื่อ 10:52/.test(off.how) && off.res === 'ok', JSON.stringify(off));
+  assert.ok(/หมดเวลา 2 ครั้ง · ระบบไม่ว่าง 1 ครั้ง/.test(slow.what) && /ส่งซ้ำอัตโนมัติสำเร็จ/.test(slow.how), JSON.stringify(slow));
+  assert.ok(/ปิดไป 6 นาที/.test(rs.what) && /อัปเดตแอป/.test(rs.what), JSON.stringify(rs));
+  assert.strictEqual(off.name, 'นาย ก');
+  assert.strictEqual(d.verdict, 'ok', JSON.stringify(d.why));
+});
+test('ส่งค้างไม่ครบภายในเวลา → ⚠ · เซิร์ฟเวอร์ไม่รับรายการ → ✗', () => {
+  B.call('sync', { entries: [], events: [], incidents: [inc('TC21-02-I1', 'OFFLINE', { staff: 'EMP-B', drainedAt: '' })] });
+  let d = run('apiDeviceIncidents()').rows.find(x => x.device === 'TC21-02');
+  assert.strictEqual(d.verdict, 'warn', JSON.stringify(d));
+  assert.ok(d.why.some(w => /ส่งค้างไม่ครบ/.test(w)));
+  B.call('sync', { entries: [], events: [], incidents: [inc('TC21-02-I2', 'REJECTED', { staff: 'EMP-B', scans: 2, pending: 0, detail: 'Seq ไม่ถูกต้อง' })] });
+  d = run('apiDeviceIncidents()').rows.find(x => x.device === 'TC21-02');
+  assert.strictEqual(d.verdict, 'bad');
+  assert.ok(d.incidents.find(x => x.type === 'REJECTED').res === 'bad');
+});
+test('เครื่องเงียบเกิน 3 นาทีระหว่างนับ → ⚠ พร้อมเวลาสัญญาณล่าสุด', () => {
+  run(`CacheService.getScriptCache().put('hb_TC21-01', JSON.stringify({ at: Date.now() - 5 * 60000, pending: 3, loc: '' }), 600)`);
+  const d = run('apiDeviceIncidents()').rows.find(x => x.device === 'TC21-01');
+  assert.strictEqual(d.verdict, 'warn', JSON.stringify(d));
+  assert.ok(d.why.some(w => /เงียบไปตั้งแต่ .* \(5 นาที\) · ค้างส่งล่าสุด 3/.test(w)), JSON.stringify(d.why));
+  run(`CacheService.getScriptCache().put('hb_TC21-01', JSON.stringify({ at: Date.now(), pending: 0, loc: '' }), 600)`);
+  assert.strictEqual(run('apiDeviceIncidents()').rows.find(x => x.device === 'TC21-01').verdict, 'ok');
+});
+
 console.log('\nหลังปิดรอบ');
 test('รอบปิดแล้ว → closed + ลิงก์ไฟล์สำรอง (ไม่ค้นในชีตที่ล้างแล้ว)', () => {
   run(`setConfig_({ ROUND_STATUS: "CLOSED" })`);
   env.sheets.Count_History.data.push([P, '2026-11-04', 8900, 314, -8597, -1, 1, 0, 'https://docs/x', '', 1, 314, '', '', 'PILOT', 'id']);
   const r = run('apiAudit("sku", "x")');
   assert.ok(r.closed && r.url === 'https://docs/x');
+  assert.ok(run('apiStaffEdits()').closed && run('apiDeviceIncidents()').closed);
+});
+test('Device_Log อยู่ในรายชื่อชีตที่ล้างหลังสำรองตอนปิดรอบ', () => {
+  assert.ok(run('CLOSE_CLEAR_TABLES').indexOf('Device_Log') >= 0);
 });
 
 console.log('\nผล: ผ่าน ' + pass + ' / ไม่ผ่าน ' + fail);

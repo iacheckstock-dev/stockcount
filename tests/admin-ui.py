@@ -20,6 +20,8 @@ window.google = { script: { run: (function mk(ok, bad) {
       if (window.FAIL && window.FAIL[k]) { var m = window.FAIL[k]; setTimeout(function () { bad && bad({ message: m }); }, 0); return; }
       if (k === 'apiCloseCheck') { setTimeout(function () { ok && ok(window.KFULL || window.ST.KCHECK); }, 0); return; }
       if (k === 'apiCloseCheckFast') { setTimeout(function () { ok && ok(window.KFAST || Object.assign({}, window.ST.KCHECK, { full: false })); }, 0); return; }
+      if (k === 'apiStaffEdits') { setTimeout(function () { ok && ok(window.ST.STAFFEDITS); }, 0); return; }
+      if (k === 'apiDeviceIncidents') { setTimeout(function () { ok && ok(window.INCRES || window.ST.INCIDENTS); }, 0); return; }
       if (k.indexOf('apiStaff') === 0) { setTimeout(function () { ok && ok(window.STAFF); }, 0); return; }
       if (k === 'apiAdminLog') { setTimeout(function () { ok && ok(window.LOGRES); }, 0); return; }
       if (k === 'apiRoundStatus') { setTimeout(function () { ok && ok(window.RSTAT); }, 0); return; }
@@ -551,6 +553,58 @@ with sync_playwright() as p:
     big = dict(AUD['sku']); big.update({'total': 450, 'offset': 200, 'page': 200})
     pg.evaluate("r => renderAudit(r)", big)
     check(pg.locator('#auBody button:has-text("ก่อนหน้า")').count() == 1 and pg.locator('#auBody button:has-text("ถัดไป")').count() == 1 and 'แสดง 201–' in pg.inner_text('#auBody'), 'แบ่งหน้า: ก่อนหน้า / ถัดไป')
+
+    print('\nv2.6.1 รายงานในแท็บตรวจสอบ')
+    if pg.is_visible('#askDlg'): pg.click('#askOk')
+    SE = st['STAFFEDITS']
+    pg.evaluate('CALLS.length = 0'); pg.click('#audit button:has-text("ผู้ตรวจแก้ข้อมูลบ่อย")'); pg.wait_for_timeout(100)
+    body = pg.inner_text('#auBody')
+    check(any(c[0] == 'apiStaffEdits' for c in pg.evaluate('CALLS')) and 'ผู้ตรวจแก้ข้อมูลบ่อย' in body and pg.locator('#auBody table tr').count() - 1 == len(SE['rows']), 'ปุ่ม "ผู้ตรวจแก้ข้อมูลบ่อย" → ตารางผู้ตรวจ %d คน' % len(SE['rows']))
+    check(pg.locator('#auBody table tr.ed').count() == len([r for r in SE['rows'] if r['flag']]), 'ไฮไลต์เฉพาะคนที่เกินเกณฑ์ (%d)' % len([r for r in SE['rows'] if r['flag']]))
+    check(('%% แก้ ≥ %d%%' % SE['pct']) in body, 'บอกเกณฑ์ไว้ในหน้า')
+    pg.screenshot(path='/tmp/admin-staffedits.png', full_page=True)
+    first = SE['rows'][0]
+    pg.evaluate('CALLS.length = 0'); pg.locator('#auBody a.j').first.click(); pg.wait_for_timeout(100)
+    c = [x for x in pg.evaluate('CALLS') if x[0] == 'apiAudit'][-1]
+    check(c[1] == 'staff' and c[2] == first['code'] and c[3]['edits'] is True, 'กดชื่อ → หน้า Audit ผู้ตรวจ ' + first['code'] + ' เฉพาะรายการแก้')
+    pg.uncheck('#auEd'); pg.wait_for_timeout(50)
+    # เหตุการณ์ของเครื่อง: ข้อมูลจริงจากรอบ + เติมเหตุการณ์ตัวอย่างให้ครบทุกแบบ
+    IR = json.loads(json.dumps(st['INCIDENTS']))
+    IR['rows'][0]['incidents'] = [
+        {'id': 'a', 'type': 'OFFLINE', 'th': 'เน็ตหลุด', 'time': '10:42–10:51', 'what': 'เน็ตหลุด 9 นาที · ยิงระหว่างนั้น 37 รายการ เก็บไว้ในเครื่อง', 'how': 'ส่งครบเมื่อ 10:52', 'res': 'ok', 'staff': 'EMP-C', 'name': 'นาย ค'},
+        {'id': 'b', 'type': 'REJECTED', 'th': 'เซิร์ฟเวอร์ไม่รับรายการ', 'time': '11:00', 'what': 'เซิร์ฟเวอร์ไม่รับ 2 รายการ', 'how': 'ต้องตามแก้', 'res': 'bad', 'staff': '', 'name': ''}]
+    IR['rows'][0]['verdict'] = 'bad'; IR['rows'][0]['why'] = ['เซิร์ฟเวอร์ไม่รับรายการ 1 ครั้ง']
+    IR['total'] = sum(len(d['incidents']) for d in IR['rows'])
+    pg.evaluate('r => { window.INCRES = r; }', IR)
+    pg.evaluate('CALLS.length = 0'); pg.click('#audit button:has-text("เหตุการณ์ของเครื่อง")'); pg.wait_for_timeout(100)
+    body = pg.inner_text('#auBody')
+    check(any(c[0] == 'apiDeviceIncidents' for c in pg.evaluate('CALLS')) and ('%d เครื่อง' % len(IR['rows'])) in body, 'ปุ่ม "เหตุการณ์ของเครื่อง" → การ์ดรายเครื่อง %d เครื่อง' % len(IR['rows']))
+    check('✗ กระทบข้อมูล' in body and 'เซิร์ฟเวอร์ไม่รับรายการ 1 ครั้ง' in body and 'ส่งครบเมื่อ 10:52' in body, 'แสดงผลตัดสิน ✗ + เหตุผล + เกิดอะไร → ระบบแก้อย่างไร')
+    if len(IR['rows']) > 1:
+        check('ไม่มีเหตุการณ์ — ทำงานปกติตลอด' in body and 'Seq ขาด' in body, 'เครื่องที่ไม่มีเหตุการณ์ → "ทำงานปกติตลอด" · ชุดทดสอบนี้มี Seq ขาด → ✗ พร้อมเหตุผล')
+    pg.screenshot(path='/tmp/admin-incidents.png', full_page=True)
+    pg.evaluate("renderAudit({ none: true })")
+    pg.evaluate("window.INCRES = { closed: true, project: 'R9', statusTh: 'ปิดรอบแล้ว', at: 'x' }"); pg.click('#audit button:has-text("เหตุการณ์ของเครื่อง")'); pg.wait_for_timeout(80)
+    check('ปิดแล้ว' in pg.inner_text('#auBody') and 'ไฟล์สำรอง' in pg.inner_text('#auBody'), 'รอบปิดแล้ว → บอกว่าอยู่ในไฟล์สำรอง')
+    # ส่วนที่ 1: ต่างตั้งแต่ N ชิ้น + ป้ายยอดบัญชี 0
+    pg.click('#nav button[data-t="summary"]'); pg.wait_for_timeout(200)
+    n_all = pg.locator('#skuTbl tr').count()
+    pg.fill('#sumMinQ', '5'); pg.wait_for_timeout(80)
+    import re as _re
+    vals = [abs(float(_re.sub(r'[^0-9.\-]', '', x) or 0)) for x in pg.eval_on_selector_all('#skuTbl tr td:nth-child(8) b', 'e => e.map(x => x.textContent)')]
+    check(vals and min(vals) >= 5 and pg.locator('#skuTbl tr').count() <= n_all and 'ต่างตั้งแต่ 5 ชิ้น' in pg.inner_text('#skuInfo'), 'สรุปผลนับ: ต่างตั้งแต่ 5 ชิ้น → ทุกแถว |ต่าง| ≥ 5 (%d แถว)' % len(vals))
+    pg.fill('#sumMinQ', ''); pg.wait_for_timeout(50)
+    b0 = pg.evaluate("SUM.skus.filter(function (r) { return book0(r); }).length")
+    check(pg.locator('#skuTbl .pill:has-text("ยอดบัญชี 0")').count() == min(b0, 300) or b0 == 0, 'ป้าย "ยอดบัญชี 0" ที่สินค้าบัญชี 0 แต่นับได้ (%d)' % b0)
+    # ใบเดินตรวจ: เกณฑ์บาทไม่ตัดสินค้ายอดบัญชี 0 · เกณฑ์ชิ้นใช้ได้
+    pg.evaluate("SUM.skus.push(['ZB0', 'ทดสอบบัญชี 0', 0, 4, 0, 4, 4, 0, 0, 0, 0, 0, '', '', ['000'], 0, 0])")
+    pg.evaluate("walkOpen()"); pg.fill('#wkMin', '1000'); pg.fill('#wkMinQ', '3'); pg.evaluate("walkBuild()"); pg.wait_for_timeout(100)
+    wb = pg.inner_text('#walkDoc')
+    check('ZB0' in wb and 'ต่างตั้งแต่ 3 ชิ้น' in wb, 'ใบเดินตรวจ: ต่างตั้งแต่ 1,000 บาท + 3 ชิ้น → ยังมีสินค้ายอดบัญชี 0 (ZB0) · หัวใบบอกเกณฑ์ชิ้น')
+    pg.evaluate("SUM.skus.pop()")
+    pg.keyboard.press('Escape'); pg.wait_for_timeout(50)
+    pg.evaluate("document.querySelectorAll('.dlg.on').forEach(function (d) { d.classList.remove('on'); }); $('walk').classList.remove('on');")
+    pg.click('#nav button[data-t="audit"]'); pg.wait_for_timeout(50)
 
     print('\nUAT 17 ข้อสังเกต (v2.6.0)')
     if pg.is_visible('#askDlg'): pg.click('#askOk')
