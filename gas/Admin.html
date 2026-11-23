@@ -346,7 +346,7 @@
 </main>
 <div id="trDlg" class="dlg"><div class="box">
   <h3 style="margin-top:0">โอนการดูแล <span id="trLoc"></span></h3>
-  <div class="muted">ผู้ดูแลเดิม <b id="trFrom"></b> จะกลายเป็นผู้ช่วยที่ส่งงานแล้ว (ยอดเดิมยังอยู่) · เลือกได้เฉพาะเครื่องที่เปิดใช้และจับคู่แล้ว</div>
+  <div class="muted">ผู้ดูแลเดิม <b id="trFrom"></b> หยุดนับที่ Location นี้ (ยอดเดิมยังอยู่ เครื่องใหม่นับต่อจากยอดนั้น) · เลือกได้เฉพาะเครื่องที่เปิดใช้และจับคู่แล้ว</div>
   <div id="trList" style="margin-top:8px"></div>
   <div class="row" style="margin-top:8px">เหตุผล <input type="text" id="trWhy" style="flex:1" placeholder="เช่น เครื่องผู้ดูแลเสีย (บังคับ)" oninput="$('trNeed').textContent=''"></div>
   <div id="trNeed"></div>
@@ -645,7 +645,7 @@ function renderClose(s) {
   if (r.archived) { $('closeBox').innerHTML = '<div class="muted">ไฟล์สำรอง — ดูอย่างเดียว</div>'; $('kBox').innerHTML = ''; return; }
   if (r.status === 'COUNTING') {
     h = '<div>สถานะ: <span class="pill info">กำลังนับ</span></div>' +
-      '<div class="muted" style="margin:6px 0">กดเมื่อนับครบทุกจุดแล้ว · เครื่องจะหยุดยิงและเปิด Location ใหม่ไม่ได้ · รายการที่ค้างส่งยังเข้าได้ · ผู้ดูแลยังกด "ปิด Location" / ผู้ช่วยยังกด "ส่งงาน" ได้ · หน้านี้ยังปรับยอด สรุปผล และพิมพ์ใบเดินตรวจได้</div>' +
+      '<div class="muted" style="margin:6px 0">กดเมื่อนับครบทุกจุดแล้ว · เครื่องจะหยุดยิงและเปิด Location ใหม่ไม่ได้ · รายการที่ค้างส่งยังเข้าได้ · เครื่องยังกด "ปิด Location" ที่ค้างได้ · หน้านี้ยังปรับยอด สรุปผล และพิมพ์ใบเดินตรวจได้</div>' +
       '<button class="btn" onclick="countClose()">ปิดการนับ</button>';
   } else if (r.status === 'COUNT_CLOSED') {
     h = '<div>สถานะ: <span class="pill warn">ปิดการนับแล้ว</span> <span class="muted">เมื่อ ' + esc(r.closedAt) + ' โดย ' + esc(r.closedBy) + '</span> ' +
@@ -697,7 +697,7 @@ function stepsRender() {
   var ready = !!(K && K.full && K.ok), testOk = !!(K && kOk('K3') && kOk('K6') && kOk('K7'));
   var rows = [
     ['1', 'ทุกเครื่องส่งสัญญาณหลังปิดการนับ · ค้างส่ง 0 (K3)', K ? kOk('K3') : null, '<button class="btn sec" onclick="fastCheck(true)">ตรวจอีกครั้ง</button>'],
-    ['2', 'ทุก Location ปิดแล้ว · ไม่มีธงต้องตรวจซ้ำ (K1 · K2)', K ? kOk('K1') && kOk('K2') : null, '<span class="muted">ปิดที่เครื่อง / ส่งงานแทน</span>'],
+    ['2', 'ทุก Location ปิดแล้ว · ไม่มีธงต้องตรวจซ้ำ (K1 · K2)', K ? kOk('K1') && kOk('K2') : null, '<span class="muted">ปิดที่เครื่อง / โอนการดูแล / ปิดธง</span>'],
     ['3', 'กระทบยอดทั้งรอบ หลังเครื่องส่งครบ (K4)', K ? kOk('K4') : null, '<button class="btn sec" onclick="reconcile(fastCheck)">กระทบยอดทั้งรอบ</button>'],
     ['4', 'สรุปผลและบันทึก — หลังปรับยอดครั้งสุดท้าย (K5)', K ? kOk('K5') : null, '<button class="btn sec" onclick="saveSummary(closeCheck)">สรุปผลและบันทึก</button>'],
     ['5', 'ตรวจเงื่อนไขแบบเต็ม — เทียบตัวเลขผลสรุป', K ? ready : null, '<button class="btn sec" onclick="closeCheck(true)">ตรวจเงื่อนไข</button>'],
@@ -792,7 +792,7 @@ function kItems(list) {
 function countClose() {
   ask({ title: 'ปิดการนับ รอบ ' + S.round.projectId + '?', ok: 'ปิดการนับ', staff: true,
     body: '<div>หลังกด:</div><ul style="margin:4px 0 0 18px;padding:0"><li>เครื่องทุกเครื่องยิงสินค้าและเปิด Location ใหม่ไม่ได้ (รู้ภายใน 1 นาที)</li>' +
-      '<li>รายการที่ค้างส่งในเครื่องยังส่งเข้ามาได้ตามปกติ</li><li>ผู้ดูแลยังกด "ปิด Location" ผู้ช่วยยังกด "ส่งงาน" ได้</li>' +
+      '<li>รายการที่ค้างส่งในเครื่องยังส่งเข้ามาได้ตามปกติ</li><li>เครื่องยังกด "ปิด Location" ที่ค้างได้</li>' +
       '<li>หน้านี้ยังปรับยอด สรุปผล และพิมพ์ใบเดินตรวจได้</li><li>ต้องนับเพิ่ม: กด "เปิดการนับอีกครั้ง" พร้อมเหตุผล</li></ul>' }, function (why, st) {
     call('apiCountClose', [st], function (r) { KCHK = r.check; setState(r.state); closeDoneBox(r.check, true); }, 'กำลังปิดการนับ…');
   });
@@ -1326,6 +1326,12 @@ function natCmp(a, b) {
 // ---------- เครื่อง TC21 ----------
 var SILENT_MIN = 10;   // ไม่ติดต่อเกินกี่นาทีจึงเตือน
 /** ติดต่อล่าสุด: เครื่องรายงานตัวทุก 1 นาทีพร้อมจำนวนค้างส่ง (เก็บไว้ 6 ชม.) */
+/** v2.7.0: Location ที่เครื่องนี้เป็นผู้ดูแลและยังไม่เสร็จ (กำลังนับ / พัก) — ใช้ตอนเครื่องเสียกลางคัน: ค้าง 0 → โอนนับต่อ · ค้าง > 0 → โอนแล้วล้างนับใหม่ */
+function unfinishedLine(x, d) {
+  var mine = (d.members || []).filter(function (m) { return m.device === x.id && m.role === 'OWNER' && (m.state === 'COUNTING' || m.state === 'PAUSED'); });
+  if (!mine.length) return '';
+  return '<div class="muted">ยังไม่เสร็จ: ' + mine.map(function (m) { return '<b>' + esc(m.location) + '</b> (' + (m.state === 'PAUSED' ? 'พัก' : 'กำลังนับ') + ')'; }).join(', ') + '</div>';
+}
 function contactCell(x, d) {
   if (!x.active || !x.paired) return '';
   if (!x.hb) return '<span class="muted">ยังไม่มีสัญญาณ</span>';
@@ -1357,7 +1363,7 @@ function readyCell(x) {
 // ---------- ตรวจสอบ / Audit (v2.6.0) ---------- อ่านอย่างเดียว · ค้นทีละครั้ง เซิร์ฟเวอร์อ่าน Count_Log ทั้งรอบแล้วส่งกลับทีละ 200 บรรทัด
 var AU = { kind: 'sku', qKind: '', q: '', pick: '', res: null };
 var AU_KINDS = [['sku', 'SKU', 'Material / บาร์โค้ด / ชื่อสินค้า'], ['loc', 'Location', 'Location เช่น C12'], ['staff', 'ผู้ตรวจ', 'รหัสผู้ตรวจ เช่น T9062']];
-var AU_ROLE = { OWNER: 'ผู้ดูแล', HELPER: 'ผู้ช่วย' }, AU_STATE = { COUNTING: 'กำลังนับ', PAUSED: 'พัก', SUBMITTED: 'ส่งงานแล้ว', CLOSED: 'ปิดแล้ว' };
+var AU_ROLE = { OWNER: 'ผู้ดูแล', HELPER: 'เครื่องเดิม/ซ้อน' }, AU_STATE = { COUNTING: 'กำลังนับ', PAUSED: 'พัก', SUBMITTED: 'ออกแล้ว', CLOSED: 'ปิดแล้ว' };
 function renderAuKinds() {
   $('auKinds').innerHTML = AU_KINDS.map(function (c) { return '<button class="' + (c[0] === AU.kind ? 'on' : '') + '" onclick="auditKind(\'' + c[0] + '\')">' + c[1] + '</button>'; }).join(' ');
   $('auQ').placeholder = AU_KINDS.filter(function (c) { return c[0] === AU.kind; })[0][2];
@@ -1584,6 +1590,7 @@ function renderDevices(d) {
       var st = !x.active ? '<span class="pill bad">ปิดใช้งาน</span>' + rev + '<div class="muted">นำกลับ: กด "เปิดใช้" → "สร้างรหัสจับคู่"</div>' :
         x.paired ? '<span class="pill ok">จับคู่แล้ว</span>' + (x.repairedAt ? rev : '') :
         '<span class="pill warn">ยังไม่จับคู่</span>' + rev + '<div class="muted">กด "สร้างรหัสจับคู่" แล้วใส่รหัสที่เครื่อง' + (x.revokedAt ? ' (เครื่องเดิม: กด "จับคู่ใหม่ (เก็บข้อมูลเดิม)")' : '') + '</div>';
+      st += unfinishedLine(x, d);
       var pair = x.pairCode ? '<span class="big mono">' + x.pairCode + '</span><br><span class="muted">หมดอายุใน ' + Math.max(0, Math.round((x.pairExpires - now) / 60000)) + ' นาที</span>' : '';
       return '<tr><td><b>' + esc(x.id) + '</b></td><td>' + st + '</td><td>' + contactCell(x, d) + '</td><td>' + esc(x.lastSync) + '</td><td class="n">' + esc(x.lastSeq) + '</td><td class="n">' +
         (Number(x.gaps) ? '<span class="pill bad">' + esc(x.gaps) + '</span>' : esc(x.gaps || '')) + '</td><td>' + esc(x.lastCheck) + ' <span class="muted">' + esc(x.lastCheckAt) + '</span></td><td>' + esc(x.appVersion) +
@@ -1602,15 +1609,15 @@ function locTodo(l, T) {
 }
 function renderLocTbl() {
   var d = DEV; if (!d) return;
-  // Location: ผู้ดูแล / ผู้ช่วย / ธงตรวจซ้ำ — หัวหน้าทีมส่งงานแทนหรือโอนการดูแลได้ (บันทึกผู้กดและเหตุผล)
-  var STATE = { COUNTING: 'กำลังนับ', PAUSED: 'พัก', SUBMITTED: 'ส่งงานแล้ว', CLOSED: 'ปิดแล้ว' };
+  // Location: ผู้ดูแล / เครื่องเดิม (โอนออก) / เครื่องซ้อน / ธงตรวจซ้ำ — หัวหน้าทีมโอนการดูแล / ปิดธงได้ (v2.7.0 ไม่มีผู้ช่วย) (บันทึกผู้กดและเหตุผล)
+  var STATE = { COUNTING: 'กำลังนับ', PAUSED: 'พัก', SUBMITTED: 'ออกแล้ว', CLOSED: 'ปิดแล้ว' };
   var byLoc = {};
   (d.members || []).forEach(function (m) { (byLoc[m.location] = byLoc[m.location] || []).push(m); });
   var TOT = d.locTotals || {}, CHK = d.locChecks || {};
   var all = d.locations.slice().sort(function (a, b) { return (b.Flag ? 1 : 0) - (a.Flag ? 1 : 0) || (locTodo(b, TOT) ? 1 : 0) - (locTodo(a, TOT) ? 1 : 0) || String(a.Location).localeCompare(String(b.Location), 'en', { numeric: true }); });
   var cnt = {}, todo = 0, flag = 0, bad = 0;
   all.forEach(function (l) { cnt[l.Status || 'ไม่มีสถานะ'] = (cnt[l.Status || 'ไม่มีสถานะ'] || 0) + 1; if (locTodo(l, TOT)) todo++; if (l.Flag) flag++; if (l.Last_Check === 'MISMATCH') bad++; });
-  var order = ['ปิดแล้ว', 'กำลังนับ', 'พัก', 'ส่งงานแล้ว'];
+  var order = ['ปิดแล้ว', 'กำลังนับ', 'พัก'];
   $('locSum').innerHTML = 'ทั้งหมด <b>' + all.length + '</b> · ' + order.concat(Object.keys(cnt).filter(function (k) { return order.indexOf(k) < 0; })).filter(function (k) { return cnt[k]; })
     .map(function (k) { return esc(k) + ' <b>' + cnt[k] + '</b>'; }).join(' · ') + ' · มีธง <b' + (flag ? ' style="color:var(--bad)"' : '') + '>' + flag + '</b> · ยอดไม่ตรง <b' + (bad ? ' style="color:var(--bad)"' : '') + '>' + bad + '</b>';
   $('locChips').innerHTML = [['todo', 'ต้องทำต่อ ' + todo], ['closed', 'ปิดแล้ว ' + (cnt['ปิดแล้ว'] || 0)], ['all', 'ทั้งหมด ' + all.length]].map(function (c) {
@@ -1641,15 +1648,15 @@ function renderLocTbl() {
         var dq = T.dev[x.device];
         var st = STATE[x.state] || x.state;
         var cls = x.role === 'HELPER' && !(x.state === 'SUBMITTED' && x.match === 'OK') ? 'warn' : 'info';
-        return '<div><b>' + esc(x.device) + '</b> ' + (x.role === 'OWNER' ? 'ผู้ดูแล' : 'ผู้ช่วย') + ' <span class="pill ' + cls + '">' + esc(st) +
+        return '<div><b>' + esc(x.device) + '</b> ' + (x.role === 'OWNER' ? 'ผู้ดูแล' : 'เครื่องเดิม/ซ้อน') + ' <span class="pill ' + cls + '">' + esc(st) +
           (x.state === 'SUBMITTED' && x.match !== 'OK' ? ' (รอข้อมูล)' : '') + '</span>' + (dq ? ' <span class="muted">' + n0(dq.qty) + ' ชิ้น</span>' : '') + (x.subBy === 'ADMIN' ? ' <span class="muted">แทนโดยหัวหน้าทีม</span>' : '') +
-          (x.role === 'HELPER' && x.state !== 'SUBMITTED' ? ' <button class="btn sec" onclick="submitFor(\'' + esc(l.Location) + '\',\'' + esc(x.device) + '\')">ส่งงานแทน</button>' : '') + '</div>';
+          '</div>';
       }).join('');
       var clrHtml = T.clearedAt ? '<div class="muted">ล้างทั้ง Location เมื่อ ' + esc(String(T.clearedAt).slice(11, 16) || T.clearedAt) + ' โดย ' + esc(T.clearedBy) + '</div>' +
         '<div class="muted">ยอดแยกเครื่อง = นับหลังล้าง</div>' : '';
       return '<tr><td><b>' + esc(l.Location) + '</b>' + clrHtml + '</td><td>' + esc(l.Status) + (l.Status_Detail ? '<div class="muted">' + esc(l.Status_Detail) + '</div>' : '') + '</td><td>' + esc(l.Owner || l.Open_By) +
         '</td><td>' + (memHtml || esc(l.Devices)) + '</td><td class="n"><b>' + n0(T.qty) + '</b><div class="muted">' + n0(T.lines) + ' ร. · ' + T.sku + ' SKU</div></td><td class="n">' + ctHtml + '</td><td>' + (l.Flag ? '<span class="pill bad">' + esc(l.Flag) + '</span>' : '') +
-        (l.Flag_Check && ready ? '<div class="okline">✓ ปิดใหม่แล้ว: ทุกเครื่องส่งงาน · ยอดตอนปิด ' + n0(ct) + ' = เซิร์ฟเวอร์ ' + n0(T.qty) + ' — ตรวจแล้วกดปิดธงได้</div>' : '') +
+        (l.Flag_Check && ready ? '<div class="okline">✓ ปิดใหม่แล้ว: ทุกเครื่องส่งข้อมูลครบ · ยอดตอนปิด ' + n0(ct) + ' = เซิร์ฟเวอร์ ' + n0(T.qty) + ' — ตรวจแล้วกดปิดธงได้</div>' : '') +
         (l.Flag_Check ? '<div><button class="btn sec" onclick="resolveFlag(\'' + esc(l.Location) + '\')">ปิดธง</button></div>' : '') + '</td><td>' + esc(l.Closed_Time) + '</td><td>' + m +
         '</td><td class="n">' + esc(l.Edits) + '</td><td><button class="btn sec" onclick="transferLoc(\'' + esc(l.Location) + '\')">โอนการดูแล</button></td></tr>';
     }).join('') : '<tr><td colspan="11" class="muted">' + (!all.length ? 'ยังไม่มี Location' : q ? 'ไม่พบ Location "' + esc(q) + '"' :
@@ -1708,13 +1715,6 @@ function testApi() {
     }, function (e) { return '<span class="pill warn">ตรวจ config.json ของเครื่องไม่ได้</span> ' + esc(e.message); });
   Promise.all([ping, same]).then(function (r) { $('apiTest').innerHTML = r.join('<br>'); });
 }
-/** ผู้ช่วยติดต่อไม่ได้ (แบตหมด/ออฟไลน์): ใช้ยอดที่เซิร์ฟเวอร์ได้รับแล้ว รายการที่มาทีหลังจะขึ้นให้ตรวจซ้ำ */
-function submitFor(loc, dev) {
-  ask({ title: 'ส่งงานแทน ' + dev + ' ที่ ' + loc, ok: 'ส่งงานแทน', why: 'เช่น แบตหมด ติดต่อไม่ได้',
-    body: '<div>ใช้ยอดที่เซิร์ฟเวอร์ได้รับแล้ว · ถ้าเครื่องส่งข้อมูลเพิ่มทีหลัง ระบบจะขึ้น "ต้องตรวจซ้ำ"</div>' }, function (why) {
-    call('apiLocSubmitFor', [loc, dev, why], function (d) { renderDevices(d); toast('ส่งงานแทน ' + dev + ' แล้ว'); }, 'กำลังส่งงานแทน ' + dev + ' ที่ ' + loc + '…');
-  });
-}
 /** กล่องยืนยันกลางหน้า (v2.3.6): opt {title, body(html), ok, why(placeholder → ต้องใส่เหตุผล)} · done(why) เมื่อกดตกลง */
 var ASK = null, LAST_STAFF = '';
 function ask(opt, done) {
@@ -1769,7 +1769,7 @@ function doResolveFlag() {
   $('flagDlg').classList.remove('on');
   call('apiLocResolveFlag', [loc, why], function (d) { renderDevices(d); toast('ปิดธง ' + loc + ' แล้ว'); }, 'กำลังปิดธง ' + loc + '…');
 }
-/** เครื่องผู้ดูแลเสีย: โอนให้เครื่องอื่น ผู้ดูแลเดิมกลายเป็นผู้ช่วยที่ส่งงานแล้ว */
+/** เครื่องผู้ดูแลเสีย: โอนให้เครื่องอื่น นับต่อจากยอดเดิม (ผู้ดูแลเดิมหยุดนับที่ Location นั้น้ว */
 function transferLoc(loc) {
   // เลือกจากรายการเครื่องที่เปิดใช้และจับคู่แล้วเท่านั้น (ไม่พิมพ์เอง กันพิมพ์ผิด/เครื่องที่ไม่ได้ลงทะเบียน) v2.2.7
   var l = (DEV.locations || []).filter(function (x) { return x.Location === loc; })[0] || {};
@@ -1801,7 +1801,7 @@ function pairCode(id) {
 }
 function setActive(id, on) {
   if (on) { call('apiSetDeviceActive', [id, true], function (d) { renderDevices(d); toast('เปิดใช้ ' + id + ' แล้ว — กด "สร้างรหัสจับคู่" ต่อ'); }); return; }
-  // ก่อนยกเลิก: แสดงผลกระทบ (Location ที่ดูแล/ช่วยนับและยังไม่ส่งงาน, รายการค้างที่เครื่องรายงานล่าสุด)
+  // ก่อนยกเลิก: แสดงผลกระทบ (Location ที่ยังไม่เสร็จ, รายการค้างที่เครื่องรายงานล่าสุด)
   var x = DEV.devices.filter(function (v) { return v.id === id; })[0] || {};
   var mine = (DEV.members || []).filter(function (m) { return m.device === id && m.state !== 'CLOSED' && m.state !== 'SUBMITTED'; });
   var own = mine.filter(function (m) { return m.role === 'OWNER'; });
@@ -1809,9 +1809,9 @@ function setActive(id, on) {
   lines.push('<div>เครื่องจะส่งข้อมูลและยิงสินค้าไม่ได้ (รู้ภายใน 1 นาที) · <b>ข้อมูลในเครื่องไม่หาย</b></div>');
   if (x.hb) lines.push('<div>ค้างส่งล่าสุดที่เครื่องรายงาน: <b>' + (Number(x.hb.pending) || 0) + '</b> รายการ</div>');
   if (mine.length) lines.push('<div style="margin-top:6px"><span class="pill warn">ยังนับอยู่</span> ' + mine.map(function (m) {
-    return '<b>' + esc(m.location) + '</b> (' + (m.role === 'OWNER' ? 'ผู้ดูแล' : 'ผู้ช่วย') + ')'; }).join(', ') + '</div>');
+    return '<b>' + esc(m.location) + '</b> (' + (m.role === 'OWNER' ? 'ผู้ดูแล' : 'เครื่องซ้อน') + ')'; }).join(', ') + '</div>');
   if (own.length) lines.push('<div class="muted">ถ้าเครื่องจะไม่กลับมา ให้ "โอนการดูแล" ' + own.map(function (m) { return esc(m.location); }).join(', ') + ' ให้เครื่องอื่น (ตาราง Location ด้านล่าง)</div>');
-  if (mine.some(function (m) { return m.role === 'HELPER'; })) lines.push('<div class="muted">Location ที่เป็นผู้ช่วย: ผู้ดูแลปิดไม่ได้จนกว่าจะ "ส่งงานแทน"</div>');
+  if (mine.some(function (m) { return m.role === 'HELPER'; })) lines.push('<div class="muted">Location ที่นับซ้อน: มีธงต้องตรวจซ้ำอยู่แล้ว ผู้ดูแลปิดได้ (ระบบเตือน)</div>');
   $('revId').textContent = id; $('revImpact').innerHTML = lines.join('');
   document.querySelectorAll('input[name=revWhy]').forEach(function (r) { r.checked = false; });
   $('revNote').value = '';

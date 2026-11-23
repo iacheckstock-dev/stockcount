@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2.6.2';
+  var APP_VERSION = '2.7.0';
   var QTY_CONFIRM = 150;      // จำนวนที่ป้อนเองเกินนี้ต้องยืนยันอีกครั้ง
   var QTY_MAX_DIGITS = 5;     // ยาวกว่านี้ = น่าจะยิงบาร์โค้ดเข้าช่องจำนวน
   var INFO_EVERY = 15000;     // ถามสถานะผู้ช่วย/ผู้ดูแลระหว่างนับร่วมกัน
@@ -170,7 +170,7 @@
     SOUND.bad();
     if (roundEnded()) return result(false, (roundMoved() ? 'เปิดรอบใหม่แล้ว' : 'ปิดรอบแล้ว') + ' — ไม่บันทึก', roundEndedText(), { scanCloses: true });
     return result(false, 'ปิดการนับแล้ว — ไม่บันทึก', 'ยิงสินค้า เปิด Location ใหม่ และแก้ยอดไม่ได้\n' +
-      'Location ที่ยังเปิดอยู่: ผู้ดูแลกด "ปิด Location" · ผู้ช่วยกด "ส่งงาน"\nค้นหา SKU ได้ที่เมนู ⋮\nต้องนับเพิ่ม: แจ้งทีมให้กด "เปิดการนับอีกครั้ง" ในหน้า Admin', { scanCloses: true });
+      'Location ที่ยังเปิดอยู่: กด "ปิด Location"\nค้นหา SKU ได้ที่เมนู ⋮\nต้องนับเพิ่ม: แจ้งทีมให้กด "เปิดการนับอีกครั้ง" ในหน้า Admin', { scanCloses: true });
   }
   /** ใช้หน้าปุ่ม/การยิงที่จะบันทึกยอด: ปิดการนับแล้ว → แจ้งกล่องกลางจอ แล้วคืน true (หยุด) */
   function blockedClosed() { if (!countClosed()) return false; closedBox(); return true; }
@@ -197,7 +197,7 @@
     if (st === 'COUNT_CLOSED') {
       SOUND.warn();
       var html = 'รอบ ' + esc(S.boot.project.id) + ' ปิดการนับจากหน้า Admin แล้ว<br>• <b>ยิงสินค้าและเปิด Location ใหม่ไม่ได้</b><br>• รายการที่ค้างส่ง ระบบส่งให้เองตามปกติ' +
-        (S.loc ? '<br>• ' + esc(S.loc) + ' ยังเปิดอยู่: ' + (isHelper(S.loc) ? 'กด "ส่งงาน"' : 'ตรวจยอดแล้วกด "ปิด Location"') : '') + '<br>• ค้นหา SKU ได้ที่เมนู ⋮';
+        (S.loc ? '<br>• ' + esc(S.loc) + ' ยังเปิดอยู่: ตรวจยอดแล้วกด "ปิด Location"' : '') + '<br>• ค้นหา SKU ได้ที่เมนู ⋮';
       notice('ปิดการนับแล้ว', html);
     } else if (st === 'CLOSED' || st === 'CLOSING') {
       SOUND.warn();
@@ -425,23 +425,13 @@
     return i.members.filter(function (m) { return m.role === 'HELPER' && m.device !== S.cfg.deviceId && !(m.state === 'SUBMITTED' && m.match === 'OK'); });
   }
   function waitText(m) {
-    return memberLabel(m) + ' · ' + (m.state === 'SUBMITTED' ? 'ส่งงานแล้ว (รอข้อมูล)' : 'กำลังนับ ' + fmt(m.qty) + ' ชิ้น') + (m.lastTime ? ' · ยิงล่าสุด ' + String(m.lastTime).slice(11, 16) : '');
+    return memberLabel(m) + ' · ' + (m.state === 'SUBMITTED' ? 'ยังได้ข้อมูลไม่ครบ' : 'ยังนับอยู่ ' + fmt(m.qty) + ' ชิ้น') + (m.lastTime ? ' · ยิงล่าสุด ' + String(m.lastTime).slice(11, 16) : '');
   }
   /** ยอดรวมทุกเครื่องต่อ SKU = ของเครื่องนี้ (ในเครื่อง รวมที่ยังไม่ส่ง) + ของเครื่องอื่น (จากเซิร์ฟเวอร์) */
-  // ---------- ผู้ช่วยแก้ยอดของตัวเอง (v2.3.1) ----------
-  // "ยอดของฉัน" = ชิ้นที่เครื่องนี้ยิงใน Location นับจากจุดตัดล่าสุด (v2.3.5):
-  //   ล้าง Location (S.info[loc].clr) หรือ ผู้ดูแลแก้ยอดรวม SKU นั้น (edits[key].cp) — ยอดก่อนจุดตัดผู้ดูแลตรวจแล้ว
+  // ---------- ยอดของเครื่องนี้ใน Location (แสดงแยกเมื่อมีข้อมูลหลายเครื่อง) ----------
   //   รายการล้าง Location ไม่นับเป็นยอดของใคร (ตรงกับเซิร์ฟเวอร์)
   function clearSeq(loc) { var i = S.info[loc]; return (i && i.clr) || 0; }
-  function cutSeq(loc, key) { var x = editInfo(loc, key); return Math.max(clearSeq(loc), (x && x.cp) || 0); }
   function isClearEntry(e) { return e.type === 'RECOUNT_SET' && /^ล้าง Location/.test(e.reason || ''); }
-  function mineEntries(loc, key) {
-    var c = cutSeq(loc, key);
-    return S.entries.filter(function (e) { return e.location === loc && e.seq > c && !isClearEntry(e) && itemKey(e) === key; });
-  }
-  function mineSince(loc, key) {
-    return Math.round(mineEntries(loc, key).reduce(function (a, e) { return a + e.qty; }, 0) * 1000) / 1000;
-  }
   /** การแก้ SKU นี้บนเซิร์ฟเวอร์ { cp: จุดตัดยอดของเครื่องนี้, by: เครื่องที่แก้ล่าสุด, at } */
   function editInfo(loc, key) { var i = S.info[loc]; return (i && i.edits && i.edits[key]) || null; }
   /** เตือนเมื่อเครื่องอื่นเพิ่งแก้ SKU เดียวกัน (ไม่ห้าม — ให้คุยกันก่อน) */
@@ -488,34 +478,18 @@
       var was = S.srvRole[loc];
       if (r.me) S.srvRole[loc] = r.me.role;
       if (r.me) setRole(loc, { role: r.me.role, state: S.loc === loc && r.me.state !== 'CLOSED' ? 'COUNTING' : r.me.state, owner: r.owner ? r.owner.device : '', ownerLabel: r.owner ? memberLabel(r.owner) : '' });
-      // หัวหน้าทีมโอนการดูแลไปเครื่องอื่น (v2.3.4): บอกให้รู้ · ถ้า Location ปิดไปแล้ว ออกจาก Location ไม่ให้ยิงต่อเข้าไปเงียบ ๆ
+      // หัวหน้าทีมโอนการดูแล (v2.3.4 · v2.7.0)
       if (r.me && was === 'HELPER' && r.me.role === 'OWNER' && !S.checking) {
         SOUND.ok();
-        result(true, 'คุณเป็นผู้ดูแล ' + loc + ' แล้ว', 'หัวหน้าทีมโอนการดูแลมาให้เครื่องนี้\nปิด Location ได้เมื่อทุกคนส่งงาน');
+        result(true, 'คุณเป็นผู้ดูแล ' + loc + ' แล้ว', 'หัวหน้าทีมโอนการดูแลมาให้เครื่องนี้\nยอดเดิมรวมอยู่แล้ว นับต่อได้');
       }
       if (r.me && was === 'OWNER' && r.me.role === 'HELPER' && !S.checking) {
+        // โอนออกจากเครื่องนี้ → หยุดนับที่ Location นี้ (ส่งยอดที่ยิงไว้ให้ครบ)
         var by = r.owner ? memberLabel(r.owner) : 'เครื่องอื่น';
-        if (S.loc === loc && r.status === 'ปิดแล้ว') {
-          S.loc = null; setRole(loc, { state: 'SUBMITTED' }); clearResume();
-          setCard('bad', loc + ' ปิดแล้วโดย ' + by, 'หัวหน้าทีมโอนการดูแลไปแล้ว · ยิงป้าย Location ถัดไป');
-          SOUND.bad();
-          result(false, 'หัวหน้าทีมโอนการดูแล ' + loc + ' แล้ว', 'ผู้ดูแลใหม่: ' + by + ' · ' + loc + ' ปิดแล้ว\nรายการที่ยิงหลังปิดส่งไปแล้ว และติดธงให้ตรวจ\nยิงป้าย Location ถัดไป');
-        } else {
-          SOUND.warn();
-          result(false, 'หัวหน้าทีมโอนการดูแล ' + loc + ' แล้ว', 'ผู้ดูแลใหม่: ' + by + '\nเครื่องนี้เป็นผู้ช่วย (ส่งงานแล้ว) · นับเพิ่มได้ แล้วกด "ส่งงาน"');
-        }
-      }
-      // หัวหน้าทีมส่งงานแทนเครื่องนี้ (v2.3.8): บอกครั้งเดียวต่อ Location · ถ้ามีรายการเข้าไปหลังจากนั้น ให้กดส่งงานยืนยันยอดล่าสุด
-      if (r.me && r.me.role === 'HELPER' && was !== 'OWNER') {
-        var sf = r.me.subBy === 'ADMIN', seen = (S.roles[loc] || {}).sfSeen;
-        if (sf && !seen && !S.checking) {
-          setRole(loc, { sfSeen: 1 }); saveState();
-          SOUND.warn();
-          result(false, 'หัวหน้าทีมส่งงานแทนเครื่องนี้ที่ ' + loc,
-            'ใช้ยอดที่เซิร์ฟเวอร์ได้รับตอนนั้น' + (r.me.stateAt ? ' (' + String(r.me.stateAt).slice(11, 16) + ')' : '') + '\n' +
-            (r.me.state === 'COUNTING' ? 'มีรายการจากเครื่องนี้ส่งเข้าไปหลังจากนั้น · กด "ส่งงาน" เพื่อยืนยันยอดล่าสุด' :
-              r.status === 'ปิดแล้ว' ? loc + ' ปิดแล้ว · ถ้ายิงเพิ่ม Location จะต้องตรวจซ้ำ' : 'ยิงเพิ่มได้ แล้วกด "ส่งงาน" อีกครั้ง'));
-        } else if (!sf && seen) setRole(loc, { sfSeen: 0 });
+        if (S.loc === loc) { leaveLocation(loc); clearResume(); setCard('bad', 'หัวหน้าทีมโอน ' + loc + ' ให้ ' + by + ' แล้ว', 'ยิงป้าย Location ถัดไป'); }
+        SOUND.warn();
+        result(false, 'หัวหน้าทีมโอนการดูแล ' + loc + ' แล้ว', 'ผู้ดูแลใหม่: ' + by + (r.status === 'ปิดแล้ว' ? ' · ' + loc + ' ปิดแล้ว' : '') +
+          '\nเครื่องนี้หยุดนับที่ ' + loc + ' · ยอดที่ยิงไว้อยู่ในระบบ\nยิงป้าย Location ถัดไป');
       }
       if (S.view === 'count' || S.view === 'loc') render();
       return r;
@@ -714,27 +688,32 @@
         }
       });
       S.events = S.events.filter(function (ev) { return removeIds.indexOf(ev.id) < 0; });
-      // บทบาทที่เซิร์ฟเวอร์ตัดสิน (เช่น เปิดตอนออฟไลน์ แต่มีผู้ดูแลอยู่แล้ว → เป็นผู้ช่วย)
+      // บทบาทที่เซิร์ฟเวอร์ตัดสิน (เปิดตอนออฟไลน์ แต่มีเครื่องอื่นนับอยู่แล้ว = เปิดซ้อน · v2.7.0)
       (res.events || []).forEach(function (r) {
         if (!r.role || r.match === 'WAIT') return;
+        // v2.7.0: Location ที่ยังไม่ได้ยิงสินค้า ถูกปล่อยคืนตอนเครื่องนี้ออกไป → ลืมได้ (ไม่อยู่ในรายการพักไว้)
+        if (r.state === 'RELEASED') {
+          if (r.location !== S.loc && !S.events.some(function (ev) { return ev.location === r.location; })) { delete S.roles[r.location]; if (S.srvRole) delete S.srvRole[r.location]; }
+          return;
+        }
         var before = roleOf(r.location);
         var later = S.events.some(function (ev) { return ev.location === r.location; });
         var upd = { role: r.role, owner: r.owner };
         if (!later) upd.state = r.location === S.loc && r.state !== 'CLOSED' && r.state !== 'SUBMITTED' ? 'COUNTING' : r.state;
         setRole(r.location, upd);
-        if (before !== r.role && r.location === S.loc) {
-          var msg = r.role === 'HELPER' ? r.location + ' มีผู้ดูแลแล้ว (' + r.owner + ') — เครื่องนี้เป็นผู้ช่วย' : 'เครื่องนี้เป็นผู้ดูแล ' + r.location;
-          // แจ้งกลางจอให้กดรับทราบ (เดิมเป็นข้อความสั้นด้านล่าง อ่านไม่ทัน) — ถ้ามีกล่องอื่นเปิดอยู่ใช้ข้อความสั้นแทน
-          if (r.role === 'HELPER' && $('modal').classList.contains('hidden')) {
-            SOUND.warn();
-            modal({ title: 'เครื่องนี้เป็นผู้ช่วยที่ ' + r.location, html: esc(r.location) + ' มีผู้ดูแลอยู่แล้ว (' + esc(r.owner) + ')<br>ยอดที่ยิงไว้ยังอยู่ นับต่อได้ เสร็จแล้วกด "ส่งงาน"<br><span class="muted">ถ้ายิงป้ายผิด ให้ยิงป้าย Location ที่ถูก ระบบจะส่งงานให้ แล้วแจ้งผู้ดูแลแก้ยอด</span>',
-              yes: 'รับทราบ', noCancel: true });
-          } else toast(msg, r.role === 'HELPER');
-          // v2.5.7: การ์ดยังเขียน "เปิด D2 แล้ว" (แบบผู้ดูแล) ทั้งที่เป็นผู้ช่วยแล้ว — เปลี่ยนเฉพาะการ์ดตอนเปิด (ไม่ทับผลการยิงล่าสุด)
-          if (r.role === 'HELPER' && /^(เปิด|กลับมานับต่อ) /.test($('cardTitle').textContent))
-            setCard('idle', 'ช่วยนับ ' + r.location + ' — ยิงสินค้าได้เลย', 'ผู้ดูแล ' + esc(r.owner || '') + ' · เสร็จแล้วกด "ส่งงาน"');
-          fetchInfo(r.location, INFO_BG_MS);
+        if (before === r.role) return;
+        if (r.role !== 'HELPER') { if (r.location === S.loc) toast('เครื่องนี้เป็นผู้ดูแล ' + r.location); return; }
+        // เปิดซ้อน: เซิร์ฟเวอร์รับข้อมูลไว้ครบ + ติดธงต้องตรวจซ้ำ → เครื่องนี้หยุดนับที่ Location นี้
+        var dl = r.location, n = locSummary(dl).qty;
+        if (dl === S.loc) {
+          leaveLocation(dl);
+          setCard('bad', dl + ' มีเครื่องอื่นนับอยู่แล้ว — หยุดยิงที่ ' + dl, 'ยิงป้าย Location ของคุณใหม่');
         }
+        SOUND.bad();
+        if ($('modal').classList.contains('hidden')) {
+          result(false, dl + ' มีเครื่องอื่นนับอยู่แล้ว', 'ผู้ดูแล ' + (r.owner || '') + '\nที่ยิงไว้ ' + fmt(n) + ' ชิ้นส่งเข้าระบบแล้ว และติดธงให้หัวหน้าทีมตรวจ\n• หยุดยิงที่ ' + dl + '\n• ยิงป้าย Location ของคุณใหม่');
+        } else toast(dl + ' มีเครื่องอื่นนับอยู่แล้ว — หยุดยิงที่ ' + dl + ' (ติดธงให้หัวหน้าทีมตรวจ)', true);
+        fetchInfo(dl, INFO_BG_MS);
       });
       // การแก้ยอดของเครื่องนี้ชนกับเครื่องอื่น → แจ้งกลางจอทันที (v2.2.8)
       if (res.flags && res.flags.length) {
@@ -809,11 +788,8 @@
 
   function renderTop() {
     $('tbLoc').textContent = S.loc || '—';
-    var helper = S.loc && isHelper();
-    var rr = S.loc && S.roles[S.loc];
-    // ป้ายบทบาทแสดงทุกครั้งที่อยู่ใน Location (U10) — ระหว่างตรวจยังไม่แสดง
-    $('tbRole').textContent = !S.loc || S.checking === S.loc ? '' : helper ? 'ผู้ช่วย' : 'ผู้ดูแล';
-    $('tbRole').className = helper ? 'helper' : 'owner';
+    // v2.7.0: ไม่มีผู้ช่วยแล้ว — ไม่แสดงป้ายบทบาท
+    $('tbRole').textContent = ''; $('tbRole').className = '';
     $('tbStaff').textContent = S.staff ? (S.staff.name || S.staff.code) : 'ยังไม่เข้างาน';
     var p = pending().length;
     // นับเป็น "รายการ" (บรรทัดที่บันทึก รวมลบ/แก้) ไม่ใช่ชิ้น — จำนวนที่ส่งแล้วดูได้ที่หน้าสถานะ
@@ -833,7 +809,7 @@
     else if (rejected) { msg = 'มี ' + rejected + ' รายการที่เซิร์ฟเวอร์ไม่รับ ดูที่หน้าสถานะ'; bad = true; }
     else if (roundMoved()) { msg = 'เปิดรอบใหม่ ' + roundMoved() + ' แล้ว — ⋮ → ตรวจความพร้อมใหม่'; bad = true; }
     else if (roundEnded()) { msg = 'ปิดรอบแล้ว — ยิงไม่ได้ · รอเปิดรอบใหม่'; bad = true; }
-    else if (countClosed()) { msg = 'ปิดการนับแล้ว — ยิงไม่ได้ · ส่งงาน / ปิด Location ที่ค้างได้ · ค้นหา SKU ได้ที่ ⋮'; bad = true; }
+    else if (countClosed()) { msg = 'ปิดการนับแล้ว — ยิงไม่ได้ · ปิด Location ที่ค้างได้ · ค้นหา SKU ได้ที่ ⋮'; bad = true; }
     else if (S.masterChanged) msg = 'หัวหน้าทีมอนุมัติรายการบาร์โค้ดชุดใหม่ ไปที่สถานะ → ตรวจความพร้อมใหม่ เพื่อโหลด';
     else if (S.recountBanner && S.view === 'count') msg = S.recountBanner;
     else if (S.slow && S.online !== false) msg = S.slow === 'BAD_REPLY' || S.slow === 'SERVER_ERROR' ? 'เซิร์ฟเวอร์มีปัญหา (ไม่ใช่ Wi-Fi) — นับต่อได้ ข้อมูลไม่หาย ถ้าเป็นนานให้แจ้งหัวหน้าทีม' :
@@ -854,15 +830,13 @@
     $('locTotal').textContent = fmt(sum.qty);
     fitText($('locTotal'), 40, 20);
     // หลายเครื่อง: ยอดรวม = ทุกเครื่อง และบอกยอดของเครื่องนี้แยก
-    $('locSku').textContent = sum.multi ? 'ของฉัน ' + fmt(sum.mineQty) + ' · ' + (S.info[S.loc].members.length) + ' เครื่อง' :
+    $('locSku').textContent = sum.multi ? 'เครื่องนี้ ' + fmt(sum.mineQty) + ' · ' + (S.info[S.loc].members.length) + ' เครื่อง' :
       fmt(sum.sku) + ' SKU' + (S.loc && S.locChecks[S.loc] === 'OK' && !locPending(S.loc) ? ' · ✓ ส่งครบ' : '');
     $('locLbl').textContent = sum.multi ? 'ยอดรวมทุกเครื่อง' : 'ยอดรวม Location';
     $('devTotal').textContent = fmt(deviceTotal());
     fitText($('devTotal'), 22, 13);
-    var helper = S.loc && isHelper();
-    $('btnClose').innerHTML = helper ? 'ส่ง<br>งาน' : 'ปิด<br>Location';
-    $('btnClose').classList.toggle('ok', !!helper);
-    $('btnLoc').innerHTML = helper ? 'ดู<br>Location' : 'ดู/แก้<br>Location';
+    $('btnClose').innerHTML = 'ปิด<br>Location';
+    $('btnLoc').innerHTML = 'ดู/แก้<br>Location';
     renderSku();
     var q = S.qty || '1';
     $('qtyVal').textContent = q; $('qtyVal').className = q !== '1' ? 'multi' : '';
@@ -1037,9 +1011,8 @@
 
   /**
    * ยิงป้าย Location
-   * 1) ออกจาก Location เดิม: ผู้ดูแล = พัก, ผู้ช่วย = ส่งงานอัตโนมัติ (ไม่มีทางรอกันจนติด)
-   * 2) เปิดทันที ยิงสินค้าต่อได้ ไม่ต้องรอเซิร์ฟเวอร์
-   * 3) เช็กเบื้องหลัง: ถ้ามีเครื่องอื่นเป็นผู้ดูแล → ถามเข้าร่วม · ถ้าผู้ดูแลปิดแล้ว → ไม่รับการยิง
+   * 1) ถามเซิร์ฟเวอร์ก่อน: เป็นของเครื่องอื่น (กำลังนับ / พัก / ปิดแล้ว) → กล่องแจ้ง ไม่เปิด (v2.7.0: 1 Location = 1 เครื่อง)
+   * 2) ออกจาก Location เดิม (พักไว้) แล้วเปิด · ออฟไลน์ → เปิดได้ เซิร์ฟเวอร์ตรวจตอนส่งข้อมูล (เปิดซ้อน = ติดธง)
    */
   function openLocation(loc) {
     // v2.5.0 ปิดการนับแล้ว: เปิด Location ใหม่ไม่ได้ · กลับเข้า Location ที่เครื่องนี้ พัก / กำลังนับ ค้างอยู่ได้ เพื่อกด "ปิด Location" / "ส่งงาน"
@@ -1068,46 +1041,28 @@
     var r = S.roles[loc] || null;
     var ask = Promise.resolve(true);
     var by = pre && pre.owner ? memberLabel(pre.owner) : '';
-    if (pre && pre.me && pre.me.role === 'OWNER' && was === 'HELPER') {
+    // ได้รับโอนการดูแล: เคยเป็นเครื่องซ้อน หรือไม่เคยเปิด Location นี้แต่มีข้อมูลของเครื่องอื่นอยู่ (v2.7.0)
+    if (pre && pre.me && pre.me.role === 'OWNER' && (was === 'HELPER' || (!was && pre.members && pre.members.length > 1))) {
       SOUND.ok();
-      ask = result(true, 'คุณเป็นผู้ดูแล ' + loc + ' แล้ว', 'หัวหน้าทีมโอนการดูแลมาให้เครื่องนี้').then(function () { return true; });
-    } else if (pre && pre.me && pre.me.role === 'HELPER' && was === 'OWNER') {
-      // ถูกโอนการดูแลออกขณะอยู่ที่อื่น: แจ้งก่อน · ปิดแล้ว → จบตรงนี้ · ยังไม่ปิด → ถามกลับไปช่วยตามปกติ
-      SOUND.warn();
-      var closed = pre.status === 'ปิดแล้ว';
-      return result(false, 'หัวหน้าทีมโอนการดูแล ' + loc + ' แล้ว', 'ผู้ดูแลใหม่: ' + by + (closed ? '\n' + loc + ' ปิดแล้ว · ยิงป้าย Location ถัดไป' : '\nเครื่องนี้เป็นผู้ช่วย')).then(function () {
-        if (closed) { show('count'); return; }
-        return openLocation2(loc, pre, 'HELPER');
-      });
-    } else if (pre && pre.owner && pre.owner.device !== S.cfg.deviceId && !pre.me && !pre.allowJoin) {
-      // v2.6.2: ไม่มีการนับร่วม — 1 Location = 1 เครื่อง · ถ้าต้องช่วยนับ ให้แยกใช้ป้าย Location สำรอง
-      SOUND.bad();
-      var isClosed = pre.status === 'ปิดแล้ว';
-      return result(false, loc + (isClosed ? ' ปิดแล้ว' : ' มีผู้นับอยู่แล้ว'), (isClosed ? 'นับโดย ' : 'กำลังนับโดย ') + (pre.owner.staff ? pre.owner.staff + ' ' : '') + by +
-        '\nเครื่องนี้เปิด ' + loc + ' ไม่ได้ (1 Location นับได้ 1 เครื่อง)' +
-        '\n• ช่วยนับ → ใช้ป้าย Location สำรอง (เลขถัดไป)' +
-        '\n• เครื่องเดิมใช้งานไม่ได้ → ให้หัวหน้าทีม "โอนการดูแล"').then(function () { show('count'); });
-    } else if (pre && pre.status === 'ปิดแล้ว' && pre.me && pre.me.role === 'HELPER') {
-      // ผู้ดูแลปิดแล้ว (หรือถูกโอนออก แล้วผู้ดูแลใหม่ปิด) → ผู้ช่วยกลับไปยิงเพิ่มไม่ได้
-      SOUND.bad();
-      return result(false, loc + ' ปิดแล้ว', 'ผู้ดูแล ' + by + ' ปิดไปแล้ว\nถ้าต้องนับเพิ่ม ให้ผู้ดูแลเปิดก่อน').then(function () { show('count'); });
-    } else
-    if (r && r.role === 'OWNER' && r.state === 'CLOSED') {
+      ask = result(true, 'คุณเป็นผู้ดูแล ' + loc + ' แล้ว', 'หัวหน้าทีมโอนการดูแลมาให้เครื่องนี้\nยอดเดิมรวมอยู่แล้ว นับต่อได้').then(function () { return true; });
+    } else if (pre && pre.owner && pre.owner.device !== S.cfg.deviceId) {
+      // v2.7.0: 1 Location = 1 เครื่อง — เป็นของเครื่องอื่น (รวมถึงเครื่องนี้ที่ถูกโอนออก / เปิดซ้อน) → ไม่เปิด บอกว่าต้องทำอะไรต่อ
+      return blockBox(loc, pre).then(function () { show('count'); });
+    } else if (!pre && r && r.role === 'HELPER') {
+      // ออฟไลน์ / เซิร์ฟเวอร์ช้า: จำไว้ว่าเป็นของเครื่องอื่น
+      return blockBox(loc, null, r).then(function () { show('count'); });
+    } else if (r && r.role === 'OWNER' && r.state === 'CLOSED') {
       var s0 = combinedSummary(loc);
-      ask = confirmBox(loc + ' ปิดไปแล้ว', 'ยอดตอนปิด ' + fmt(s0.qty) + ' ชิ้น ' + s0.sku + ' SKU<br>ต้องการเปิดเพื่อนับเพิ่มหรือแก้ไข?', 'เปิดนับเพิ่ม');
-    } else if (r && r.role === 'HELPER' && r.state === 'SUBMITTED') {
-      S.rejoinAsked = loc;
-      ask = confirmBox('กลับไปช่วย ' + loc + ' อีกครั้ง?', 'ส่งงานไปแล้ว <b>' + fmt(locSummary(loc).qty) + '</b> ชิ้น ยอดเดิมยังอยู่ ยิงเพิ่มต่อจากเดิม' +
-        (r.owner ? '<br><span class="muted">ผู้ดูแล ' + esc(r.ownerLabel || r.owner) + '</span>' : ''), 'กลับไปช่วย');
+      var by0 = pre && pre.me && pre.me.staff && S.staff && pre.me.staff !== S.staff.code ? '<br><span class="muted">นับไว้โดย ' + esc(staffName(pre.me.staff)) + ' (' + esc(pre.me.staff) + ')</span>' : '';
+      ask = confirmBox(loc + ' ปิดไปแล้ว', 'ยอดตอนปิด ' + fmt(s0.qty) + ' ชิ้น ' + s0.sku + ' SKU' + by0 + '<br>ต้องการเปิดเพื่อนับเพิ่มหรือแก้ไข?', 'เปิดนับเพิ่ม');
     }
     return ask.then(function (ok) {
       if (!ok) { show('count'); return; }
       var prev = S.loc;
       return (prev ? leaveLocation(prev) : Promise.resolve()).then(function () {
-        S.loc = loc; S.recountBanner = ''; S.lastSku = null; S.totalMode = null; clearResume();
-        var known = S.roles[loc];
-        setRole(loc, { role: known ? known.role : 'OWNER', state: 'COUNTING' });
-        var note = prev ? (isHelperBefore(prev) ? 'ส่งงาน ' + prev + ' ให้อัตโนมัติแล้ว' : prev + ' พักไว้ (ยังไม่ปิด)') : '';
+        S.loc = loc; S.recountBanner = ''; S.lastSku = null; clearResume();
+        setRole(loc, { role: 'OWNER', state: 'COUNTING' });
+        var note = prev ? (isHelperBefore(prev) ? 'ออกจาก ' + prev + ' แล้ว' : prev + ' พักไว้ (ยังไม่ปิด)') : '';
         // ถามเซิร์ฟเวอร์ก่อนว่าใครเป็นผู้ดูแล — ระหว่างนี้ยังไม่รับการยิง (v2.2.6)
         S.checking = loc;
         SOUND.ok();
@@ -1121,6 +1076,35 @@
   }
   var leftAs = {};
   function isHelperBefore(loc) { return leftAs[loc] === 'HELPER'; }
+
+  /**
+   * v2.7.0: ยิง Location ของเครื่องอื่น → กล่องแดงบอกว่าใครนับ และต้องทำอะไรต่อ (ไม่เปิด)
+   * pre = ผล locInfo · local = บทบาทที่จำไว้ (ออฟไลน์)
+   */
+  function blockBox(loc, pre, local) {
+    SOUND.bad();
+    setCard('bad', 'ไม่ได้เปิด ' + loc + ' — เป็นของเครื่องอื่น', S.loc ? 'ยังนับต่อที่ ' + esc(S.loc) + ' ได้' : 'ยิงป้าย Location ของคุณ');
+    var o = pre && pre.owner, me = pre && pre.me;
+    var name = o ? (o.name || staffName(o.staff) || '') : '';
+    var who = o ? (name ? name + ' ' : '') + '(' + o.device + ')' : ((local && (local.ownerLabel || local.owner)) || 'เครื่องอื่น');
+    var rule = '\nเครื่องนี้เปิด ' + loc + ' ไม่ได้ (1 Location นับได้ 1 เครื่อง)';
+    var wrong = '\n• ยิงผิด → ยิงป้าย Location ของคุณใหม่';
+    if (!o) return result(false, loc + ' เป็นของเครื่องอื่น', 'ผู้ดูแล ' + who + ' (สถานะล่าสุดที่จำไว้)' + rule + wrong);
+    if (me) {
+      // เครื่องนี้เคยนับ แล้วหัวหน้าทีมโอนการดูแลไป / เปิดซ้อนตอนออฟไลน์
+      return result(false, loc + ' เป็นของเครื่องอื่นแล้ว', 'ผู้ดูแลตอนนี้ ' + who + '\nยอดที่เครื่องนี้ยิงไว้ยังอยู่ในระบบ' + wrong + '\n• ต้องนับเพิ่ม → แจ้ง ' + (name || o.device) + ' หรือหัวหน้าทีม');
+    }
+    if (o.staff && S.staff && o.staff === S.staff.code) {
+      return result(false, loc + ' คุณนับไว้ที่เครื่อง ' + o.device, 'เครื่องนี้ (' + S.cfg.deviceId + ') เปิด ' + loc + ' ไม่ได้ (1 Location นับได้ 1 เครื่อง)' +
+        '\n• เครื่องเดิมใช้งานไม่ได้ → ให้หัวหน้าทีม "โอนการดูแล" มาเครื่องนี้' + wrong);
+    }
+    if (o.state === 'CLOSED' || pre.status === 'ปิดแล้ว') {
+      return result(false, loc + ' นับเสร็จแล้ว', 'นับโดย ' + who + (o.stateAt ? ' · ปิดเมื่อ ' + String(o.stateAt).slice(11, 16) : '') + rule + wrong +
+        '\n• ต้องนับแก้ → แจ้ง ' + (name || o.device) + ' หรือหัวหน้าทีม');
+    }
+    return result(false, loc + ' เป็นของเครื่องอื่น', (o.state === 'PAUSED' ? 'พักไว้โดย ' : 'กำลังนับโดย ') + who + rule + wrong +
+      '\n• มาช่วยนับ → ใช้ป้าย Location สำรองถัดไป');
+  }
 
   /** ออกจาก Location โดยไม่ปิด: ผู้ดูแล → พัก · ผู้ช่วย → ส่งงานอัตโนมัติ */
   function leaveLocation(loc, opt) {
@@ -1151,17 +1135,17 @@
       if (S.loc !== loc) return;
       if (info) return decide(info);
       if (S.infoErr === 'NETWORK') {
-        openCard('เปิด ' + loc + ' แล้ว (ออฟไลน์) — ยิงสินค้าได้เลย', 'ถ้ามีผู้ดูแลอยู่แล้ว ระบบจะแจ้งเมื่อส่งข้อมูลได้');
-        return sendOpen(isHelper(loc) ? 'JOIN' : 'OPEN');
+        openCard('เปิด ' + loc + ' แล้ว (ออฟไลน์) — ยิงสินค้าได้เลย', 'ถ้ามีเครื่องอื่นนับอยู่แล้ว ระบบจะแจ้งเมื่อส่งข้อมูลได้');
+        return sendOpen('OPEN');
       }
       SOUND.warn();
       var m = !retried ?
         { title: 'ตรวจ ' + loc + ' ไม่ได้', html: 'เซิร์ฟเวอร์ตอบช้า ยังไม่รู้ว่ามีผู้ดูแลแล้วหรือยัง<br><span class="muted">ยังไม่บันทึกการยิง</span>', yes: 'ลองอีกครั้ง', no: 'ไม่ใช่ (ยิงป้ายผิด)' } :
-        { title: 'ยังตรวจ ' + loc + ' ไม่ได้', html: 'นับต่อได้ ระบบจะจัดบทบาทให้เมื่อเซิร์ฟเวอร์ตอบ<br>ถ้ามีผู้ดูแลอยู่แล้ว เครื่องนี้จะเป็น <b>ผู้ช่วย</b> และจะแจ้งให้ทราบ', yes: 'นับต่อ', no: 'ไม่ใช่ (ยิงป้ายผิด)' };
+        { title: 'ยังตรวจ ' + loc + ' ไม่ได้', html: 'นับต่อได้ ระบบจะตรวจเมื่อเซิร์ฟเวอร์ตอบ<br>ถ้ามีเครื่องอื่นนับอยู่แล้ว ระบบจะแจ้งให้หยุด และติดธงให้หัวหน้าทีมตรวจ', yes: 'นับต่อ', no: 'ไม่ใช่ (ยิงป้ายผิด)' };
       return modal(m).then(function (yes) {
         if (S.loc !== loc) return;
         if (!yes) return cancelOpen(loc, before);
-        if (retried) { openCard(); return sendOpen(isHelper(loc) ? 'JOIN' : 'OPEN'); }
+        if (retried) { openCard(); return sendOpen('OPEN'); }
         retried = true;
         setCard('idle', 'กำลังตรวจ ' + loc + '…', 'ลองอีกครั้ง'); render();
         busy('กำลังตรวจ ' + loc + '…', 'ลองอีกครั้ง');
@@ -1177,45 +1161,12 @@
         openCard((before && before.state === 'PAUSED' ? 'กลับมานับต่อ ' + loc + ' (พักไว้)' : 'เปิด ' + loc + ' แล้ว') + ' — ยิงสินค้าได้เลย');
         return sendOpen('OPEN');
       }
-      var who = memberLabel(o);
-      if (o.state === 'CLOSED') {
-        // Control 10: ผู้ดูแลปิดแล้ว ผู้ช่วยยิงเพิ่มไม่ได้จนกว่าผู้ดูแลจะเปิดแก้ไข
-        S.checking = ''; S.loc = null; setRole(loc, { role: 'HELPER', state: 'SUBMITTED', owner: o.device, ownerLabel: who });
-        SOUND.bad(); setCard('bad', loc + ' ปิดแล้วโดย ' + (o.name || o.device), 'ให้ผู้ดูแลเปิดแก้ไขก่อน — ไม่รับการยิง');
-        return saveState().then(function () { render(); return modal({ title: loc + ' ปิดแล้ว', html: 'ปิดโดย ' + esc(who) + '<br>ถ้าต้องนับเพิ่ม ให้ผู้ดูแลยิงป้าย ' + esc(loc) + ' เพื่อเปิดแก้ไขก่อน', yes: 'รับทราบ', noCancel: true }); });
-      }
-      if (me && me.role === 'HELPER') {
-        var asked = S.rejoinAsked === loc; S.rejoinAsked = '';
-        if (me.state === 'SUBMITTED' && !asked) {
-          // ส่งงานไปแล้ว (เซิร์ฟเวอร์ยืนยัน) แต่เครื่องไม่ได้ถาม → ถามก่อนกลับไปช่วย
-          SOUND.warn();
-          return modal({ title: 'กลับไปช่วย ' + loc + ' อีกครั้ง?', html: 'ส่งงานไปแล้ว <b>' + fmt(me.qty !== undefined ? me.qty : locSummary(loc).qty) + '</b> ชิ้น ยอดเดิมยังอยู่ ยิงเพิ่มต่อจากเดิม<br><span class="muted">ผู้ดูแล ' + esc(who) + '</span>',
-            yes: 'กลับไปช่วย', no: 'ไม่ใช่ (ยิงป้ายผิด)' }).then(function (yes) {
-            if (S.loc !== loc) return;
-            if (!yes) { setRole(loc, { role: 'HELPER', state: 'SUBMITTED', owner: o.device, ownerLabel: who }); return cancelOpen(loc, null, true); }
-            setRole(loc, { role: 'HELPER', state: 'COUNTING', owner: o.device, ownerLabel: who });
-            openCard('กลับมาช่วย ' + loc + ' แล้ว — ยิงสินค้าได้เลย', 'ผู้ดูแล ' + who);
-            return saveState().then(function () { return sendOpen('JOIN'); });
-          });
-        }
-        setRole(loc, { role: 'HELPER', state: 'COUNTING', owner: o.device, ownerLabel: who });
-        openCard('ช่วยนับ ' + loc + ' — ยิงสินค้าได้เลย', 'ผู้ดูแล ' + who);
-        return sendOpen('JOIN');
-      }
-      SOUND.warn();
-      return modal({ title: loc + ' ดูแลโดย ' + (o.name || o.device), html: 'ผู้ดูแล ' + esc(who) + '<br>เข้าร่วมนับเป็น <b>ผู้ช่วย</b>?<br><span class="muted">ผู้ช่วยยิงได้ แก้ได้เฉพาะยอดของตัวเอง ปิดไม่ได้ เสร็จแล้วกด "ส่งงาน"</span>',
-        yes: 'เข้าร่วม', no: 'ไม่ใช่ (ยิงป้ายผิด)' }).then(function (yes) {
-        if (S.loc !== loc) return;
-        if (!yes) return cancelOpen(loc, before);
-        setRole(loc, { role: 'HELPER', state: 'COUNTING', owner: o.device, ownerLabel: who });
-        S.checking = '';
-        setCard('idle', 'เข้าร่วม ' + loc + ' เป็นผู้ช่วยแล้ว', 'ผู้ดูแล ' + esc(who), 'เสร็จแล้วกด "ส่งงาน"'); render();
-        return saveState().then(function () { return sendOpen('JOIN'); });
-      });
+      // v2.7.0: เครื่องอื่นเปิดไปก่อนระหว่างที่ตรวจ (เปิดพร้อมกัน) → ไม่เปิด
+      return cancelOpen(loc, before).then(function () { return blockBox(loc, info); });
     }
   }
 
-  /** ยิงป้ายผิด / ไม่เข้าร่วม: ออกจาก Location โดยไม่ส่งเหตุการณ์ (ยังไม่รับการยิงระหว่างตรวจ จึงไม่มีรายการค้าง) */
+  /** ยิงป้ายผิด / เป็นของเครื่องอื่น: ออกจาก Location โดยไม่ส่งเหตุการณ์ (ยังไม่รับการยิงระหว่างตรวจ จึงไม่มีรายการค้าง) */
   function cancelOpen(loc, before, keepRole) {
     S.checking = ''; S.loc = null;
     if (!keepRole) { if (before) S.roles[loc] = before; else delete S.roles[loc]; }
@@ -1253,49 +1204,25 @@
     });
   }
 
-  function doSubmit(loc) {
-    return leaveLocation(loc, { self: true }).then(function () {
-      return confirmSent(loc, 'กำลังส่งงาน ' + loc + '…', 'รอเซิร์ฟเวอร์ยืนยันว่าได้รับยอดครบ');
-    }).then(function (res) {
-      SOUND.ok();
-      setCard(res === 'ok' ? 'ok' : 'idle', 'ส่งงาน ' + loc + ' แล้ว', 'ของฉัน ' + fmt(locSummary(loc).qty) + ' ชิ้น · ' + sentNote(res) + '<br>ยิงป้าย Location ถัดไป');
-      if (S.online === false && pending().length) exportFile(true);
-      render();
-      return result(true, 'ส่งงาน ' + loc + ' แล้ว', 'ของฉัน ' + fmt(locSummary(loc).qty) + ' ชิ้น\n' + sentNote(res)).then(function (how) { if (how !== 'scan') return offerPaused(); });
-    });
-  }
-
   /**
-   * ผู้ดูแลแก้ยอด/ล้าง/ปิด ได้เมื่อผู้ช่วยส่งงานครบ (ข้อมูลถึงเซิร์ฟเวอร์ครบ)
-   * ออนไลน์: ถามสถานะล่าสุด · ออฟไลน์: ใช้ได้ถ้าเท่าที่รู้ไม่มีผู้ช่วยค้าง (เซิร์ฟเวอร์ตรวจซ้ำตอนส่งข้อมูล)
+   * v2.7.0: ก่อนปิด/ล้าง — Location ที่มีข้อมูลจากเครื่องอื่น (โอนการดูแล / เปิดซ้อน) ตรวจว่าเครื่องนั้นส่งข้อมูลครบหรือยัง
+   * ไม่ครบ → เตือน แต่ไม่ห้าม (ไม่มีส่งงานแทนแล้ว ห้ามไว้จะติดถาวรถ้าเครื่องนั้นเสีย) — เซิร์ฟเวอร์ติดธงต้องตรวจซ้ำตอนปิดให้เอง
    */
   function ownerGate(loc, what, strict) {
-    // แก้ยอด: ถ้าเพิ่งได้สถานะสด (≤ 20 วิ) และผู้ช่วยส่งงานครบ ไม่ต้องถามซ้ำ (เซิร์ฟเวอร์ยังมีด่าน Basis อีกชั้น) · ปิด/ล้าง: ถามสดทุกครั้ง (U12)
-    if (!strict && S.infoAt[loc] && Date.now() - S.infoAt[loc] <= 20000 && !waitingHelpers(loc).length) return Promise.resolve(true);
-    busy('กำลังตรวจผู้ช่วย…', 'ถามเซิร์ฟเวอร์ว่าผู้ช่วยส่งงานครบหรือยัง');
+    // ปิด/ล้าง: ถามสถานะสด (ยอดรวม + ธงล่าสุด รวมกรณีเครื่องอื่นเปิดซ้อนที่เครื่องนี้ยังไม่รู้) · ออฟไลน์ → ใช้ที่รู้ เซิร์ฟเวอร์ตรวจซ้ำตอนส่ง
+    if (!strict || navigator.onLine === false || !S.cfg.token) return Promise.resolve(true);
+    busy('กำลังตรวจ ' + loc + '…', 'ถามเซิร์ฟเวอร์ยอดล่าสุดของ Location นี้');
     return fetchInfo(loc).then(function (fresh) {
       busyOff();
-      // เซิร์ฟเวอร์ช้า: ยังไม่ให้ปิด/แก้ จนกว่าจะได้สถานะสด (ออฟไลน์จริงใช้สถานะล่าสุด แล้วเซิร์ฟเวอร์ตรวจซ้ำภายหลัง)
-      if (!fresh && S.infoErr !== 'NETWORK') {
-        SOUND.warn();
-        return modal({ title: 'ตรวจผู้ช่วยไม่ได้', html: 'เซิร์ฟเวอร์ตอบช้า ยังไม่รู้ว่าผู้ช่วยส่งงานครบหรือยัง<br><span class="muted">' + esc(what) + 'ได้หลังตรวจผ่าน</span>',
-          yes: 'ลองอีกครั้ง', no: 'ยกเลิก' }).then(function (y) { return y ? ownerGate(loc, what) : false; });
-      }
-      // นับช่วยกัน + ออฟไลน์ (v2.3.4): ห้ามปิด / ล้างทั้ง Location / แก้ยอดรวม — ต้องยืนยันกับเซิร์ฟเวอร์ว่าทุกคนส่งงานแล้ว
-      // (สถานะผู้ช่วยที่จำไว้อาจเก่า: UAT T7 ปิดตอนออฟไลน์ ทั้งที่ผู้ช่วยยังนับอยู่) · นับคนเดียวยังทำออฟไลน์ได้
-      if (!fresh && hasOthers(loc)) {
-        SOUND.bad();
-        return result(false, what + 'ได้เมื่อออนไลน์', 'นับช่วยกัน ต้องตรวจกับเซิร์ฟเวอร์ว่าทุกคนส่งงานแล้ว\nพัก ' + loc + ' ไว้ (ยิงป้าย Location อื่น) นับต่อได้ แล้วกลับมาทำเมื่อมีสัญญาณ\nเครื่องใช้ไม่ได้: แจ้งหัวหน้าทีม "โอนการดูแล"').then(function () { return false; });
-      }
       var wait = waitingHelpers(loc);
       if (!wait.length) return true;
       SOUND.warn();
       return modal({
-        title: what + 'ได้เมื่อผู้ช่วยส่งงานครบ',
-        html: (fresh ? '' : '<span class="muted">ออฟไลน์ — ใช้สถานะล่าสุดที่รู้</span><br>') + 'รอ:<br>' + wait.map(function (m) { return '• ' + esc(waitText(m)); }).join('<br>') +
-          '<br><span class="muted">ตามตัวให้กด "ส่งงาน" ถ้าตามไม่ได้ แจ้งหัวหน้าทีม (หน้า Admin → ส่งงานแทน)</span>',
-        yes: 'รับทราบ', noCancel: true
-      }).then(function () { return false; });
+        title: 'ข้อมูลจากเครื่องอื่นยังไม่ครบ',
+        html: (fresh ? '' : '<span class="muted">ออฟไลน์ / เซิร์ฟเวอร์ช้า — ใช้สถานะล่าสุดที่รู้</span><br>') + wait.map(function (m) { return '• ' + esc(waitText(m)); }).join('<br>') +
+          '<br>' + esc(what.trim()) + 'ได้ แต่ระบบจะติดธง "ต้องตรวจซ้ำ" ให้หัวหน้าทีมตรวจ',
+        yes: what.trim() + 'ต่อ', no: 'ยกเลิก'
+      });
     });
   }
 
@@ -1329,16 +1256,16 @@
     if (!S.loc) { toast('ยังไม่ได้เปิด Location', true); return; }
     var loc = S.loc;
     if (isHelper(loc)) {
-      var m = locSummary(loc), r = S.roles[loc] || {};
-      confirmBox('ส่งงาน ' + loc + '?', 'ของฉัน <span class="bignum">' + fmt(m.qty) + '</span> ชิ้น · ' + m.sku + ' SKU<br>ส่วนของฉันเสร็จแล้ว ผู้ดูแล' + (r.owner ? ' (' + esc(r.ownerLabel || r.owner) + ')' : '') + 'จะเป็นคนปิด Location<br><span class="muted">ถ้าต้องกลับมานับเพิ่ม ยิงป้าย ' + esc(loc) + ' อีกครั้ง</span>', 'ส่งงาน')
-        .then(function (yes) { if (yes) doSubmit(loc); });
+      // เป็นของเครื่องอื่นแล้ว (โอนการดูแล / เปิดซ้อน) — ออกจาก Location ส่งยอดที่ยิงไว้ให้ครบ
+      leaveLocation(loc).then(render);
+      SOUND.warn(); result(false, loc + ' เป็นของเครื่องอื่นแล้ว', 'เครื่องนี้ออกจาก ' + loc + ' · ยอดที่ยิงไว้ส่งเข้าระบบ\nยิงป้าย Location ของคุณใหม่');
       return;
     }
     ownerGate(loc, 'ปิด Location ', true).then(function (ok) {
       if (!ok || S.loc !== loc) return;
       var s = combinedSummary(loc), flag = flagOf(loc);
       // ข้อความตามสถานการณ์ (v2.3.4): นับช่วยกัน ล้างของตัวเอง / ล้างทั้ง Location ใช้ปุ่มรอง · ปิดไม่ลบธง
-      var redo = s.multi ? 'ถ้ายอดยังไม่ถูก: แต่ละคนแก้/ล้างยอดของตัวเอง หรือใช้ "แก้ยอดรวม / ล้างทั้ง Location"' : 'ถ้ายอดยังไม่ถูก: ดู/แก้ → ล้าง Location แล้วนับใหม่';
+      var redo = 'ถ้ายอดยังไม่ถูก: ดู/แก้ → ล้าง Location แล้วนับใหม่';
       confirmBox('ปิด ' + loc, (flag ? '<div class="warnline">⚠ ' + esc(flag) + '<br>' + redo + '<br>ปิดได้ แต่ธงยังอยู่จนหัวหน้าทีมตรวจและกด "ปิดธง"</div>' : '') +
         '<span class="bignum">' + fmt(s.qty) + '</span> ชิ้น · ' + s.sku + ' SKU' + (s.multi ? ' <span class="muted">(รวม ' + S.info[loc].members.length + ' เครื่อง)</span>' : '') +
         '<br>ตรงกับยอดนับมือบนกระดาษของร้านแล้วใช่ไหม?<br><span class="muted">ถ้าไม่ตรง กดยกเลิก แล้วใช้ "ดู/แก้ Location"</span>', 'ปิด Location')
@@ -1440,7 +1367,7 @@
   // ---------- Location ที่นับแล้ว ----------
   // v2.3.7: จัดกลุ่มตามสิ่งที่ต้องทำต่อ (กำลังนับ → ต้องทำต่อ → เสร็จแล้ว) · ในกลุ่มเรียงตามชื่อป้ายแบบตัวเลข (A2 ก่อน A10)
   // ตัวเลขใหญ่ขวา = ยอดรวมทุกเครื่อง (ปิดแล้ว = ยอดตอนปิด) · "ของฉัน" นับหลังล้าง Location
-  var STATE_TXT = { COUNTING: 'กำลังนับ', PAUSED: 'พักไว้', SUBMITTED: 'ส่งงานแล้ว', CLOSED: 'ปิดแล้ว' };
+  var STATE_TXT = { COUNTING: 'กำลังนับ', PAUSED: 'พักไว้', SUBMITTED: 'เครื่องอื่นดูแล', CLOSED: 'ปิดแล้ว' };
   function natCmp(a, b) { return String(a).localeCompare(String(b), 'th', { numeric: true, sensitivity: 'base' }); }
   function r3(v) { return Math.round(v * 1000) / 1000; }
   /** ยอดของฉันหลังล้าง Location ครั้งล่าสุด: เซิร์ฟเวอร์ (sc) + รายการที่ยังไม่ส่ง · ถ้ามีรายการล้างค้างส่ง คิดจากในเครื่อง */
@@ -1466,10 +1393,8 @@
     x.closed = closed;
     if (l === S.loc) x.tag = ['b', 'กำลังนับ'];
     else if (x.flag) x.tag = ['r', 'ต้องตรวจซ้ำ'];
-    else if (x.done) x.tag = ['g', role === 'HELPER' && !closed ? 'ส่งงานแล้ว' : 'ปิด' + (srv && srv.closedTime ? ' ' + String(srv.closedTime).slice(11, 16) : 'แล้ว')];
+    else if (x.done) x.tag = ['g', role === 'HELPER' ? 'เครื่องอื่นดูแล' : 'ปิด' + (srv && srv.closedTime ? ' ' + String(srv.closedTime).slice(11, 16) : 'แล้ว')];
     else if (state === 'PAUSED') x.tag = ['y', 'พักไว้'];
-    else if (role === 'OWNER' && srv && srv.helpers > srv.helpersDone) x.tag = ['y', 'รอผู้ช่วยส่งงาน ' + srv.helpersDone + '/' + srv.helpers];
-    else if (role === 'HELPER' && state === 'SUBMITTED') x.tag = ['g', 'ส่งงานแล้ว'];
     else x.tag = ['y', 'ยังไม่ปิด'];
     return x;
   }
@@ -1493,8 +1418,7 @@
     var old = S.online === false && S.myLocsAt ? ' · ยอดจากเซิร์ฟเวอร์เมื่อ ' + String(S.myLocsAt).slice(11, 16) + ' (ออฟไลน์)' : '';
     $('locsHead').textContent = list.length ? 'ตัวเลขขวา = ยอดรวมทุกเครื่อง · แตะเพื่อไปที่ Location' + old : 'ยังไม่มี Location ในรอบนี้';
     function row(x) {
-      var who = x.role === 'HELPER' ? 'ผู้ช่วย' : 'ผู้ดูแล';
-      var sub = 'ของฉัน ' + fmt(x.mine) + ' · ' + who + (x.srv.devices > 1 ? ' · ' + x.srv.devices + ' เครื่อง' : '');
+      var sub = 'ของฉัน ' + fmt(x.mine) + (x.srv.devices > 1 ? ' · ' + x.srv.devices + ' เครื่อง' : '') + (x.role === 'HELPER' ? ' · โอน/ซ้อน: ' + (x.srv.owner || 'เครื่องอื่น') + ' ดูแล' : '');
       return '<li data-l="' + esc(x.loc) + '" class="st-' + esc(x.state) + (x.done ? ' st-done' : '') + (x.loc === S.loc ? ' here' : '') + '"><div class="lmain"><div class="n"><span class="ln">' + esc(x.loc) + '</span>' +
         '<span class="badge ' + x.tag[0] + '">' + esc(x.tag[1]) + '</span></div><div class="c">' + esc(sub) + '</div>' +
         (x.flag ? '<div class="c"><span class="badge r">' + esc(x.flag) + '</span></div>' : '') + '</div>' +
@@ -1535,11 +1459,10 @@
   $('btnLocsType').onclick = function () { typeLocation(); };
 
   // ---------- ดู/แก้ Location ----------
-  // ผู้ดูแล: แก้ยอด/ล้าง จากยอดรวมทุกเครื่อง (ของเครื่องนี้ + เครื่องอื่นจากเซิร์ฟเวอร์) หลังผู้ช่วยส่งงานครบ
-  // ผู้ช่วย: ดูอย่างเดียว
+  // แก้ยอด/ล้าง จากยอดรวมทุกเครื่อง (ของเครื่องนี้ + เครื่องอื่นจากเซิร์ฟเวอร์ — กรณีโอนการดูแล / เปิดซ้อน · v2.7.0)
   function renderLoc() {
     if (!S.loc) { show('count'); return; }
-    var loc = S.loc, s = combinedSummary(loc), helper = isHelper(loc), info = S.info[loc];
+    var loc = S.loc, s = combinedSummary(loc), info = S.info[loc];
     $('locName').textContent = loc;
     $('locSum').textContent = fmt(s.qty) + ' ชิ้น · ' + s.sku + ' SKU';
     var mem = '';
@@ -1547,9 +1470,9 @@
       mem = info.members.map(function (m) {
         var me = m.device === S.cfg.deviceId;
         var st = m.role === 'OWNER' ? (m.state === 'CLOSED' ? 'ปิดแล้ว' : m.state === 'PAUSED' ? 'พัก' : 'กำลังนับ') :
-          m.state === 'SUBMITTED' ? (m.match === 'OK' ? 'ส่งงานแล้ว ✓' : 'ส่งงานแล้ว (รอข้อมูล)') : 'กำลังนับ';
+          m.state === 'SUBMITTED' ? (m.match === 'OK' ? 'ส่งข้อมูลครบ ✓' : 'ยังได้ข้อมูลไม่ครบ') : 'ยังนับอยู่';
         var q = me ? s.mineQty : (m.sc === undefined ? m.qty : m.sc); // นับหลังล้าง Location (v2.3.6)
-        return '<div class="mrow' + (m.role === 'HELPER' && !(m.state === 'SUBMITTED' && m.match === 'OK') ? ' wait' : '') + '"><span>' + (m.role === 'OWNER' ? 'ผู้ดูแล' : 'ผู้ช่วย') + ' ' +
+        return '<div class="mrow' + (m.role === 'HELPER' && !(m.state === 'SUBMITTED' && m.match === 'OK') ? ' wait' : '') + '"><span>' + (m.role === 'OWNER' ? 'ผู้ดูแล' : 'เครื่องเดิม/ซ้อน') + ' ' +
           esc(memberLabel(m)) + (me ? ' (ฉัน)' : '') + '</span><span>' + esc(st) + ' · ' + fmt(q) + '</span></div>';
       }).join('');
     }
@@ -1559,28 +1482,20 @@
     $('locFreshText').textContent = S.infoBusy ? 'กำลังอัปเดตสถานะ…' :
       (at ? 'อัปเดตสถานะล่าสุด ' + stamp(new Date(at)).slice(11) : 'ยังไม่ได้สถานะจากเซิร์ฟเวอร์') +
       (S.infoErr === 'TIMEOUT' ? ' · ครั้งล่าสุดเซิร์ฟเวอร์ตอบช้า' : S.infoErr === 'NETWORK' ? ' · ออฟไลน์' : S.infoErr ? ' · ครั้งล่าสุดไม่สำเร็จ' : '');
-    var wait = helper ? [] : waitingHelpers(loc);
-    // นับช่วยกัน (v2.3.2): ทุกคน (รวมผู้ดูแล) แก้/ล้าง/ย้อน ได้เฉพาะยอดของตัวเอง · ผู้ดูแลมีโหมดแก้ยอดรวมแยก (ทุกคนส่งงานแล้ว)
-    var shared = !helper && s.multi, total = shared && S.totalMode === loc;
-    if (!shared && S.totalMode === loc) S.totalMode = null;
+    var wait = waitingHelpers(loc);
     var edits = S.entries.filter(function (e) { return e.location === loc && (e.type === 'RECOUNT_SET' || e.type === 'SELF_SET' || (e.type === 'VOID' && /แก้/.test(e.reason))); }).length;
-    $('locEdited').textContent = helper ? 'ผู้ช่วย: แตะ SKU เพื่อแก้ "ยอดของฉัน" (เฉพาะชิ้นที่เครื่องนี้ยิง) · ยอดรวม Location ผู้ดูแลเป็นคนแก้' + (edits ? ' · แก้แล้ว ' + edits + ' ครั้ง' : '') :
-      total ? 'โหมดแก้ยอดรวม: แตะ SKU เพื่อใส่ยอดจริงรวมทุกเครื่อง (ต้องใส่เหตุผล)' :
-      shared ? 'นับช่วยกัน: แตะ SKU เพื่อแก้ "ยอดของฉัน" (เฉพาะชิ้นที่เครื่องนี้ยิง)' + (wait.length ? ' · ปิดได้เมื่อ ' + wait.map(function (m) { return m.name || m.device; }).join(', ') + ' ส่งงาน' : '') :
-      wait.length ? 'แก้ยอด / ล้าง / ปิด ได้เมื่อ ' + wait.map(function (m) { return m.name || m.device; }).join(', ') + ' ส่งงาน' :
+    $('locEdited').textContent = wait.length ? 'ข้อมูลจาก ' + wait.map(function (m) { return m.name || m.device; }).join(', ') + ' ยังไม่ครบ — ปิดได้ แต่จะติดธงให้หัวหน้าทีมตรวจ' :
+      s.multi ? 'มีข้อมูลจาก ' + info.members.length + ' เครื่อง (โอนการดูแล / นับซ้อน) · แตะ SKU เพื่อแก้ยอดรวม (ต้องใส่เหตุผล)' :
       edits ? 'แก้ไขแล้ว ' + edits + ' ครั้ง (แตะ SKU เพื่อดูประวัติ)' : 'แตะ SKU เพื่อใส่ยอดจริงที่นับได้';
-    $('locEdited').className = total ? 'warnline' : wait.length && !shared ? 'warnline' : 'muted';
-    var own = helper || (shared && !total);
-    $('btnLocUndo').textContent = own ? 'ย้อนการแก้ของฉันล่าสุด' : 'ย้อนการแก้ล่าสุด';
-    $('btnLocClear').textContent = own ? 'ล้างยอดของฉัน นับใหม่' : total ? 'ล้างทั้ง Location นับใหม่' : 'ล้าง Location นับใหม่';
-    $('btnLocTotal').classList.toggle('hidden', !shared);
-    $('btnLocTotal').textContent = total ? '← กลับไปแก้ยอดของฉัน' : 'แก้ยอดรวม / ล้างทั้ง Location (ทุกคนส่งงานแล้ว)';
+    $('locEdited').className = wait.length ? 'warnline' : 'muted';
+    $('btnLocUndo').textContent = 'ย้อนการแก้ล่าสุด';
+    $('btnLocClear').textContent = 'ล้าง Location นับใหม่';
     var items = Array.from(s.items.values()).sort(function (a, b) { return (b.qty !== 0) - (a.qty !== 0) || String(info_(a).c).localeCompare(String(info_(b).c)); });
     $('locItems').innerHTML = items.length ? items.map(function (it) {
       var m = info_(it);
       return '<li data-k="' + esc(it.key) + '" class="' + (it.qty === 0 ? 'zero' : '') + '"><div><div class="n">' + esc(m.n) + (it.edits ? '<span class="badge">แก้ ' + it.edits + '</span>' : '') +
         (!it.material ? '<span class="badge y">ไม่รู้จัก</span>' : '') + '</div><div class="c">' + tailHtml(m.c) + ' · ' + esc(it.material || it.barcode) + '</div>' +
-        (s.multi ? '<div class="c">ของฉัน ' + fmt(it.mine) + ' · เครื่องอื่น ' + fmt(it.others) + '</div>' : '') + '</div><div class="q">' + fmt(it.qty) + '</div></li>';
+        (s.multi ? '<div class="c">เครื่องนี้ ' + fmt(it.mine) + ' · เครื่องอื่น ' + fmt(it.others) + '</div>' : '') + '</div><div class="q">' + fmt(it.qty) + '</div></li>';
     }).join('') : '<li class="muted">ยังไม่มีรายการใน Location นี้</li>';
   }
   function info_(it) { return info(it); }
@@ -1589,13 +1504,9 @@
     var li = e.target.closest('li[data-k]'); if (!li) return;
     if (blockedClosed()) return;
     var key = li.dataset.k;
-    if (ownScope(S.loc)) { editMine(key); return; }
-    var total = S.totalMode === S.loc;
-    ownerGate(S.loc, 'แก้ยอด').then(function (ok) { if (ok) editItem(key, total); });
+    editItem(key, hasOthers(S.loc));   // มีข้อมูลหลายเครื่อง → ต้องใส่เหตุผล
   });
 
-  /** แก้/ล้าง/ย้อน เฉพาะยอดของตัวเอง: ผู้ช่วยเสมอ · ผู้ดูแลตอนนับช่วยกัน (ยกเว้นอยู่ในโหมดแก้ยอดรวม) (v2.3.2) */
-  function ownScope(loc) { return isHelper(loc) || (hasOthers(loc) && S.totalMode !== loc); }
   /** ถามเหตุผล (บังคับ) — คืนข้อความ หรือ null ถ้ายกเลิก */
   function askReason(title, what, again) {
     // เหตุผลว่าง → ถามซ้ำพร้อมตัวแดงในกล่อง (แถบล่างถูกแป้นพิมพ์บัง · UAT G4-7 · v2.3.5)
@@ -1607,17 +1518,6 @@
       return v;
     });
   }
-  $('btnLocTotal').onclick = function () {
-    var loc = S.loc;
-    if (blockedClosed()) return;
-    if (S.totalMode === loc) { S.totalMode = null; renderLoc(); return; }
-    ownerGate(loc, 'แก้ยอดรวม ', true).then(function (ok) {
-      if (!ok) return;
-      S.totalMode = loc; renderLoc();
-      toast('โหมดแก้ยอดรวม — แตะ SKU เพื่อแก้ยอดรวมทุกเครื่อง');
-    });
-  };
-
   function editItem(key, needReason) {
     var loc = S.loc, s = combinedSummary(loc), it = s.items.get(key); if (!it) return;
     var m = info(it), cur = it.qty;
@@ -1626,7 +1526,7 @@
     modal({
       title: 'แก้ยอดใน ' + loc,
       html: '<b>' + esc(m.n) + '</b><br>' + tailHtml(m.c) + '<br>ใส่ <b>ยอดจริง</b> ที่นับได้' + (s.multi ? ' <b>รวมทุกเครื่อง</b>' : '') + ' (ใส่ 0 ถ้าไม่มีของชิ้นนี้ที่นี่)' +
-        (s.multi ? '<div class="muted">ตอนนี้ ของฉัน ' + fmt(it.mine) + ' + เครื่องอื่น ' + fmt(it.others) + ' = ' + fmt(cur) + '</div>' : '') + otherEditHtml(loc, key) + (hist ? '<div style="margin-top:6px">' + hist + '</div>' : ''),
+        (s.multi ? '<div class="muted">ตอนนี้ เครื่องนี้ ' + fmt(it.mine) + ' + เครื่องอื่น ' + fmt(it.others) + ' = ' + fmt(cur) + '</div>' : '') + otherEditHtml(loc, key) + (hist ? '<div style="margin-top:6px">' + hist + '</div>' : ''),
       input: true, value: '', yes: 'บันทึกยอดจริง',
       preview: function (v) {
         if (v === '' || isNaN(Number(v))) return '';
@@ -1653,58 +1553,10 @@
     });
   }
 
-  /**
-   * ผู้ช่วยแก้ "ยอดของฉัน" (v2.3.1) — แก้ได้เฉพาะชิ้นที่เครื่องนี้ยิง ไม่ต้องรอผู้ดูแล แก้ตอนออฟไลน์ได้
-   * ห้ามเมื่อผู้ดูแลแก้ยอดรวม SKU นี้ไปแล้ว (กันแก้ความผิดเดียวกันซ้ำสองชั้น) · เซิร์ฟเวอร์ตรวจซ้ำด้วย basis
-   */
-  function editMine(key) {
-    var loc = S.loc, s = combinedSummary(loc), it = s.items.get(key); if (!it) return;
-    var m = info(it), cur = mineSince(loc, key), x = editInfo(loc, key), cut = x && x.cp;
-    if (!mineEntries(loc, key).length) {
-      SOUND.warn();
-      result(false, 'SKU นี้ไม่มียอดของฉัน' + (cut ? 'หลังผู้ดูแลแก้ยอดรวม' : ''), cut ? 'ยอดก่อนหน้านี้ผู้ดูแลตรวจและแก้ยอดรวมแล้ว\nยิงเพิ่มได้ตามปกติ แล้วแก้เฉพาะส่วนที่ยิงเพิ่ม' : 'แก้ได้เฉพาะชิ้นที่เครื่องนี้ยิง\nถ้าเจอของ ยิงเพิ่มได้ตามปกติ');
-      return;
-    }
-    modal({
-      title: 'แก้ยอดของฉันใน ' + loc,
-      html: '<b>' + esc(m.n) + '</b><br>' + tailHtml(m.c) + '<br>ใส่ <b>ยอดจริงที่ฉันนับได้</b> (เฉพาะส่วนที่ฉันยิง · ใส่ 0 ถ้ายิงผิดทั้งหมด)' +
-        '<div class="muted">ตอนนี้ ของฉัน ' + fmt(cur) + (s.multi ? ' · รวม SKU ' + fmt(it.qty) : '') + '</div>' +
-        (cut ? '<div class="muted">ยอดของฉันนับจากที่ผู้ดูแลแก้ยอดรวมครั้งล่าสุด (ยอดก่อนนั้นผู้ดูแลตรวจแล้ว)</div>' : '') + otherEditHtml(loc, key),
-      input: true, value: '', yes: 'บันทึกยอดของฉัน',
-      preview: function (v) {
-        if (v === '' || isNaN(Number(v))) return '';
-        var nv = Number(v), d = nv - cur;
-        return 'ของฉัน: ' + fmt(cur) + ' <span class="arrow">→ ' + fmt(nv) + '</span><br>รวม SKU: ' + fmt(it.qty) + ' <span class="arrow">→ ' + fmt(it.qty + d) + '</span>';
-      }
-    }).then(function (v) {
-      if (v === null) return;
-      if (badNumber(v)) return;
-      if (v === '' || isNaN(Number(v)) || Number(v) < 0) { SOUND.warn(); result(false, 'ใส่ตัวเลข 0 ขึ้นไป', 'ยังไม่ได้แก้ยอด'); return; }
-      var nv = Number(v), d = Math.round((nv - cur) * 1000) / 1000;
-      if (d === 0) { result(true, 'ยอดเท่าเดิม', 'ไม่มีการแก้'); return; }
-      return qtyCheck(nv, m.n).then(function (yes) {
-        if (!yes) return;
-        return addEntry({ barcode: it.barcode, material: it.material, qty: d, type: 'SELF_SET', basis: cur, reason: (isHelper(loc) ? 'ผู้ช่วย' : 'ผู้ดูแล') + 'แก้ยอดของตัวเอง ' + fmt(cur) + ' → ' + fmt(nv) }).then(function () {
-          return addEvent('EDIT', loc, { mine: true });
-        }).then(function () { SOUND.ok(); renderLoc(); renderTop(); result(true, 'แก้ยอดของฉันแล้ว', m.n + '\n' + fmt(cur) + ' → ' + fmt(nv)); });
-      });
-    });
-  }
-
-  $('btnLocBack').onclick = function () { S.totalMode = null; show('count'); };
+  $('btnLocBack').onclick = function () { show('count'); };
   $('btnLocUndo').onclick = function () {
     if (blockedClosed()) return;
     var loc = S.loc, v = voidedSet();
-    if (ownScope(loc)) {
-      var mineLast = S.entries.slice().reverse().find(function (e) { return e.location === loc && e.type === 'SELF_SET' && !v[e.logId]; });
-      if (!mineLast) { SOUND.warn(); result(false, 'ไม่มีการแก้ของฉันให้ย้อน', 'ย้อนได้เฉพาะการแก้ยอดของเครื่องนี้'); return; }
-      var mi = info(mineLast);
-      return confirmBox('ย้อนการแก้ของฉันล่าสุด', esc(mi.n) + '<br>' + esc(mineLast.reason) + '<br>จะคืนยอด ' + (mineLast.qty > 0 ? '−' : '+') + fmt(Math.abs(mineLast.qty)), 'ย้อนการแก้').then(function (yes) {
-        if (!yes) return;
-        addEntry({ barcode: mineLast.barcode, material: mineLast.material, qty: -mineLast.qty, type: 'VOID', refId: mineLast.logId, reason: 'ย้อนการแก้: ' + mineLast.reason })
-          .then(function () { return addEvent('EDIT', loc, { mine: true }); }).then(function () { SOUND.ok(); renderLoc(); renderTop(); result(true, 'ย้อนการแก้ของฉันแล้ว', mi.n + '\nคืนยอด ' + (mineLast.qty > 0 ? '−' : '+') + fmt(Math.abs(mineLast.qty))); });
-      });
-    }
     var last = S.entries.slice().reverse().find(function (e) { return e.location === loc && e.type === 'RECOUNT_SET' && !v[e.logId]; });
     if (!last) { SOUND.warn(); result(false, 'ไม่มีการแก้ให้ย้อน', ''); return; }
     var m = info(last);
@@ -1717,8 +1569,7 @@
   $('btnLocClear').onclick = function () {
     if (blockedClosed()) return;
     var loc = S.loc;
-    if (ownScope(loc)) { clearMine(loc); return; }
-    var needReason = S.totalMode === loc;
+    var needReason = hasOthers(loc);
     ownerGate(loc, 'ล้าง Location ', true).then(function (ok) {
       if (!ok) return;
       var s = combinedSummary(loc);
@@ -1740,40 +1591,13 @@
         p.then(function () { return addEvent('EDIT', loc, { clear: true }); }).then(function () {
           return confirmSent(loc, 'กำลังล้าง ' + loc + '…', 'แจ้งเซิร์ฟเวอร์ว่าเริ่มนับใหม่');
         }).then(function (res) {
-          S.recountBanner = 'นับใหม่ ' + loc + ' (ยอดเดิม ' + fmt(s.qty) + ')'; S.totalMode = null;
+          S.recountBanner = 'นับใหม่ ' + loc + ' (ยอดเดิม ' + fmt(s.qty) + ')';
           SOUND.ok(); setCard('idle', 'ล้าง ' + loc + ' แล้ว — เริ่มนับใหม่ได้', sentNote(res)); show('count');
           result(true, 'ล้าง ' + loc + ' แล้ว', 'เริ่มนับใหม่ได้\n' + sentNote(res));
         });
       });
     });
   };
-
-  /** ผู้ช่วยล้างยอดของตัวเองทั้ง Location เพื่อนับส่วนของตัวเองใหม่ (v2.3.1) — ไม่แตะยอดของเครื่องอื่น */
-  function clearMine(loc) {
-    var s = combinedSummary(loc), keys = [];
-    s.items.forEach(function (it, k) {
-      var q = mineSince(loc, k);
-      if (q !== 0) keys.push({ it: it, q: q, cut: !!(editInfo(loc, k) || {}).cp });
-    });
-    var ok = keys, cuts = keys.filter(function (k) { return k.cut; }).length;
-    if (!ok.length) { SOUND.warn(); result(false, 'ไม่มียอดของฉันใน ' + loc, 'ยอดที่ผู้ดูแลแก้ยอดรวมไปแล้วไม่นับเป็นยอดของฉัน'); return; }
-    var tot = Math.round(ok.reduce(function (a, k) { return a + k.q; }, 0) * 1000) / 1000;
-    confirmBox('ล้างยอดของฉันใน ' + loc + '?', 'ล้าง <span class="bignum">' + fmt(tot) + '</span> ชิ้น ' + ok.length + ' SKU <b>เฉพาะที่เครื่องนี้ยิง</b><br>ยอดของเครื่องอื่นไม่ถูกแตะ' +
-      (cuts ? '<br><span class="muted">' + cuts + ' SKU นับเฉพาะส่วนหลังผู้ดูแลแก้ยอดรวม</span>' : '') +
-      '<br><span class="muted">ระบบไม่ลบข้อมูลเดิม แต่บันทึกรายการหักยอดกำกับไว้</span>', 'ล้างยอดของฉัน').then(function (yes) {
-      if (!yes) return;
-      var p = Promise.resolve();
-      ok.forEach(function (k) {
-        p = p.then(function () { return addEntry({ barcode: k.it.barcode, material: k.it.material, qty: -k.q, type: 'SELF_SET', basis: k.q, reason: (isHelper(loc) ? 'ผู้ช่วย' : 'ผู้ดูแล') + 'ล้างยอดของตัวเอง (เดิม ' + fmt(k.q) + ')' }); });
-      });
-      p.then(function () { return addEvent('EDIT', loc, { mine: true, clearMine: true }); }).then(function () {
-        return confirmSent(loc, 'กำลังล้างยอดของฉัน…', 'แจ้งเซิร์ฟเวอร์');
-      }).then(function (res) {
-        SOUND.ok(); setCard('idle', 'ล้างยอดของฉันใน ' + loc + ' แล้ว — นับส่วนของฉันใหม่ได้', sentNote(res)); show('count');
-        result(true, 'ล้างยอดของฉันใน ' + loc + ' แล้ว', 'นับส่วนของฉันใหม่ได้\n' + sentNote(res));
-      });
-    });
-  }
 
   // ---------- ป้อนเอง ----------
   function renderManual() {
@@ -2093,7 +1917,7 @@
         if (!boot) add('รอบที่เลือกเปิดอยู่ และ token ถูกต้อง', 'FAIL', 'ยังไม่เคยเชื่อมต่อเซิร์ฟเวอร์');
         else if (b.err && !offline) add('รอบที่เลือกเปิดอยู่ และ token ถูกต้อง', 'FAIL', b.err.message);
         else if (!boot.project.id || SYNC_OK.indexOf(boot.project.status) < 0) add('รอบที่เลือกเปิดอยู่ และ token ถูกต้อง', 'FAIL', 'รอบ ' + (boot.project.id || '-') + ' สถานะ ' + boot.project.status);
-        else if (boot.project.status === 'COUNT_CLOSED') add('รอบที่เลือกเปิดอยู่ และ token ถูกต้อง', 'WARN', boot.project.id + ' ปิดการนับแล้ว — ยิงไม่ได้ ส่งงาน / ปิด Location ที่ค้าง และค้นหา SKU ได้');
+        else if (boot.project.status === 'COUNT_CLOSED') add('รอบที่เลือกเปิดอยู่ และ token ถูกต้อง', 'WARN', boot.project.id + ' ปิดการนับแล้ว — ยิงไม่ได้ ปิด Location ที่ค้าง และค้นหา SKU ได้');
         else add('รอบที่เลือกเปิดอยู่ และ token ถูกต้อง', offline ? 'WARN' : 'OK', boot.project.id + ' · นับวันที่ ' + boot.project.countDate + (offline ? ' (ข้อมูลล่าสุดในเครื่อง)' : ''));
         // 5 Master
         var masterP = Promise.resolve();

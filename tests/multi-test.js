@@ -1,5 +1,7 @@
 /**
- * ทดสอบหลายเครื่องนับ Location เดียวกัน (v2.2.0): ผู้ดูแล / ผู้ช่วย / ส่งงาน / พัก / ปิด / Control ต่าง ๆ
+ * ทดสอบหลายเครื่องใน Location เดียวกัน: ผู้ดูแล / พัก / ปิด / โอนการดูแล / Control ต่าง ๆ
+ * v2.7.0: ไม่มีผู้ช่วยแล้ว — ข้อมูลหลายเครื่องใน Location เกิดจาก "เปิดซ้อน" (ออฟไลน์ / JOIN จากแอปรุ่นเก่า → ติดธง) และ "โอนการดูแล"
+ *         เทสต์กลไกข้อมูลหลายเครื่องยังอยู่ (ใช้จริงกับ 2 กรณีนี้) · ใช้ unflag() จำลองหัวหน้าทีมตัดสินธงนับซ้อนแล้ว เพื่อดูผลส่วนอื่นแยก
  * SAMPLE_SAP=... SAMPLE_POS=... node tests/multi-test.js
  */
 const assert = require('assert');
@@ -8,7 +10,7 @@ const { createEnv, loadSamples } = require('./gas-env');
 let pass = 0, fail = 0;
 function test(name, fn) {
   try { fn(); pass++; console.log('  ✓ ' + name); }
-  catch (e) { fail++; console.log('  ✗ ' + name + '\n    ' + (e.stack || e.message).split('\n').slice(0, 4).join('\n    ')); }
+  catch (e) { fail++; console.log('  ✗ ' + name + '\n    ' + (e.stack || e.message).split("\n").slice(0, 7).join('\n    ')); }
 }
 
 const env = createEnv();
@@ -51,6 +53,8 @@ function device(id, staff, ver) {
   return d;
 }
 const loc = name => run('apiDevicesState()').locations.find(l => l.Location === name) || {};
+/** จำลองหัวหน้าทีมตัดสินธงนับซ้อนแล้ว (ล้าง Flag_Check ในชีตตรง ๆ) เพื่อทดสอบส่วนอื่นต่อ */
+const unflag = name => { const lt = env.sheets.Locations.data, c = lt[0].indexOf('Flag_Check'); lt.forEach((row, i) => { if (i && row[0] === name) row[c] = ''; }); };
 const mem = (l, dev) => run('apiDevicesState()').members.find(m => m.location === l && m.device === dev) || {};
 
 const C = device('TC21-01', 'EMP-C'), K = device('TC21-02', 'EMP-K'), KH = device('TC21-03', 'EMP-KH');
@@ -63,7 +67,7 @@ test('ค เปิด D80 → ผู้ดูแล (ไม่มีคำถ�
   assert.strictEqual(loc('D80').Owner, 'TC21-01 EMP-C');
   assert.strictEqual(loc('D80').Status, 'กำลังนับ');
 });
-test('ก เช็ก D80 → เห็นผู้ดูแล นาย ค; เข้าร่วม → ผู้ช่วย', () => {
+test('ก เช็ก D80 → เห็นผู้ดูแล นาย ค · v2.7.0: JOIN (แอปรุ่นเก่า) = เปิดซ้อน → รับข้อมูลไว้ (บทบาทภายใน HELPER) + ติดธง', () => {
   const i = K.info('D80');
   assert.strictEqual(i.owner.device, 'TC21-01');
   assert.strictEqual(i.owner.name, 'นาย ค');
@@ -71,6 +75,8 @@ test('ก เช็ก D80 → เห็นผู้ดูแล นาย ค; 
   const r = K.sync([], [K.ev('JOIN', 'D80')]);
   assert.strictEqual(r.events[0].role, 'HELPER');
   assert.strictEqual(r.events[0].owner, 'TC21-01');
+  assert.ok(/นับซ้อน: TC21-02/.test(loc('D80').Flag), loc('D80').Flag);
+  unflag('D80');
 });
 test('v2.6.2: ข เปิด D80 ตอนออฟไลน์ (ส่ง OPEN) ขณะมีผู้ดูแล → รับข้อมูลไว้ (ผู้ช่วย) แต่ติดธง "นับซ้อน" ให้หัวหน้าทีมตัดสิน', () => {
   const r = KH.sync([KH.scan('D80', BC2, MAT2, 2)], [KH.ev('OPEN', 'D80')]);
@@ -80,10 +86,8 @@ test('v2.6.2: ข เปิด D80 ตอนออฟไลน์ (ส่ง OPE
   assert.ok(env.sheets.Admin_Log.data.some(x => x.indexOf('LOC_DOUBLE_OPEN') >= 0));
   // ส่ง OPEN ซ้ำ → ไม่ติดธงซ้ำ
   KH.sync([], [KH.ev('OPEN', 'D80')]);
-  assert.strictEqual((loc('D80').Flag.match(/นับซ้อน/g) || []).length, 1);
-  // เทสต์ถัดไปเป็นกรณีนับร่วมแบบเดิม (แอปรุ่นเก่า) → ล้างธงในชีตเพื่อไม่ให้ปนผล
-  const lt = env.sheets.Locations.data, c = lt[0].indexOf('Flag_Check');
-  lt.forEach((row, i) => { if (i && row[0] === 'D80') row[c] = ''; });
+  assert.strictEqual((loc('D80').Flag.match(/นับซ้อน: TC21-03/g) || []).length, 1);
+  unflag('D80');
 });
 test('ก ยิง 3 ชิ้น · ผู้ดูแลเห็นยอดเครื่องอื่นแยกจากของตัวเอง', () => {
   K.sync([K.scan('D80', BC1, MAT1, 1), K.scan('D80', BC1, MAT1, 1), K.scan('D80', BC2, MAT2, 1)]);
@@ -94,12 +98,13 @@ test('ก ยิง 3 ชิ้น · ผู้ดูแลเห็นยอด
   assert.strictEqual(o[MAT1], 2); assert.strictEqual(o[MAT2], 3);
   assert.strictEqual(i.members.length, 3);
   assert.strictEqual(i.members.filter(m => m.role === 'HELPER' && m.state === 'COUNTING').length, 2);
-  assert.strictEqual(loc('D80').Status_Detail, '3 เครื่อง · ผู้ช่วยส่งงานแล้ว 0/2');
+  assert.strictEqual(loc('D80').Status_Detail, '3 เครื่อง · เครื่องอื่นส่งครบ 0/2');
 });
-test('สองเครื่องเปิด Location ใหม่พร้อมกัน → เครื่องแรกเป็นผู้ดูแล อีกเครื่องเป็นผู้ช่วย', () => {
+test('สองเครื่องเปิด Location ใหม่พร้อมกัน → เครื่องแรกเป็นผู้ดูแล อีกเครื่องรับข้อมูลไว้ + ติดธงนับซ้อน', () => {
   const a = K.sync([], [K.ev('OPEN', 'A30')]), b = KH.sync([], [KH.ev('OPEN', 'A30')]);
   assert.strictEqual(a.events[0].role, 'OWNER');
   assert.strictEqual(b.events[0].role, 'HELPER');
+  assert.ok(/นับซ้อน: TC21-03/.test(loc('A30').Flag));
 });
 
 console.log('\nส่งงาน / กลับมาช่วย');
@@ -122,7 +127,8 @@ test('ก กลับมาช่วย D80 (เข้าร่วมอีก�
   const r = K.sync([K.scan('D80', BC1, MAT1, 2)], [K.ev('JOIN', 'D80')]);
   assert.strictEqual(r.events[0].state, 'COUNTING');
   assert.strictEqual(mem('D80', 'TC21-02').state, 'COUNTING');
-  assert.ok(/กลับมาช่วยอีกครั้ง/.test(env.sheets.Loc_Checks.data.slice(-1)[0][12]));
+  assert.ok(/นับซ้อน/.test(env.sheets.Loc_Checks.data.slice(-1)[0][12]));
+  unflag('D80');
   assert.strictEqual(C.info('D80').members.find(m => m.device === 'TC21-02').qty, 5);
 });
 test('ส่งงานรอบสอง สรุปยอดสะสม 5 (ไม่ใช่ 2) → ✓', () => {
@@ -169,10 +175,11 @@ test('แอปรุ่นเก่าแก้ยอด (ไม่มี basis
 console.log('\nปิด / หลังปิด');
 test('ผู้ดูแลปิดขณะผู้ช่วยยังไม่ส่งงาน (เช่น ปิดตอนออฟไลน์) → ปิดแล้ว + ต้องตรวจซ้ำ', () => {
   KH.sync([KH.scan('D80', BC2, MAT2, 1)], [KH.ev('JOIN', 'D80')]);
+  unflag('D80');
   const r = C.sync([], [C.ev('CLOSE', 'D80', { total: 14 })]);
   assert.strictEqual(r.events[0].state, 'CLOSED');
   assert.strictEqual(loc('D80').Status, 'ปิดแล้ว');
-  assert.ok(/ปิดขณะผู้ช่วยยังไม่ส่งงาน \(TC21-03\)/.test(loc('D80').Flag), loc('D80').Flag);
+  assert.ok(/ปิดขณะข้อมูลจากเครื่องอื่นยังไม่ครบ \(TC21-03\)/.test(loc('D80').Flag), loc('D80').Flag);
 });
 test('ผู้ดูแลเปิดแก้ไข → ทุกคนส่งงานครบ → ปิดด้วยยอดตรง → ธงเดิมยังอยู่ (v2.2.8: หายได้เฉพาะล้างนับใหม่/หัวหน้าทีมปิดธง)', () => {
   C.sync([], [C.ev('OPEN', 'D80')]);
@@ -182,7 +189,7 @@ test('ผู้ดูแลเปิดแก้ไข → ทุกคนส่
   const total = C.info('D80').total;
   C.sync([], [C.ev('CLOSE', 'D80', { total })]);
   assert.strictEqual(loc('D80').Flag, before, 'ปิดถูกต้องไม่เพิ่มธงใหม่ และไม่ลบธงเดิม');
-  assert.strictEqual(loc('D80').Status_Detail, '3 เครื่อง · ผู้ช่วยส่งงานแล้ว 2/2');
+  assert.strictEqual(loc('D80').Status_Detail, '3 เครื่อง · เครื่องอื่นส่งครบ 2/2');
 });
 test('ปิดด้วยยอดรวมที่ไม่ตรงเซิร์ฟเวอร์ → ต้องตรวจซ้ำ', () => {
   C.sync([], [C.ev('OPEN', 'D80')]);
@@ -209,14 +216,10 @@ test('ผู้ดูแลยิงป้ายที่อื่น → พั
   C.sync([C.scan('A50', BC1, MAT1, 1)], [C.ev('OPEN', 'A50')]);
   assert.strictEqual(loc('A50').Status, 'กำลังนับ');
 });
-test('หัวหน้าทีมส่งงานแทนผู้ช่วย (บันทึกผู้กด) / ส่งงานแทนผู้ดูแลไม่ได้', () => {
-  KH.sync([KH.scan('A30', BC1, MAT1, 2)]);
-  run('apiLocSubmitFor("A30", "TC21-03", "แบตหมด")');
-  assert.strictEqual(mem('A30', 'TC21-03').state, 'SUBMITTED');
-  assert.strictEqual(mem('A30', 'TC21-03').subBy, 'ADMIN');
-  assert.ok(/แทนโดยหัวหน้าทีม/.test(loc('A30').Members));
-  assert.ok(env.sheets.Admin_Log.data.some(r => r[2] === 'LOC_SUBMIT_FOR'));
-  assert.throws(() => run('apiLocSubmitFor("A30", "TC21-02", "")'), /โอนการดูแล/);
+test('v2.7.0: ส่งงานแทนถูกลบ (ไม่มีผู้ช่วยแล้ว) · ALLOW_JOIN ไม่มีผล', () => {
+  assert.strictEqual(run('typeof apiLocSubmitFor'), 'undefined');
+  assert.strictEqual(run('typeof adminSubmitFor_'), 'undefined');
+  assert.strictEqual(K.info('A30').allowJoin, undefined);
 });
 test('โอนการดูแล A30 จาก ก ให้ ข → ข เป็นผู้ดูแล ก เป็นผู้ช่วยที่ส่งงานแล้ว', () => {
   run('apiLocTransfer("A30", "TC21-03", "เครื่องเสีย")');
@@ -488,6 +491,7 @@ console.log('\nผู้ช่วยแก้ยอดของตัวเอ�
   test('ผู้ช่วยแก้ยอดของตัวเองจาก basis ที่ตรง → ไม่ติดธง · ยอดรวมเปลี่ยนเฉพาะส่วนของผู้ช่วย · Edits +1 แต่ผลตรวจ Location ไม่เปลี่ยน', () => {
     O.sync([O.scan('W1', BC1, MAT1, 1), O.scan('W1', BC1, MAT1, 1), O.scan('W1', BC1, MAT1, 1)], [O.ev('OPEN', 'W1')]);
     H.sync([1, 2, 3, 4, 5, 6, 7].map(() => H.scan('W1', BC1, MAT1, 1)), [H.ev('JOIN', 'W1')]);
+    unflag('W1');
     const before = loc('W1');
     const r = H.sync([H.scan('W1', BC1, MAT1, -2, { type: 'SELF_SET', basis: 7, reason: 'ผู้ช่วยแก้ยอดของตัวเอง 7 → 5' })], [H.ev('EDIT', 'W1', { mine: true })]);
     assert.ok(!r.flags, JSON.stringify(r.flags));
@@ -606,6 +610,74 @@ test('หน้า Admin: ยอดเซิร์ฟเวอร์ต่อ Lo
   assert.ok(c && c.devLines !== undefined && c.srvLines !== undefined && c.match, JSON.stringify(c));
 });
 
+console.log('\nv2.7.0: 1 Location = 1 เครื่อง · ปล่อยคืนเมื่อยิงป้ายผิด · โอนการดูแลแล้วเครื่องเดิมส่งค้างมาทีหลัง');
+{
+  const O = device('TC21-01', 'EMP-K', '2.7.0'), H = device('TC21-02', 'EMP-KH', '2.7.0'), N = device('TC21-04', 'EMP-C', '2.7.0');
+  [O, H, N].forEach(d => { d.seq = 6500 + d.seq; d.at = 9200; });
+  const members = l => run('apiDevicesState()').members.filter(m => m.location === l);
+  const hasLoc = l => run('apiDevicesState()').locations.some(x => x.Location === l);
+  test('ยิงป้ายผิดแล้วออก (PAUSE ทั้งที่ยังไม่ได้ยิงสินค้า) → ปล่อยคืน: ไม่มีผู้ดูแล ไม่มีแถว Location · เครื่องอื่นเปิดได้เป็นผู้ดูแล', () => {
+    O.sync([], [O.ev('OPEN', 'X71')]);
+    assert.strictEqual(members('X71').length, 1);
+    const r = O.sync([], [O.ev('PAUSE', 'X71')]);
+    assert.strictEqual(r.events[0].state, 'RELEASED');
+    assert.strictEqual(members('X71').length, 0);
+    assert.ok(!hasLoc('X71'), 'ลบแถว Location แล้ว (ไม่ค้างเป็น "พัก" ใน K1)');
+    assert.ok(env.sheets.Loc_Checks.data.some(x => x[3] === 'X71' && x[4] === 'RELEASE'));
+    assert.ok(env.sheets.Admin_Log.data.some(x => x.indexOf('LOC_RELEASE') >= 0));
+    assert.strictEqual(H.info('X71').owner, null);
+    const b = H.sync([H.scan('X71', BC1, MAT1, 1)], [H.ev('OPEN', 'X71')]);
+    assert.strictEqual(b.events[0].role, 'OWNER');
+    assert.strictEqual(loc('X71').Flag, '', 'ไม่ใช่นับซ้อน');
+  });
+  test('มีรายการแล้ว (แม้ยกเลิกจนเหลือ 0 ชิ้น) → ไม่ปล่อย ยังเป็นพัก', () => {
+    O.sync([O.scan('X72', BC1, MAT1, 1), O.scan('X72', BC1, MAT1, -1, { type: 'VOID' })], [O.ev('OPEN', 'X72')]);
+    const r = O.sync([], [O.ev('PAUSE', 'X72')]);
+    assert.strictEqual(r.events[0].state, 'PAUSED');
+    assert.strictEqual(loc('X72').Status, 'พัก');
+  });
+  test('เครื่องยังมีรายการค้างส่ง (เครื่องบอก lines > 0) → ไม่ปล่อย', () => {
+    O.sync([], [O.ev('OPEN', 'X73')]);
+    O.scan('X73', BC1, MAT1, 1);   // ยิงแล้วแต่ยังไม่ส่ง
+    const r = O.sync([], [O.ev('PAUSE', 'X73')]);
+    assert.notStrictEqual(r.events[0].state, 'RELEASED');
+    assert.strictEqual(members('X73').length, 1);
+  });
+  test('เปิดซ้อนตอนออฟไลน์ → รับข้อมูลไว้ + ธง · เครื่องซ้อนออก (SUBMIT) → ผู้ดูแลปิดได้ ธงยังอยู่จนหัวหน้าทีมตัดสิน', () => {
+    O.sync([O.scan('X74', BC1, MAT1, 2)], [O.ev('OPEN', 'X74')]);
+    const r = H.sync([H.scan('X74', BC1, MAT1, 1)], [H.ev('OPEN', 'X74')]);
+    assert.strictEqual(r.events[0].role, 'HELPER');
+    assert.ok(/นับซ้อน: TC21-02/.test(loc('X74').Flag));
+    H.sync([], [H.ev('SUBMIT', 'X74', { auto: true })]);
+    assert.strictEqual(mem('X74', 'TC21-02').state, 'SUBMITTED');
+    const c = O.sync([], [O.ev('CLOSE', 'X74', { total: 3 })]);
+    assert.strictEqual(c.events[0].state, 'CLOSED');
+    assert.ok(/นับซ้อน/.test(loc('X74').Flag), 'ปิดไม่ลบธง');
+    assert.strictEqual(run('apiDevicesState()').locTotals.X74.qty, 3, 'ข้อมูลทั้งสองเครื่องไม่หาย');
+  });
+  test('โอนการดูแล → เครื่องเดิมส่งรายการค้างมาทีหลัง: รับไว้ · เครื่องเดิมกลับเป็น "กำลังนับ" · ผู้ดูแลใหม่ปิด → ธง "ปิดขณะข้อมูลจากเครื่องอื่นยังไม่ครบ"', () => {
+    O.sync([O.scan('X75', BC1, MAT1, 1)], [O.ev('OPEN', 'X75')]);
+    const late = O.scan('X75', BC1, MAT1, 1);   // ค้างในเครื่องเดิม (เครื่องเสีย)
+    N.call('hello', {});
+    run('apiLocTransfer("X75", "TC21-04", "เครื่องเสีย")');
+    assert.strictEqual(mem('X75', 'TC21-04').role, 'OWNER');
+    assert.strictEqual(mem('X75', 'TC21-01').state, 'SUBMITTED');
+    O.sync([late]);   // เครื่องเดิมกลับมาส่ง
+    assert.strictEqual(mem('X75', 'TC21-01').state, 'COUNTING', 'มีรายการหลังโอน');
+    assert.strictEqual(run('apiDevicesState()').locTotals.X75.qty, 2, 'รายการที่มาทีหลังเข้ายอด');
+    N.at = Date.now() + 60000;   // แอปจริงใช้เวลาเครื่อง (ms) — ใหม่กว่าเวลาโอน
+    N.sync([N.scan('X75', BC1, MAT1, 1)], [N.ev('OPEN', 'X75')]);
+    const cr = N.sync([], [N.ev('CLOSE', 'X75', { total: 3 })]);
+    assert.ok(/ปิดขณะข้อมูลจากเครื่องอื่นยังไม่ครบ \(TC21-01\)/.test(loc('X75').Flag), JSON.stringify(cr.events) + JSON.stringify(members('X75')));
+  });
+  test('เครื่องที่ถูกโอนออกเปิดซ้ำตอนออฟไลน์ → ติดธงนับซ้อน (ระบุว่าถูกโอนออก)', () => {
+    run('apiLocResolveFlag("X75", "ตรวจแล้ว")');
+    O.at = Date.now() + 120000;   // แอปจริงใช้เวลาเครื่อง (ms)
+    O.sync([O.scan('X75', BC1, MAT1, 1)], [O.ev('OPEN', 'X75')]);
+    assert.ok(/นับซ้อน: TC21-01 .*ถูกโอนออก/.test(loc('X75').Flag), loc('X75').Flag);
+  });
+}
+
 console.log('\nยอดแยกเครื่องหลังล้าง Location (v2.3.6 — UAT D3 -5)');
 {
   const O = device('TC21-01', 'EMP-K', '2.3.6'), H = device('TC21-02', 'EMP-KH', '2.3.6');
@@ -649,16 +721,17 @@ console.log('\nบันทึก Admin_Log ต้องติดจริง ·
   const memState = (loc, dev) => { const h = LM.data[0], r = LM.data.find(x => x[h.indexOf('Location')] === loc && x[h.indexOf('Device_ID')] === dev); return r[h.indexOf('State')]; };
   O.sync([O.scan('D7', BC1, MAT1, 1)], [O.ev('OPEN', 'D7')]);
   H.sync([H.scan('D7', BC1, MAT1, 1)], [H.ev('JOIN', 'D7')]);
-  test('Admin_Log เขียนไม่ติด → ส่งงานแทนถูกยกเลิก (สถานะไม่เปลี่ยน) · สำรองใน Loc_Checks · หน้า Admin เตือน', () => {
+  test('Admin_Log เขียนไม่ติด → ปิดธงถูกยกเลิก (ธงยังอยู่) · สำรองใน Loc_Checks · หน้า Admin เตือน', () => {
+    assert.ok(/นับซ้อน: TC21-02/.test(loc('D7').Flag), 'JOIN = นับซ้อน ติดธง');
     const n = AL.data.length; AL.dropWrites = true;
-    assert.throws(() => run('apiLocSubmitFor("D7", "TC21-02", "แบตหมด")'), /บันทึก Admin_Log ไม่สำเร็จ.*ยกเลิก/);
+    assert.throws(() => run('apiLocResolveFlag("D7", "ตรวจแล้ว")'), /บันทึก Admin_Log ไม่สำเร็จ.*ยกเลิก/);
     AL.dropWrites = false;
     assert.strictEqual(AL.data.length, n);
-    assert.strictEqual(memState('D7', 'TC21-02'), 'COUNTING', 'ยังไม่ถูกส่งงานแทน');
-    assert.ok(!env.sheets.Loc_Checks.data.some(r => r[3] === 'D7' && r[4] === 'ADMIN_SUBMIT'));
-    assert.ok(env.sheets.Loc_Checks.data.some(r => r[4] === 'ADMIN_LOG_FAIL' && /LOC_SUBMIT_FOR · D7 TC21-02/.test(r[12])));
+    assert.ok(/นับซ้อน/.test(loc('D7').Flag), 'ธงยังอยู่');
+    assert.ok(!env.sheets.Loc_Checks.data.some(r => r[3] === 'D7' && r[4] === 'FLAG_RESOLVE'));
+    assert.ok(env.sheets.Loc_Checks.data.some(r => r[4] === 'ADMIN_LOG_FAIL' && /LOC_FLAG_RESOLVE · D7/.test(r[12])));
     const w = run('apiDevicesState()').logWarn;
-    assert.strictEqual(w.n, 1); assert.ok(/LOC_SUBMIT_FOR/.test(w.what));
+    assert.strictEqual(w.n, 1); assert.ok(/LOC_FLAG_RESOLVE/.test(w.what));
   });
   test('สร้างรหัสจับคู่ตอนบันทึกไม่ติด → ไม่สร้าง', () => {
     const DV = env.sheets.Devices, h = DV.data[0], r = DV.data.find(x => x[0] === 'TC21-05'), before = r[h.indexOf('Pair_Code')];
@@ -684,11 +757,11 @@ console.log('\nบันทึก Admin_Log ต้องติดจริง ·
     assert.strictEqual(run('apiDevicesState()').logWarn, null);
     assert.ok(AL.data.some(r => r[2] === 'ADMIN_LOG_WARN_ACK' && /3 ครั้ง/.test(r[4])));
   });
-  test('บันทึกได้ปกติ → ส่งงานแทนสำเร็จ และ Admin_Log มาก่อน Loc_Checks', () => {
-    run('apiLocSubmitFor("D7", "TC21-02", "แบตหมด")');
-    assert.strictEqual(memState('D7', 'TC21-02'), 'SUBMITTED');
-    assert.ok(AL.data.some(r => r[2] === 'LOC_SUBMIT_FOR' && r[3] === 'D7 TC21-02'));
-    assert.throws(() => run('apiLocSubmitFor("D7", "TC21-02", "  ")'), /เหตุผล/);
+  test('บันทึกได้ปกติ → ปิดธงสำเร็จ และ Admin_Log มาก่อน Loc_Checks', () => {
+    assert.throws(() => run('apiLocResolveFlag("D7", "  ")'), /เหตุผล/);
+    run('apiLocResolveFlag("D7", "ตรวจแล้ว ยอดถูก")');
+    assert.strictEqual(loc('D7').Flag, '');
+    assert.ok(AL.data.some(r => r[2] === 'LOC_FLAG_RESOLVE' && r[3] === 'D7'));
   });
   test('กระทบยอดทั้งรอบ: ดัชนีที่เพี้ยนจากการแก้ชีต (ยังไม่มีใครตรวจ) ถูกพบและแก้ · บันทึก RECONCILE', () => {
     const X = run('logIdx_(readConfig_().PROJECT_ID, { write: true })'); X.verify(null, 'ก่อนทดสอบ'); X.save();

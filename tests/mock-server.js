@@ -21,7 +21,7 @@ env.sheets.Staff.data.push(['EMP-NU', 'นุ่น', 'ผู้ตรวจส�
 run('apiSeedDevices(5, "TC21")');
 
 let offline = false;
-let appVersion = '2.6.2';
+let appVersion = '2.7.0';
 let slowMs = 0;
 let apiDelay = { ms: 0, action: '' };   // จำลองเซิร์ฟเวอร์ช้า (GAS จริงตอบ 1–5 วินาที) v2.2.6
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'application/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.webmanifest': 'application/manifest+json' };
@@ -48,7 +48,6 @@ http.createServer((req, res) => {
       if (url.pathname === '/debug/adminlog') return send(200, env.sheets.Admin_Log.data);
       if (url.pathname === '/debug/locations') return send(200, run('apiDevicesState()'));
       if (url.pathname === '/debug/transfer') return send(200, run(`apiLocTransfer(${JSON.stringify(url.searchParams.get('loc'))}, ${JSON.stringify(url.searchParams.get('to'))}, ${JSON.stringify(url.searchParams.get('why') || 'e2e')})`));
-      if (url.pathname === '/debug/submitfor') return send(200, run(`apiLocSubmitFor(${JSON.stringify(url.searchParams.get('loc'))}, ${JSON.stringify(url.searchParams.get('dev'))}, ${JSON.stringify(url.searchParams.get('why') || 'e2e')})`));
       if (url.pathname === '/debug/loccheck') return send(200, env.sheets.Loc_Checks.data);
       if (url.pathname === '/debug/devicelog') return send(200, env.sheets.Device_Log.data);   // v2.6.1
       if (url.pathname === '/debug/incidents') return send(200, run('apiDeviceIncidents()'));
@@ -59,7 +58,6 @@ http.createServer((req, res) => {
       if (url.pathname === '/debug/reupload-sap') { run('apiUpload("SAP", _sap, { fileName: "sap2.xls", fileDate: "2026-11-04", d1Confirmed: true })'); return send(200, { ok: true }); }
       if (url.pathname === '/debug/countclose') return send(200, run('apiCountClose(_s)', { _s: url.searchParams.get('staff') || 'EMP-NU' }).check);
       if (url.pathname === '/debug/countreopen') return send(200, run('apiCountReopen(_s, _w)', { _s: url.searchParams.get('staff') || 'EMP-NU', _w: url.searchParams.get('why') || 'e2e' }).check);
-      if (url.pathname === '/debug/allowjoin') { run('setConfig_({ ALLOW_JOIN: _v })', { _v: url.searchParams.get('v') }); return send(200, { ok: true }); }   // v2.6.2 สวิตช์นับร่วมแบบเดิม
       if (url.pathname === '/debug/roundstatus') { run('setConfig_({ ROUND_STATUS: _v })', { _v: url.searchParams.get('v') }); return send(200, { ok: true }); }   // v2.5.2 จำลองรอบปิดแล้ว (ปิดรอบจริงทดสอบใน closeround-test)
       // v2.5.5: จัดการพนักงานจากหน้า Admin · จำลองเปิดรอบใหม่ (เปลี่ยนรหัสรอบในเซิร์ฟเวอร์ ขณะเครื่องยังอยู่รอบเดิม)
       if (url.pathname === '/debug/staffadd') return send(200, run('apiStaffAdd("EMP-NU", _c, _n, "")', { _c: url.searchParams.get('code'), _n: url.searchParams.get('name') || 'ทดสอบ' }));

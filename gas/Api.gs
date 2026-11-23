@@ -868,8 +868,9 @@ function quarantineIds_() {
 // - สถานะต่อเครื่อง (Loc_Members): COUNTING กำลังนับ · PAUSED พัก (ผู้ดูแล) · SUBMITTED ส่งงานแล้ว · CLOSED ปิดแล้ว (ผู้ดูแล)
 // - Cover_Seq = เลข Seq สูงสุดที่การส่งงาน/พัก/ปิดครั้งล่าสุดครอบคลุม ใช้ตรวจ "มีรายการหลังปิด"
 
-var ROLE_TH = { OWNER: 'ผู้ดูแล', HELPER: 'ผู้ช่วย' };
-var STATE_TH = { COUNTING: 'กำลังนับ', PAUSED: 'พัก', SUBMITTED: 'ส่งงานแล้ว', CLOSED: 'ปิดแล้ว' };
+// v2.7.0: ไม่มีผู้ช่วยแล้ว — HELPER ภายใน = เครื่องที่มีข้อมูลใน Location แต่ไม่ใช่ผู้ดูแล (ถูกโอนออก / เปิดซ้อน)
+var ROLE_TH = { OWNER: 'ผู้ดูแล', HELPER: 'เครื่องเดิม/ซ้อน' };
+var STATE_TH = { COUNTING: 'กำลังนับ', PAUSED: 'พัก', SUBMITTED: 'ออกแล้ว', CLOSED: 'ปิดแล้ว' };
 var FLAG_AFTER_CLOSE = 'มีรายการหลังปิด — ตรวจซ้ำ';
 
 function itemKey_(material, barcode) { return material ? String(material) : 'BC:' + String(barcode || ''); }
@@ -1014,6 +1015,10 @@ function applyLocEvents_(deviceId, events, project, source, X) {
     // ดัชนีบอกว่าไม่ตรง → ตรวจกับชีตจริงก่อนตัดสิน (v2.3.1 — กรณี T3: ดัชนีนับเกิน ทั้งที่ชีตตรงกับเครื่อง)
     if (match === 'MISMATCH' && X.write && X.verify([loc], 'ก่อนตัดสินไม่ตรง ' + loc + ' ' + deviceId + ' ' + ev.type + ' เครื่อง ' + ev.lines + '/' + ev.qty + ' ดัชนี ' + srvLines + '/' + srvQty).length) judge();
     var res = applyRole_(mt, locs, project, loc, deviceId, ev, match, upTo);
+    // v2.7.0: ยิงป้ายผิด — ผู้ดูแลออกจาก Location ที่ยังไม่มีรายการเลย (ทั้งในเครื่องและบนเซิร์ฟเวอร์ ทุกเครื่อง) → ปล่อยคืนให้เครื่องอื่นเปิดได้
+    if (ev.type === 'PAUSE' && res.role === 'OWNER' && match === 'OK' && !(Number(ev.lines) || 0) && releaseLoc_(mt, locs, project, loc, deviceId, X)) {
+      res.state = 'RELEASED'; res.note = 'ปล่อยคืน — ยังไม่ได้ยิงสินค้า (ยิงป้ายผิด)'; res.logType = 'RELEASE';
+    }
     if (ev.type !== 'OPEN' && ev.type !== 'JOIN' || res.note) {
       checks.push([now_(), project, deviceId, loc, res.logType || ev.type, normStaff_(ev.staff), Number(ev.lines) || 0, Number(ev.qty) || 0,
         srvLines, srvQty, ev.type === 'OPEN' || ev.type === 'JOIN' ? '' : match, upTo, res.note || '']);
@@ -1062,17 +1067,19 @@ function applyRole_(mt, locs, project, loc, deviceId, ev, match, upTo) {
         set({ Role: 'OWNER', State: 'COUNTING', State_At: now_() });
         locSet({ Opened_At: L.Opened_At || String(ev.time || now_()) });
       } else {
-        // v2.6.2: ไม่มีการนับร่วมแล้ว — เครื่องถามเซิร์ฟเวอร์ก่อนเปิดและถูกปฏิเสธ (1 Location = 1 เครื่อง)
-        // มาถึงตรงนี้ได้เฉพาะตอนเครื่องเปิดขณะออฟไลน์ / เปิดพร้อมกันพอดี → รับข้อมูลไว้แบบเดิม (ผู้ช่วย) แต่ติดธง "ต้องตรวจซ้ำ" (K2) ให้หัวหน้าทีมตัดสิน
-        if (ev.type === 'OPEN' && !me && !stale && !allowJoin_()) {   // JOIN = แอปรุ่นเก่า (< 2.6.2) ที่ตั้งใจเข้าร่วม → คงแบบเดิม
-          var fc = String(L.Flag_Check || ''), why = 'นับซ้อน: ' + deviceId + (staff ? ' ' + staff : '') + ' เปิด ' + loc + ' ขณะ ' + owner.m.Device_ID + ' เป็นผู้ดูแล (เปิดตอนออฟไลน์ / พร้อมกัน)';
-          if (fc.indexOf(why) < 0) locSet({ Flag_Check: (fc ? fc + ' · ' : '') + 'ต้องตรวจซ้ำ: ' + why });
-          logSys_('LOC_DOUBLE_OPEN', loc, why);
+        // v2.7.0: 1 Location = 1 เครื่อง — แอปถามเซิร์ฟเวอร์ก่อนเปิดและถูกปฏิเสธ
+        // มาถึงตรงนี้ได้เฉพาะตอนเปิดขณะออฟไลน์ / เปิดพร้อมกันพอดี / เครื่องที่ถูกโอนออกเปิดซ้ำตอนออฟไลน์ (JOIN = แอปรุ่นเก่า ถือเหมือนกัน)
+        // → รับข้อมูลไว้ (บทบาทภายใน HELPER = เครื่องที่ไม่ใช่ผู้ดูแล) แต่ติดธง "ต้องตรวจซ้ำ" (K2) ให้หัวหน้าทีมตัดสิน · แอปแจ้งให้หยุดยิงและออกจาก Location
+        if (!stale) {
+          var fc = String(L.Flag_Check || ''), why = 'นับซ้อน: ' + deviceId + (staff ? ' ' + staff : '') + ' เปิด ' + loc + ' ขณะ ' + owner.m.Device_ID + ' เป็นผู้ดูแล' +
+            (me ? ' (เครื่องนี้ถูกโอนออก/ออกไปแล้ว)' : ' (เปิดตอนออฟไลน์ / พร้อมกัน)');
+          if (fc.indexOf('นับซ้อน: ' + deviceId + ' ') < 0) {   // ธงเดิมของเครื่องนี้ยังอยู่ (ส่ง OPEN ซ้ำ) → ไม่ติดซ้ำ
+            locSet({ Flag_Check: (fc ? fc + ' · ' : '') + 'ต้องตรวจซ้ำ: ' + why });
+            logSys_('LOC_DOUBLE_OPEN', loc, why);
+          }
         }
         res.role = 'HELPER'; res.state = 'COUNTING';
-        if (ev.type === 'OPEN') res.note = 'มีผู้ดูแลแล้ว (' + owner.m.Device_ID + ') — นับซ้อน ติดธงตรวจซ้ำ';
-        if (closed) res.note = (res.note ? res.note + ' · ' : '') + 'เข้าร่วมหลังผู้ดูแลปิดแล้ว';
-        if (me && me.State === 'SUBMITTED') res.note = (res.note ? res.note + ' · ' : '') + 'กลับมาช่วยอีกครั้ง';
+        res.note = 'มีผู้ดูแลแล้ว (' + owner.m.Device_ID + ') — นับซ้อน ติดธงตรวจซ้ำ' + (closed ? ' · ผู้ดูแลปิดแล้ว' : '');
         set({ Role: 'HELPER', State: 'COUNTING', State_At: now_() });
       }
       break;
@@ -1081,18 +1088,18 @@ function applyRole_(mt, locs, project, loc, deviceId, ev, match, upTo) {
         // ผู้ดูแลกดส่งงานไม่ได้ในแอป ถ้าเกิดขึ้นให้ถือเป็นการพัก
         set({ Role: 'OWNER', State: 'PAUSED', State_At: now_(), Cover_Seq: upTo, Sub_Lines: Number(ev.lines) || 0, Sub_Qty: Number(ev.qty) || 0, Match: match });
         res.role = 'OWNER'; res.state = 'PAUSED'; res.logType = 'PAUSE';
-      } else { submit(ev.auto ? 'AUTO' : 'SELF'); if (ev.auto) res.note = 'ส่งงานอัตโนมัติ (ยิงป้าย Location อื่น)'; }
+      } else { submit(ev.auto ? 'AUTO' : 'SELF'); if (ev.auto) res.note = 'ออกจาก Location (นับซ้อน / ถูกโอนออก)'; }
       break;
     case 'PAUSE':
       if (isOwner || !owner) {
         set({ Role: 'OWNER', State: 'PAUSED', State_At: now_(), Cover_Seq: upTo, Sub_Lines: Number(ev.lines) || 0, Sub_Qty: Number(ev.qty) || 0, Match: match });
         res.role = 'OWNER'; res.state = 'PAUSED';
-      } else { submit('AUTO'); res.logType = 'SUBMIT'; res.note = 'ส่งงานอัตโนมัติ (ยิงป้าย Location อื่น)'; }
+      } else { submit('AUTO'); res.logType = 'SUBMIT'; res.note = 'ออกจาก Location (นับซ้อน / ถูกโอนออก)'; }
       break;
     case 'CLOSE':
       if (owner && !isOwner) {
-        // แอปรุ่นเก่า (ก่อน 2.2.0) ปิดอัตโนมัติเมื่อยิงป้ายใหม่ → สำหรับผู้ช่วยถือเป็นการส่งงาน
-        submit('CLOSE'); res.logType = 'SUBMIT'; res.note = 'ผู้ช่วยกดปิด/ยิงป้ายอื่น ถือเป็นส่งงาน';
+        // เครื่องที่ไม่ใช่ผู้ดูแล (ถูกโอนออก / เปิดซ้อน) กดปิด → ถือเป็นการออกจาก Location (ส่งยอดครบ)
+        submit('CLOSE'); res.logType = 'SUBMIT'; res.note = 'เครื่องที่ไม่ใช่ผู้ดูแลกดปิด ถือเป็นออกจาก Location';
         break;
       }
       set({ Role: 'OWNER', State: 'CLOSED', State_At: now_(), Cover_Seq: upTo, Sub_Lines: Number(ev.lines) || 0, Sub_Qty: Number(ev.qty) || 0, Match: match });
@@ -1110,7 +1117,7 @@ function applyRole_(mt, locs, project, loc, deviceId, ev, match, upTo) {
         Close_Total: ev.total === undefined || ev.total === '' ? '' : Number(ev.total) };
       if (match === 'OK') {
         var reasons = [];
-        if (waiting.length) reasons.push('ปิดขณะผู้ช่วยยังไม่ส่งงาน (' + waiting.join(', ') + ')');
+        if (waiting.length) reasons.push('ปิดขณะข้อมูลจากเครื่องอื่นยังไม่ครบ (' + waiting.join(', ') + ')');
         if (ev.total !== undefined && ev.total !== '') {
           var srvTotal = r3_((locData_(project, [loc])[loc] || { qty: 0 }).qty);
           if (srvTotal !== r3_(ev.total)) reasons.push('ยอดตอนปิด ' + ev.total + ' ≠ เซิร์ฟเวอร์ ' + srvTotal);
@@ -1145,6 +1152,23 @@ function applyRole_(mt, locs, project, loc, deviceId, ev, match, upTo) {
   return res;
 }
 
+/**
+ * v2.7.0: ปล่อย Location คืน (ลบแถว Loc_Members และ Locations) เมื่อไม่มีรายการของเครื่องใดเลย และมีแค่เครื่องผู้ดูแล
+ * ใช้ตอนผู้ดูแลยิงป้ายผิดแล้วออกไป — ไม่งั้น Location ถูกล็อกจนต้องให้หัวหน้าทีมโอนการดูแล
+ */
+function releaseLoc_(mt, locs, project, loc, deviceId, X) {
+  var D = (X.loc([loc])[loc]) || { devices: {}, lines: 0 };
+  if (Object.keys(D.devices || {}).length) return false;
+  var list = membersOf_(mt, project, loc);
+  if (list.length !== 1 || list[0].m.Device_ID !== deviceId) return false;
+  var li = locIdx_(locs, loc);
+  if (li >= 0 && String(rowObj_(locs, locs.rows[li]).Flag_Check || '')) return false;   // มีธงค้าง → ไม่ปล่อย (หัวหน้าทีมต้องเห็น)
+  mt.sh.deleteRow(list[0].i + 2); mt.rows.splice(list[0].i, 1);
+  if (li >= 0) { locs.sh.deleteRow(li + 2); locs.rows.splice(li, 1); }
+  logSys_('LOC_RELEASE', loc, deviceId + ' ออกจาก ' + loc + ' โดยยังไม่ได้ยิงสินค้า → ปล่อยคืน');
+  return true;
+}
+
 function locIdx_(t, loc) {
   for (var k = 0; k < t.rows.length; k++) if (t.rows[k][t.idx.Location] === loc) return k;
   return -1;
@@ -1163,6 +1187,7 @@ function refreshLocations_(project, locNames, locs, mt) {
   locNames.forEach(function (loc) {
     var D = data[loc] || { devices: {}, qty: 0 };
     var list = membersOf_(mt, project, loc);
+    if (!list.length && !Object.keys(D.devices || {}).length) return;   // ปล่อยคืนแล้ว (v2.7.0)
     list.forEach(function (x) {
       var dev = D.devices[x.m.Device_ID];
       if (!dev) return;
@@ -1201,12 +1226,12 @@ function refreshLocations_(project, locNames, locs, mt) {
     putRow_(locs, li, {
       Location: loc, Zone: (loc.match(/^[A-Z]+/) || [''])[0],
       Status: closed ? 'ปิดแล้ว' : counting ? 'กำลังนับ' : 'พัก',
-      Status_Detail: list.length > 1 ? list.length + ' เครื่อง · ผู้ช่วยส่งงานแล้ว ' + done + '/' + helpers.length : '',
+      Status_Detail: list.length > 1 ? list.length + ' เครื่อง · เครื่องอื่นส่งครบ ' + done + '/' + helpers.length : '',
       Owner: owner ? owner.m.Device_ID + (owner.m.Staff ? ' ' + owner.m.Staff : '') : '',
       Open_By: owner && !closed ? owner.m.Device_ID + (owner.m.Staff ? ' ' + owner.m.Staff : '') : '',
       Members: list.map(function (x) {
         return x.m.Device_ID + ' ' + (ROLE_TH[x.m.Role] || '') + ' ' + (STATE_TH[x.m.State] || x.m.State) +
-          (x.m.State === 'SUBMITTED' && x.m.Match !== 'OK' ? ' (รอข้อมูล)' : '') + (x.m.Sub_By === 'ADMIN' ? ' (แทนโดยหัวหน้าทีม)' : '');
+          (x.m.State === 'SUBMITTED' && x.m.Match !== 'OK' ? ' (รอข้อมูล)' : '');
       }).join(' · '),
       Devices: list.map(function (x) { return x.m.Device_ID; }).join(','),
       Counters: Object.keys(counters).join(','),
@@ -1375,7 +1400,7 @@ function apiLocInfo_(a, req) {
     if (cp || it.le) edits[k] = { cp: cp, by: it.le ? it.le[0] : '', at: it.le ? it.le[1] : '' };
   });
   return {
-    ok: true, location: loc, status: L.Status || '', flag: L.Flag || '', owner: owner, me: me, members: list, allowJoin: allowJoin_(),
+    ok: true, location: loc, status: L.Status || '', flag: L.Flag || '', owner: owner, me: me, members: list,
     others: { items: others, qty: r3_(othersQty) }, total: D.qty,
     clr: (D.clr && D.clr[a.deviceId]) || 0, edits: edits
   };
@@ -1425,7 +1450,6 @@ function apiLocStatus_(a, req) {
 
 // ---------- หัวหน้าทีม (หน้า Admin) ----------
 
-/** ส่งงานแทนผู้ช่วยที่ติดต่อไม่ได้: ใช้ยอดที่เซิร์ฟเวอร์ได้รับแล้ว รายการที่มาทีหลังจะทำให้กลับเป็น "กำลังนับ" หรือติดธงหลังปิด */
 /** หัวหน้าทีมปิดธง "ต้องตรวจซ้ำ" หลังตรวจแล้วว่ายอดถูก — ต้องมีเหตุผล บันทึกผู้กดใน Admin_Log และ Loc_Checks (v2.2.8) */
 function adminResolveFlag_(loc, reason) {
   var project = readConfig_().PROJECT_ID;
@@ -1441,26 +1465,6 @@ function adminResolveFlag_(loc, reason) {
     appendRows_(SpreadsheetApp.getActive().getSheetByName('Loc_Checks'),
       [[now_(), project, 'ADMIN', loc, 'FLAG_RESOLVE', who_(), '', '', '', '', '', '', 'ปิดธง: ' + reason + ' — ธงเดิม: ' + old]]);
     refreshLocations_(project, [loc]);
-  });
-}
-
-function adminSubmitFor_(loc, deviceId, reason) {
-  var project = readConfig_().PROJECT_ID;
-  migrateMembers_(project);
-  loc = normLoc_(loc);
-  var mt = membersTable_();
-  var i = memberIdx_(mt, project, loc, deviceId);
-  if (i < 0) throw new Error(deviceId + ' ไม่ได้ร่วมนับ ' + loc);
-  var m = rowObj_(mt, mt.rows[i]);
-  if (m.Role !== 'HELPER') throw new Error(deviceId + ' เป็นผู้ดูแล ' + loc + ' — ใช้ "โอนการดูแล" แทน');
-  var D = (locData_(project, [loc])[loc] || { devices: {} }).devices[deviceId] || { lines: 0, qty: 0, maxSeq: 0 };
-  if (!String(reason || '').trim()) throw new Error('ต้องระบุเหตุผลการส่งงานแทน');
-  var seqAll = deviceSeqInfo_(deviceId, project).max;
-  var note = 'หัวหน้าทีมส่งงานแทน ' + who_() + (reason ? ' · ' + reason : '') + ' · ยอดที่เซิร์ฟเวอร์มี ' + D.qty + ' ชิ้น ' + D.lines + ' รายการ';
-  adminAct_('LOC_SUBMIT_FOR', loc + ' ' + deviceId, note, function () {
-    putRow_(mt, i, { State: 'SUBMITTED', State_At: now_(), Cover_Seq: Math.max(seqAll, D.maxSeq), Sub_Lines: D.lines, Sub_Qty: D.qty, Match: 'OK', Sub_By: 'ADMIN', Ev_At: Date.now(), Updated_At: now_() });
-    appendRows_(SpreadsheetApp.getActive().getSheetByName('Loc_Checks'), [[now_(), project, deviceId, loc, 'ADMIN_SUBMIT', '', D.lines, D.qty, D.lines, D.qty, 'OK', Math.max(seqAll, D.maxSeq), note]]);
-    refreshLocations_(project, [loc], null, mt);
   });
 }
 
@@ -1576,10 +1580,3 @@ function deviceLogAdd_(deviceId, list, appVersion) {
   if (rows.length) appendRows_(sh, rows);
   return ack;
 }
-
-
-/**
- * v2.6.2: 1 Location = 1 เครื่อง (ไม่มีการนับร่วม) — ช่วยนับให้แยกใช้ป้าย Location สำรอง
- * สวิตช์ซ่อน Config ALLOW_JOIN = Y → กลับไปใช้การนับร่วมแบบเดิม (ใช้ในชุดทดสอบการนับร่วม · ทางถอยฉุกเฉิน) ไม่มีในหน้า Admin
- */
-function allowJoin_() { return String(readConfig_().ALLOW_JOIN || '').toUpperCase() === 'Y'; }

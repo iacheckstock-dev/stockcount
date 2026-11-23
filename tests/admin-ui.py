@@ -52,17 +52,22 @@ with sync_playwright() as p:
     print('D3:', row.replace('\n', ' | '))
     check('ล้างทั้ง Location เมื่อ' in row and 'โดย TC21-01' in row, 'ใต้ Location บอกเวลาและเครื่องที่ล้าง')
     check(not re.search(r'-\d[\d,.]* ชิ้น', row), 'ไม่มียอดติดลบในเครื่องที่ร่วมนับ')
-    check('TC21-02 ผู้ช่วย' in row and '0 ชิ้น' in row and '1 ชิ้น' in row, 'ผู้ช่วย 0 ชิ้น · ผู้ดูแล 1 ชิ้น')
+    check('TC21-02 เครื่องเดิม/ซ้อน' in row and '0 ชิ้น' in row and '1 ชิ้น' in row, 'เครื่องเดิม/ซ้อน 0 ชิ้น · ผู้ดูแล 1 ชิ้น (v2.7.0 ไม่มีคำว่าผู้ช่วย)')
+    lt = pg.inner_text('#locTbl')
+    check('ส่งงานแทน' not in lt and 'ผู้ช่วย' not in lt, 'v2.7.0: ตาราง Location ไม่มีปุ่มส่งงานแทน / คำว่าผู้ช่วย')
+    dt = pg.inner_text('#devTbl')
+    check('ยังไม่เสร็จ:' in dt and ('(กำลังนับ)' in dt or '(พัก)' in dt), 'v2.7.0: แถวเครื่องบอก Location ที่ยังไม่เสร็จ (ใช้ตอนเครื่องเสียกลางคัน)')
 
-    # ส่งงานแทน: ต้องใส่เหตุผล ปุ่มกดไม่ได้จนกว่าจะใส่
-    pg.evaluate("submitFor('W1', 'TC21-03')")
-    check(pg.is_visible('#askDlg') and 'ส่งงานแทน TC21-03 ที่ W1' in pg.inner_text('#askTitle'), 'ส่งงานแทน → กล่องกลางหน้า')
+    # กล่องที่ต้องใส่เหตุผล: ปุ่มกดไม่ได้จนกว่าจะใส่ (v2.7.0: เดิมทดสอบผ่าน "ส่งงานแทน" ที่ถูกลบ)
+    pg.evaluate("CALLS.length = 0; ask({ title: 'ทดสอบเหตุผล', ok: 'ตกลง', why: 'เช่น ทดสอบ' }, function (why) { CALLS.push(['ask', why]); })")
+    check(pg.is_visible('#askDlg') and 'ทดสอบเหตุผล' in pg.inner_text('#askTitle'), 'กล่องกลางหน้า')
     check(pg.is_disabled('#askOk') and pg.is_visible('#askNeed'), 'ยังไม่ใส่เหตุผล → ปุ่มกดไม่ได้ + ตัวแดง')
     pg.fill('#askWhy', 'แบตหมด'); 
     check(not pg.is_disabled('#askOk') and not pg.is_visible('#askNeed'), 'ใส่เหตุผลแล้ว → กดได้')
     pg.click('#askOk'); pg.wait_for_timeout(50)
-    c = pg.evaluate('CALLS'); check(['apiLocSubmitFor', 'W1', 'TC21-03', 'แบตหมด'] in c, 'เรียก apiLocSubmitFor พร้อมเหตุผล')
+    c = pg.evaluate('CALLS'); check(['ask', 'แบตหมด'] in c, 'ส่งเหตุผลกลับ')
     check(not pg.is_visible('#askDlg'), 'กล่องปิดหลังกด')
+    check(pg.evaluate("typeof submitFor") == 'undefined', 'v2.7.0: ไม่มีฟังก์ชันส่งงานแทน')
 
     # ยกเลิก → ไม่เรียกอะไร
     pg.evaluate("CALLS.length = 0; pairCode('TC21-04')")

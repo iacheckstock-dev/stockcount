@@ -47,7 +47,7 @@ node run.js                     # ข้อมูลสังเคราะห�
 SAMPLE_SAP=/path/ZMMD002A.xls SAMPLE_POS=/path/Stock_Shop_POS.xls node run.js      # + ไฟล์จริง
 SAMPLE_SAP=... SAMPLE_POS=... node gas-mock.js   # จำลอง Apps Script ทั้ง flow
 SAMPLE_SAP=... SAMPLE_POS=... node api-test.js   # API ของเครื่อง (+ SAMPLE_DOLPHIN=ไฟล์ Dolphin)
-SAMPLE_SAP=... SAMPLE_POS=... node multi-test.js # หลายเครื่องนับ Location เดียวกัน (ผู้ดูแล/ผู้ช่วย)
+SAMPLE_SAP=... SAMPLE_POS=... node multi-test.js # หลายเครื่องนับ Location เดียวกัน (โอนการดูแล · เปิดซ้อน · ปล่อยคืน)
 SAMPLE_SAP=... SAMPLE_POS=... node close-test.js # ปิดการนับ + เงื่อนไขปิดรอบ K1–K7 ครบทุกข้อ (v2.5.0)
 SAMPLE_SAP=... SAMPLE_POS=... node closeround-test.js # ปิดรอบ: สำรอง → ตรวจไฟล์สำรอง → ล้างชีตงาน · ค้างกลางทาง · โหมดทดสอบ (v2.5.2)
 node config-test.js                              # Config ชื่อซ้ำ + อัปเกรดโครงสร้างชีตพร้อมกัน (v2.5.3)

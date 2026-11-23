@@ -171,8 +171,11 @@ sequenceDiagram
 
 `others` = ยอดต่อ SKU ของ**เครื่องอื่น**ตามที่เซิร์ฟเวอร์มี เครื่องรวมกับยอดในเครื่องตัวเองเป็นยอดรวมทุกเครื่อง (รวมรายการที่ยังไม่ได้ส่ง)
 `owner` = null แปลว่ายังไม่มีใครเปิด · `me` = null แปลว่าเครื่องนี้ยังไม่เคยร่วม
-`allowJoin` (v2.6.2) = false ปกติ → เครื่องที่ไม่ใช่สมาชิกยิง Location ที่มีผู้ดูแลแล้ว แอปปฏิเสธ (1 Location = 1 เครื่อง) · true เมื่อ Config `ALLOW_JOIN = Y` (นับร่วมแบบเดิม)
-**sync — OPEN ซ้อน (v2.6.2):** เครื่องที่ไม่ใช่สมาชิกส่ง OPEN Location ที่มีผู้ดูแลอยู่ (เปิดตอนออฟไลน์) → รับข้อมูลไว้ในฐานะผู้ช่วย + ติด `Flag_Check` "ต้องตรวจซ้ำ: นับซ้อน …" + System_Log `LOC_DOUBLE_OPEN` (JOIN จากแอปรุ่นเก่ายังเข้าร่วมได้ตามเดิม)
+**v2.7.0 — 1 Location = 1 เครื่อง (ไม่มีผู้ช่วย):** `owner` เป็นเครื่องอื่น → แอปปฏิเสธเสมอ (กล่องบอกใครนับ / พัก / ปิดแล้ว / คนเดิมย้ายเครื่อง) · `allowJoin` และ Config `ALLOW_JOIN` ถูกลบ
+`members[i].role = HELPER` ยังมีในข้อมูล = เครื่องที่มีข้อมูลใน Location แต่ไม่ใช่ผู้ดูแล (ถูกโอนออก / เปิดซ้อน) ไม่ใช่ผู้ช่วย
+**sync — OPEN / JOIN ซ้อน:** เครื่องที่ไม่ใช่ผู้ดูแลส่ง OPEN (เปิดตอนออฟไลน์) หรือ JOIN (แอปรุ่นเก่า) → รับข้อมูลไว้ (`role: HELPER`) + ติด `Flag_Check` "ต้องตรวจซ้ำ: นับซ้อน …" (ครั้งเดียวต่อเครื่องจนกว่าธงจะถูกปิด) + System_Log `LOC_DOUBLE_OPEN` → แอปแจ้งให้หยุดยิงและส่ง `SUBMIT` (auto) ออกจาก Location
+**sync — PAUSE ปล่อยคืน (v2.7.0):** ผู้ดูแลส่ง PAUSE โดย `lines = 0` · ผลตรวจ OK · ไม่มีรายการของเครื่องใดใน Location · ไม่มีเครื่องอื่น · ไม่มีธง → ลบแถว Loc_Members / Locations · คำตอบ `state: "RELEASED"` · Loc_Checks `RELEASE` · System_Log `LOC_RELEASE` (ยิงป้ายผิด ไม่ล็อก Location)
+**ลบใน v2.7.0:** `apiLocSubmitFor` (ส่งงานแทน) — กรณีเครื่องเสียใช้ `apiLocTransfer` (โอนการดูแล) แล้วนับต่อ หรือล้างนับใหม่ถ้ามีค้างส่ง
 
 ## myLocs
 คำตอบ: `{ ok, locs: [{ location, role, state, match, status, total, devices, flag, owner, mineSc, closedTime, closeTotal, helpers, helpersDone }], names: ["A1", "D80", …], at }`

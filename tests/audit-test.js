@@ -101,7 +101,7 @@ test('บรรทัดแก้/ยกเลิก: ประเภทภา�
   assert.strictEqual(r.editCount, 1);
   const e = run(`apiAudit("sku", "${MAT1}", { edits: true })`);
   assert.strictEqual(e.total, 1); assert.strictEqual(e.all, 4);
-  assert.ok(e.lines[0].th === 'ผู้ดูแลแก้ยอด' && e.lines[0].rq === 'EMP-B' && e.lines[0].sn === 'นาย ก');
+  assert.ok(e.lines[0].th === 'แก้ยอด' && e.lines[0].rq === 'EMP-B' && e.lines[0].sn === 'นาย ก');
 });
 test('ค้นบางส่วนเจอหลายตัว → ให้เลือก · เลือกแล้วได้ผล · ไม่เจอ → แจ้ง', () => {
   const r = run('apiAudit("sku", "A112101UT0")');
@@ -123,7 +123,7 @@ test('D1: สถานะ ผู้ดูแล เครื่องที่�
   assert.strictEqual(r.head.members.map(m => m.device + ':' + m.role).sort().join(), 'TC21-01:OWNER,TC21-02:HELPER');
   const ev = r.head.events.map(e => e.ev);
   ['OPEN', 'JOIN', 'SUBMIT', 'EDIT', 'CLOSE'].forEach(x => assert.ok(ev.indexOf(x) >= 0, 'มี ' + x + ' ใน ' + ev));
-  assert.ok(r.head.events.find(e => e.ev === 'SUBMIT').th === 'ส่งงาน');
+  assert.ok(r.head.events.find(e => e.ev === 'SUBMIT').th === 'ออกจาก Location');
   assert.strictEqual(r.total, 7);
   assert.strictEqual(r.editCount, 2);
   assert.ok(r.head.items.some(x => x[0] === BAD && !x[4]));
@@ -139,7 +139,7 @@ test('ข: บรรทัดของตัวเอง + บรรทัดท
   assert.strictEqual(r.total, 4);
   assert.ok(r.lines.filter(l => l.req).length === 1 && r.lines.find(l => l.req).st === 'EMP-A');
   const d1 = r.head.locs.find(x => x.loc === 'D1'), d2 = r.head.locs.find(x => x.loc === 'D2');
-  assert.ok(d1.roles.some(x => /ผู้ช่วย TC21-02/.test(x)) && d2.roles.some(x => /ผู้ดูแล/.test(x)));
+  assert.ok(d1.roles.some(x => /เครื่องเดิม\/ซ้อน TC21-02/.test(x)) && d2.roles.some(x => /ผู้ดูแล/.test(x)));
 });
 test('ก: ยกเลิก 1 · แก้ยอด 1 · เครื่อง TC21-01', () => {
   const r = run('apiAudit("staff", "EMP-A")');

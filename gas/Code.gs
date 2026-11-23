@@ -12,7 +12,7 @@ var SCHEMA_VERSION = 13;   // 13 = v2.6.1 ชีต Device_Log · 6 = v2.4.1 Var
  * เวอร์ชันของระบบ (ใช้เลขเดียวทั้งแอป TC21 และเซิร์ฟเวอร์ ตาม Semantic Versioning MAJOR.MINOR.PATCH)
  * ต้องตรงกับ APP_VERSION ใน app/app.js และ appVersion ใน app/config.json — ดู CHANGELOG.md
  */
-var SYSTEM_VERSION = '2.6.2';
+var SYSTEM_VERSION = '2.7.0';
 
 var SHEETS = {
   Config: ['Key', 'Value', 'Note'],
@@ -1233,7 +1233,7 @@ function closeCheck_(full) {
   });
   add('K1', total > 0 && !open.length, 'ทุก Location ปิดแล้ว ไม่มี พัก / กำลังนับ',
     total ? (open.length ? 'ยังไม่ปิด ' + open.length + ' จาก ' + total + ' Location · แยกตามเครื่องผู้ดูแล' : 'ปิดครบ ' + total + ' Location') : 'ยังไม่มี Location ในรอบนี้',
-    'ให้ผู้ดูแลกด "ปิด Location" ที่เครื่อง (ทำได้หลังปิดการนับ) · ผู้ช่วยค้างให้กด "ส่งงาน" หรือใช้ "ส่งงานแทน" ในแท็บเครื่อง TC21',
+    'ให้ผู้ดูแลกด "ปิด Location" ที่เครื่อง (ทำได้หลังปิดการนับ)',
     open.length ? 'Location ยังไม่ปิด ' + open.length : 'Location ปิดครบ ' + total, k1list);
   add('K2', !flags.length, 'ไม่มีธง "ต้องตรวจซ้ำ" ค้าง', flags.length ? 'มีธง ' + flags.length + ' Location' : 'ไม่มีธง',
     'ตรวจแล้วกด "ปิดธง" พร้อมเหตุผล (แท็บเครื่อง TC21) หรือเปิดการนับอีกครั้งให้ผู้ดูแลล้าง Location แล้วนับใหม่', '', flags.slice(0, 30));
@@ -1341,16 +1341,11 @@ function membersForAdmin_(project) {
   });
 }
 
-/** หัวหน้าทีม: ส่งงานแทนผู้ช่วยที่ติดต่อไม่ได้ (บันทึกผู้กดและเหตุผล) */
+/** หัวหน้าทีม: ปิดธงต้องตรวจซ้ำ (บันทึกผู้กดและเหตุผล) */
 function apiLocResolveFlag(loc, reason) {
   return withLock_(function () { adminResolveFlag_(loc, reason); return apiDevicesState(); });
 }
 
-function apiLocSubmitFor(loc, deviceId, reason) {
-  return withLock_(function () { adminSubmitFor_(loc, deviceId, reason); return apiDevicesState(); });
-}
-
-/** หัวหน้าทีม: โอนการดูแล Location (เช่น เครื่องผู้ดูแลเสีย) */
 function apiLocTransfer(loc, toDevice, reason) {
   return withLock_(function () { adminTransfer_(loc, toDevice, reason); return apiDevicesState(); });
 }
@@ -1835,9 +1830,9 @@ function apiAdjustReverse(id, staff, why) {
 // อ่าน Count_Log ทั้งชีตครั้งละ 1 รอบต่อการค้น · ส่งบรรทัดกลับทีละ AUDIT_PAGE
 
 var AUDIT_PAGE = 200;
-var AUDIT_TYPE_TH = { SCAN: 'ยิง', MANUAL: 'ป้อนเอง', VOID: 'ยกเลิก', RECOUNT_SET: 'ผู้ดูแลแก้ยอด', SELF_SET: 'ผู้ช่วยแก้ยอด' };
-var AUDIT_EVENT_TH = { OPEN: 'เปิด', JOIN: 'เข้าร่วม', SUBMIT: 'ส่งงาน', PAUSE: 'พัก', CLOSE: 'ปิด', EDIT: 'แก้ยอด', EDIT_CONFLICT: 'แก้ชนกัน',
-  ADMIN_SUBMIT: 'ส่งงานแทน (Admin)', TRANSFER: 'โอนการดูแล', FLAG_RESOLVE: 'เคลียร์ธง', ADMIN_LOG_FAIL: 'บันทึกสำรอง' };
+var AUDIT_TYPE_TH = { SCAN: 'ยิง', MANUAL: 'ป้อนเอง', VOID: 'ยกเลิก', RECOUNT_SET: 'แก้ยอด', SELF_SET: 'แก้ยอดของตัวเอง (รุ่นเก่า)' };
+var AUDIT_EVENT_TH = { OPEN: 'เปิด', JOIN: 'เข้าร่วม (รุ่นเก่า)', SUBMIT: 'ออกจาก Location', RELEASE: 'ปล่อยคืน (ยังไม่ได้ยิง)', PAUSE: 'พัก', CLOSE: 'ปิด', EDIT: 'แก้ยอด', EDIT_CONFLICT: 'แก้ชนกัน',
+  ADMIN_SUBMIT: 'ส่งงานแทน (Admin · รุ่นเก่า)', TRANSFER: 'โอนการดูแล', FLAG_RESOLVE: 'เคลียร์ธง', ADMIN_LOG_FAIL: 'บันทึกสำรอง' };
 
 /**
  * kind = 'sku' | 'loc' | 'staff' · q = คำค้น · opt = { pick: คีย์ SKU ที่เลือกจากรายการ, edits: เฉพาะแก้/ยกเลิก, offset }
@@ -1974,7 +1969,7 @@ function auditStaff_(ctx, q) {
   });
   members.forEach(function (m) {
     var x = locs[m.location] || (locs[m.location] = { loc: m.location, roles: [], lines: 0, qty: 0 });
-    var role = (m.role === 'OWNER' ? 'ผู้ดูแล' : 'ผู้ช่วย') + ' ' + m.device;
+    var role = (m.role === 'OWNER' ? 'ผู้ดูแล' : 'เครื่องเดิม/ซ้อน') + ' ' + m.device;
     if (x.roles.indexOf(role) < 0) x.roles.push(role);
   });
   var times = own.map(function (l) { return l.t; }).filter(String).sort();
