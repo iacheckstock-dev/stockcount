@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2.7.0';
+  var APP_VERSION = '2.7.1';
   var QTY_CONFIRM = 150;      // จำนวนที่ป้อนเองเกินนี้ต้องยืนยันอีกครั้ง
   var QTY_MAX_DIGITS = 5;     // ยาวกว่านี้ = น่าจะยิงบาร์โค้ดเข้าช่องจำนวน
   var INFO_EVERY = 15000;     // ถามสถานะผู้ช่วย/ผู้ดูแลระหว่างนับร่วมกัน
@@ -481,7 +481,7 @@
       // หัวหน้าทีมโอนการดูแล (v2.3.4 · v2.7.0)
       if (r.me && was === 'HELPER' && r.me.role === 'OWNER' && !S.checking) {
         SOUND.ok();
-        result(true, 'คุณเป็นผู้ดูแล ' + loc + ' แล้ว', 'หัวหน้าทีมโอนการดูแลมาให้เครื่องนี้\nยอดเดิมรวมอยู่แล้ว นับต่อได้');
+        result(true, 'คุณเป็นผู้ดูแล ' + loc + ' แล้ว', 'หัวหน้าทีมโอนการดูแลมาให้เครื่องนี้\nยอดเดิมรวมอยู่แล้ว นับต่อได้', { stay: true });
       }
       if (r.me && was === 'OWNER' && r.me.role === 'HELPER' && !S.checking) {
         // โอนออกจากเครื่องนี้ → หยุดนับที่ Location นี้ (ส่งยอดที่ยิงไว้ให้ครบ)
@@ -711,7 +711,7 @@
         }
         SOUND.bad();
         if ($('modal').classList.contains('hidden')) {
-          result(false, dl + ' มีเครื่องอื่นนับอยู่แล้ว', 'ผู้ดูแล ' + (r.owner || '') + '\nที่ยิงไว้ ' + fmt(n) + ' ชิ้นส่งเข้าระบบแล้ว และติดธงให้หัวหน้าทีมตรวจ\n• หยุดยิงที่ ' + dl + '\n• ยิงป้าย Location ของคุณใหม่');
+          result(false, dl + ' มีเครื่องอื่นนับอยู่แล้ว', 'ผู้ดูแล ' + (r.ownerLabel || r.owner || '') + '\nที่ยิงไว้ ' + fmt(n) + ' ชิ้นส่งเข้าระบบแล้ว และติดธงให้หัวหน้าทีมตรวจ\n• หยุดยิงที่ ' + dl + '\n• ยิงป้าย Location ของคุณใหม่');
         } else toast(dl + ' มีเครื่องอื่นนับอยู่แล้ว — หยุดยิงที่ ' + dl + ' (ติดธงให้หัวหน้าทีมตรวจ)', true);
         fetchInfo(dl, INFO_BG_MS);
       });
@@ -1044,13 +1044,17 @@
     // ได้รับโอนการดูแล: เคยเป็นเครื่องซ้อน หรือไม่เคยเปิด Location นี้แต่มีข้อมูลของเครื่องอื่นอยู่ (v2.7.0)
     if (pre && pre.me && pre.me.role === 'OWNER' && (was === 'HELPER' || (!was && pre.members && pre.members.length > 1))) {
       SOUND.ok();
-      ask = result(true, 'คุณเป็นผู้ดูแล ' + loc + ' แล้ว', 'หัวหน้าทีมโอนการดูแลมาให้เครื่องนี้\nยอดเดิมรวมอยู่แล้ว นับต่อได้').then(function () { return true; });
+      ask = result(true, 'คุณเป็นผู้ดูแล ' + loc + ' แล้ว', 'หัวหน้าทีมโอนการดูแลมาให้เครื่องนี้\nยอดเดิมรวมอยู่แล้ว นับต่อได้', { stay: true }).then(function () { return true; });   // v2.7.1: ต้องกดตกลง (UAT G19-13 หายเร็วอ่านไม่ทัน)
     } else if (pre && pre.owner && pre.owner.device !== S.cfg.deviceId) {
       // v2.7.0: 1 Location = 1 เครื่อง — เป็นของเครื่องอื่น (รวมถึงเครื่องนี้ที่ถูกโอนออก / เปิดซ้อน) → ไม่เปิด บอกว่าต้องทำอะไรต่อ
       return blockBox(loc, pre).then(function () { show('count'); });
     } else if (!pre && r && r.role === 'HELPER') {
       // ออฟไลน์ / เซิร์ฟเวอร์ช้า: จำไว้ว่าเป็นของเครื่องอื่น
       return blockBox(loc, null, r).then(function () { show('count'); });
+    } else if (!pre && !(r && r.role === 'OWNER') && S.info[loc] && S.info[loc].owner && S.info[loc].owner.device !== S.cfg.deviceId) {
+      // v2.7.1 (UAT G19-14): ออฟไลน์ แต่เคยถามแล้วในการใช้งานครั้งนี้ว่าเป็นของเครื่องอื่น → ปฏิเสธด้วยสถานะที่จำไว้ (กันนับซ้อน)
+      // ปิดแอปแล้วเปิดใหม่ = ไม่มีที่จำ → เปิดได้ตามเดิม เซิร์ฟเวอร์ติดธงนับซ้อนให้
+      return blockBox(loc, S.info[loc], null, S.infoAt[loc]).then(function () { show('count'); });
     } else if (r && r.role === 'OWNER' && r.state === 'CLOSED') {
       var s0 = combinedSummary(loc);
       var by0 = pre && pre.me && pre.me.staff && S.staff && pre.me.staff !== S.staff.code ? '<br><span class="muted">นับไว้โดย ' + esc(staffName(pre.me.staff)) + ' (' + esc(pre.me.staff) + ')</span>' : '';
@@ -1081,7 +1085,9 @@
    * v2.7.0: ยิง Location ของเครื่องอื่น → กล่องแดงบอกว่าใครนับ และต้องทำอะไรต่อ (ไม่เปิด)
    * pre = ผล locInfo · local = บทบาทที่จำไว้ (ออฟไลน์)
    */
-  function blockBox(loc, pre, local) {
+  function blockBox(loc, pre, local, cachedAt) {
+    var tail = cachedAt ? '\n(สถานะที่จำไว้ ' + new Date(cachedAt).toTimeString().slice(0, 5) + ' · ตอนนี้ออฟไลน์)' : '';
+    var res = function (t, b) { return result(false, t, b + tail); };
     SOUND.bad();
     setCard('bad', 'ไม่ได้เปิด ' + loc + ' — เป็นของเครื่องอื่น', S.loc ? 'ยังนับต่อที่ ' + esc(S.loc) + ' ได้' : 'ยิงป้าย Location ของคุณ');
     var o = pre && pre.owner, me = pre && pre.me;
@@ -1089,20 +1095,20 @@
     var who = o ? (name ? name + ' ' : '') + '(' + o.device + ')' : ((local && (local.ownerLabel || local.owner)) || 'เครื่องอื่น');
     var rule = '\nเครื่องนี้เปิด ' + loc + ' ไม่ได้ (1 Location นับได้ 1 เครื่อง)';
     var wrong = '\n• ยิงผิด → ยิงป้าย Location ของคุณใหม่';
-    if (!o) return result(false, loc + ' เป็นของเครื่องอื่น', 'ผู้ดูแล ' + who + ' (สถานะล่าสุดที่จำไว้)' + rule + wrong);
+    if (!o) return res(loc + ' เป็นของเครื่องอื่น', 'ผู้ดูแล ' + who + ' (สถานะล่าสุดที่จำไว้)' + rule + wrong);
     if (me) {
       // เครื่องนี้เคยนับ แล้วหัวหน้าทีมโอนการดูแลไป / เปิดซ้อนตอนออฟไลน์
-      return result(false, loc + ' เป็นของเครื่องอื่นแล้ว', 'ผู้ดูแลตอนนี้ ' + who + '\nยอดที่เครื่องนี้ยิงไว้ยังอยู่ในระบบ' + wrong + '\n• ต้องนับเพิ่ม → แจ้ง ' + (name || o.device) + ' หรือหัวหน้าทีม');
+      return res(loc + ' เป็นของเครื่องอื่นแล้ว', 'ผู้ดูแลตอนนี้ ' + who + '\nยอดที่เครื่องนี้ยิงไว้ยังอยู่ในระบบ' + wrong + '\n• ต้องนับเพิ่ม → แจ้ง ' + (name || o.device) + ' หรือหัวหน้าทีม');
     }
     if (o.staff && S.staff && o.staff === S.staff.code) {
-      return result(false, loc + ' คุณนับไว้ที่เครื่อง ' + o.device, 'เครื่องนี้ (' + S.cfg.deviceId + ') เปิด ' + loc + ' ไม่ได้ (1 Location นับได้ 1 เครื่อง)' +
+      return res(loc + ' คุณนับไว้ที่เครื่อง ' + o.device, 'เครื่องนี้ (' + S.cfg.deviceId + ') เปิด ' + loc + ' ไม่ได้ (1 Location นับได้ 1 เครื่อง)' +
         '\n• เครื่องเดิมใช้งานไม่ได้ → ให้หัวหน้าทีม "โอนการดูแล" มาเครื่องนี้' + wrong);
     }
     if (o.state === 'CLOSED' || pre.status === 'ปิดแล้ว') {
-      return result(false, loc + ' นับเสร็จแล้ว', 'นับโดย ' + who + (o.stateAt ? ' · ปิดเมื่อ ' + String(o.stateAt).slice(11, 16) : '') + rule + wrong +
+      return res(loc + ' นับเสร็จแล้ว', 'นับโดย ' + who + (o.stateAt ? ' · ปิดเมื่อ ' + String(o.stateAt).slice(11, 16) : '') + rule + wrong +
         '\n• ต้องนับแก้ → แจ้ง ' + (name || o.device) + ' หรือหัวหน้าทีม');
     }
-    return result(false, loc + ' เป็นของเครื่องอื่น', (o.state === 'PAUSED' ? 'พักไว้โดย ' : 'กำลังนับโดย ') + who + rule + wrong +
+    return res(loc + ' เป็นของเครื่องอื่น', (o.state === 'PAUSED' ? 'พักไว้โดย ' : 'กำลังนับโดย ') + who + rule + wrong +
       '\n• มาช่วยนับ → ใช้ป้าย Location สำรองถัดไป');
   }
 
@@ -1418,7 +1424,7 @@
     var old = S.online === false && S.myLocsAt ? ' · ยอดจากเซิร์ฟเวอร์เมื่อ ' + String(S.myLocsAt).slice(11, 16) + ' (ออฟไลน์)' : '';
     $('locsHead').textContent = list.length ? 'ตัวเลขขวา = ยอดรวมทุกเครื่อง · แตะเพื่อไปที่ Location' + old : 'ยังไม่มี Location ในรอบนี้';
     function row(x) {
-      var sub = 'ของฉัน ' + fmt(x.mine) + (x.srv.devices > 1 ? ' · ' + x.srv.devices + ' เครื่อง' : '') + (x.role === 'HELPER' ? ' · โอน/ซ้อน: ' + (x.srv.owner || 'เครื่องอื่น') + ' ดูแล' : '');
+      var sub = 'เครื่องนี้ ' + fmt(x.mine) + (x.srv.devices > 1 ? ' · ' + x.srv.devices + ' เครื่อง' : '') + (x.role === 'HELPER' ? ' · โอน/ซ้อน: ' + (x.srv.owner || 'เครื่องอื่น') + ' ดูแล' : '');
       return '<li data-l="' + esc(x.loc) + '" class="st-' + esc(x.state) + (x.done ? ' st-done' : '') + (x.loc === S.loc ? ' here' : '') + '"><div class="lmain"><div class="n"><span class="ln">' + esc(x.loc) + '</span>' +
         '<span class="badge ' + x.tag[0] + '">' + esc(x.tag[1]) + '</span></div><div class="c">' + esc(sub) + '</div>' +
         (x.flag ? '<div class="c"><span class="badge r">' + esc(x.flag) + '</span></div>' : '') + '</div>' +

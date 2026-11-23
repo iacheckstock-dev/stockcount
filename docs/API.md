@@ -172,6 +172,7 @@ sequenceDiagram
 `others` = ยอดต่อ SKU ของ**เครื่องอื่น**ตามที่เซิร์ฟเวอร์มี เครื่องรวมกับยอดในเครื่องตัวเองเป็นยอดรวมทุกเครื่อง (รวมรายการที่ยังไม่ได้ส่ง)
 `owner` = null แปลว่ายังไม่มีใครเปิด · `me` = null แปลว่าเครื่องนี้ยังไม่เคยร่วม
 **v2.7.0 — 1 Location = 1 เครื่อง (ไม่มีผู้ช่วย):** `owner` เป็นเครื่องอื่น → แอปปฏิเสธเสมอ (กล่องบอกใครนับ / พัก / ปิดแล้ว / คนเดิมย้ายเครื่อง) · `allowJoin` และ Config `ALLOW_JOIN` ถูกลบ
+**v2.7.1:** ผล sync ของเหตุการณ์ที่ได้ `role: HELPER` มี `ownerLabel` = "ชื่อพนักงาน (เครื่อง)" ของผู้ดูแล ใช้แสดงในกล่องเปิดซ้อน · โอนการดูแลไปเครื่องที่ยังไม่มีแถวใน Location นั้น → `Staff` = รหัสพนักงานล่าสุดของเครื่องนั้นในรอบ
 `members[i].role = HELPER` ยังมีในข้อมูล = เครื่องที่มีข้อมูลใน Location แต่ไม่ใช่ผู้ดูแล (ถูกโอนออก / เปิดซ้อน) ไม่ใช่ผู้ช่วย
 **sync — OPEN / JOIN ซ้อน:** เครื่องที่ไม่ใช่ผู้ดูแลส่ง OPEN (เปิดตอนออฟไลน์) หรือ JOIN (แอปรุ่นเก่า) → รับข้อมูลไว้ (`role: HELPER`) + ติด `Flag_Check` "ต้องตรวจซ้ำ: นับซ้อน …" (ครั้งเดียวต่อเครื่องจนกว่าธงจะถูกปิด) + System_Log `LOC_DOUBLE_OPEN` → แอปแจ้งให้หยุดยิงและส่ง `SUBMIT` (auto) ออกจาก Location
 **sync — PAUSE ปล่อยคืน (v2.7.0):** ผู้ดูแลส่ง PAUSE โดย `lines = 0` · ผลตรวจ OK · ไม่มีรายการของเครื่องใดใน Location · ไม่มีเครื่องอื่น · ไม่มีธง → ลบแถว Loc_Members / Locations · คำตอบ `state: "RELEASED"` · Loc_Checks `RELEASE` · System_Log `LOC_RELEASE` (ยิงป้ายผิด ไม่ล็อก Location)
@@ -216,7 +217,7 @@ sequenceDiagram
 - `project` ไม่ตรงกับรอบในเครื่อง → แอปหยุดยิง กล่อง "เปิดรอบใหม่แล้ว" จนกว่าจะตรวจความพร้อมใหม่ · เข้ารอบใหม่ → ล้างผู้ตรวจสอบที่ยิงไว้ · ล้างรายการของ `closedProjects` ที่ส่งครบแล้ว
 - `staff` → `{ ok, staff:[{code,name,role}], staffRev }` (เฉพาะ Active) · `staffRev` = hash ของรายชื่อ (เปลี่ยนเมื่อเพิ่ม / แก้ / ปิดใช้)
 - `check` รับ `project` → `Devices.Check_Project`
-- หน้า Admin: `apiStaffState()` · `apiStaffAdd(by, code, name, role)` · `apiStaffEdit(by, code, name, role)` · `apiStaffActive(by, code, on, why)` · `apiDevicesState()` คืน `ready: { ok, why[] }` ต่อเครื่อง
+- หน้า Admin: `apiStaffState()` · `apiStaffAdd(by, code, name, role)` · `apiStaffEdit(by, code, name, role)` · `apiStaffActive(by, code, on, why)` · `apiDevicesState()` คืน `ready: { ok, why[] }` ต่อเครื่อง · v2.7.1 เพิ่ม `incidents: { "TC21-01": 2, … }` = จำนวนแถว Device_Log ของรอบนี้ต่อเครื่อง
 
 ## หน้า Admin อ่านอย่างเดียว (v2.5.6)
 - `apiAdminLog(round, q, offset)` → `{ rows, total, offset, round, q, rounds:[{p,n}] }` · round = รหัสรอบ หรือ `*` ทุกรอบ · ค้นคำทุกคอลัมน์ · 100 แถวต่อครั้ง ใหม่ก่อน · ไม่ใช้ล็อก

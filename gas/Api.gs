@@ -1028,6 +1028,7 @@ function applyLocEvents_(deviceId, events, project, source, X) {
     touched[loc] = true;
     var r = { id: ev.id, location: loc, match: ev.type === 'OPEN' || ev.type === 'JOIN' ? 'OPEN' : match, srvLines: srvLines, srvQty: srvQty,
       role: res.role, owner: res.owner, state: res.state };
+    if (res.role === 'HELPER' && res.owner) r.ownerLabel = ownerLabel_(mt, project, loc, res.owner);   // v2.7.1: ชื่อคน (เครื่อง) แทนรหัสเครื่องอย่างเดียว
     if (ev.type === 'CLOSE' && res.note) r.note = res.note;   // ปิดทั้งที่มีธง → เครื่องเตือนผู้ดูแล
     out.push(r);
     if (r.match !== 'WAIT') { try { evCache.put(ck, JSON.stringify(r), 21600); } catch (e) { } }
@@ -1468,6 +1469,21 @@ function adminResolveFlag_(loc, reason) {
   });
 }
 
+/** v2.7.1: ผู้ตรวจล่าสุดของเครื่อง (จากแถว Loc_Members อื่นในรอบนี้) — ใช้ตั้งชื่อผู้ดูแลใหม่ตอนโอน */
+function ownerLabel_(mt, project, loc, dev) {
+  var i = memberIdx_(mt, project, loc, dev), m = i >= 0 ? rowObj_(mt, mt.rows[i]) : null;
+  var code = (m && m.Staff) || lastStaffOf_(mt, project, dev), name = code ? (staffNames_()[code] || '') : '';
+  return (name || code || dev) + ' (' + dev + ')';
+}
+function lastStaffOf_(mt, project, dev) {
+  var best = '', at = '';
+  mt.rows.forEach(function (r) {
+    var m = rowObj_(mt, r);
+    if (m.Project_ID === project && m.Device_ID === dev && m.Staff && String(m.State_At) >= at) { best = m.Staff; at = String(m.State_At); }
+  });
+  return best;
+}
+
 /** โอนการดูแล Location ให้เครื่องอื่น (เช่น เครื่องผู้ดูแลเสีย) ผู้ดูแลเดิมกลายเป็นผู้ช่วยที่ส่งงานแล้ว */
 function adminTransfer_(loc, toDevice, reason) {
   var project = readConfig_().PROJECT_ID;
@@ -1495,7 +1511,7 @@ function adminTransfer_(loc, toDevice, reason) {
   var ti = memberIdx_(mt, project, loc, toDevice);
   var cur = ti >= 0 ? rowObj_(mt, mt.rows[ti]) : null;
   putMember_(mt, project, loc, toDevice, { Role: 'OWNER', State: closed ? 'CLOSED' : cur && cur.State === 'COUNTING' ? 'COUNTING' : 'PAUSED', State_At: now_(), Ev_At: Date.now(),
-    Staff: cur ? cur.Staff : '', Cover_Seq: cur ? cur.Cover_Seq : 0 });
+    Staff: cur && cur.Staff ? cur.Staff : lastStaffOf_(mt, project, toDevice), Cover_Seq: cur ? cur.Cover_Seq : 0 });   // v2.7.1: ผู้ตรวจล่าสุดของเครื่องใหม่ → ข้อความแสดงชื่อคน
   appendRows_(SpreadsheetApp.getActive().getSheetByName('Loc_Checks'), [[now_(), project, toDevice, loc, 'TRANSFER', '', '', '', '', '', '', '', note]]);
   refreshLocations_(project, [loc], null, mt);
   });

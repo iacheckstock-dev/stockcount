@@ -693,6 +693,25 @@ console.log('\nv2.7.0: 1 Location = 1 เครื่อง · ปล่อย�
     O.sync([O.scan('X75', BC1, MAT1, 1)], [O.ev('OPEN', 'X75')]);
     assert.ok(/นับซ้อน: TC21-01 .*ถูกโอนออก/.test(loc('X75').Flag), loc('X75').Flag);
   });
+  test('v2.7.1 โอนไปเครื่องที่ยังไม่เคยเปิด Location นี้ → ผู้ดูแลใหม่ได้ชื่อพนักงานล่าสุดของเครื่องนั้น · เครื่องที่เปิดซ้อนเห็นชื่อ (ไม่ใช่ "TC21-04 (TC21-04)")', () => {
+    N.at = Date.now() + 300000; O.at = Date.now() + 300000; H.at = Date.now() + 300000;
+    N.sync([N.scan('X77', BC1, MAT1, 1)], [N.ev('OPEN', 'X77')]);
+    O.sync([O.scan('X78', BC1, MAT1, 1)], [O.ev('OPEN', 'X78')]);
+    run('apiLocTransfer("X78", "TC21-04", "เครื่องเสีย")');
+    assert.strictEqual(mem('X78', 'TC21-04').staff, 'EMP-C', JSON.stringify(mem('X78', 'TC21-04')));
+    const r = H.sync([H.scan('X78', BC1, MAT1, 1)], [H.ev('OPEN', 'X78')]);
+    assert.strictEqual(r.events[0].role, 'HELPER');
+    assert.strictEqual(r.events[0].ownerLabel, 'นาย ค (TC21-04)', JSON.stringify(r.events[0]));
+  });
+  test('v2.7.1 apiDevicesState.incidents = จำนวนแถว Device_Log ของรอบนี้แยกเครื่อง', () => {
+    const lg = env.sheets.Device_Log.data, cP = lg[0].indexOf('Project_ID'), cD = lg[0].indexOf('Device_ID');
+    const row = lg[0].map(() => ''); row[cP] = '2026Q4'; row[cD] = 'TC21-02';
+    const other = row.slice(); other[cP] = '2025Q3';
+    lg.push(row, row.slice(), other);
+    const exp = {}; lg.slice(1).forEach(x => { if (x[cP] === '2026Q4') exp[x[cD]] = (exp[x[cD]] || 0) + 1; });
+    assert.strictEqual(JSON.stringify(run('apiDevicesState()').incidents), JSON.stringify(exp));
+    assert.ok(exp['TC21-02'] >= 2);
+  });
 }
 
 console.log('\nยอดแยกเครื่องหลังล้าง Location (v2.3.6 — UAT D3 -5)');

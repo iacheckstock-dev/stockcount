@@ -12,7 +12,7 @@ var SCHEMA_VERSION = 13;   // 13 = v2.6.1 ชีต Device_Log · 6 = v2.4.1 Var
  * เวอร์ชันของระบบ (ใช้เลขเดียวทั้งแอป TC21 และเซิร์ฟเวอร์ ตาม Semantic Versioning MAJOR.MINOR.PATCH)
  * ต้องตรงกับ APP_VERSION ใน app/app.js และ appVersion ใน app/config.json — ดู CHANGELOG.md
  */
-var SYSTEM_VERSION = '2.7.0';
+var SYSTEM_VERSION = '2.7.1';
 
 var SHEETS = {
   Config: ['Key', 'Value', 'Note'],
@@ -753,8 +753,18 @@ function apiDevicesState() {
     locChecks: locChecksForAdmin_(cfg.PROJECT_ID),
     members: membersForAdmin_(cfg.PROJECT_ID),
     imports: readRaw_('Import_Files').slice(1).slice(-20).reverse(),
+    incidents: incidentCounts_(cfg.PROJECT_ID),
     logWarn: adminLogWarn_()
   };
+}
+
+/** v2.7.1: จำนวนเหตุการณ์ต่อเครื่องในรอบนี้ (ชีต Device_Log) — ป้าย "⚠ N เหตุการณ์" ในแถวเครื่อง · อ่านชีตเล็ก ไม่ล็อก */
+function incidentCounts_(project) {
+  var out = {}; if (!project) return out;
+  var lg = readRaw_('Device_Log'); if (lg.length < 2) return out;
+  var cP = lg[0].indexOf('Project_ID'), cD = lg[0].indexOf('Device_ID');
+  lg.slice(1).forEach(function (r) { if (r[cP] === project) out[r[cD]] = (out[r[cD]] || 0) + 1; });
+  return out;
 }
 
 /**

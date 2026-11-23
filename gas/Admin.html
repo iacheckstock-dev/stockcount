@@ -17,7 +17,9 @@
   nav button.on { color:#111; border-bottom-color:#111; font-weight:600; }
   nav .badge { display:inline-block; min-width:18px; padding:0 5px; margin-left:4px; border-radius:9px; font-size:11px; background:var(--badbg); color:var(--bad); }
   main { padding:16px; }
-  section { display:none; } section.on { display:block; }
+  main > section { display:none; } main > section.on { display:block; }
+  .sub { display:none; } .sub.on { display:block; }
+  #prodSub { margin-bottom:10px; }
   .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap:12px; }
   .card { border:1px solid var(--line); border-radius:8px; padding:12px 14px; }
   .card h3 { margin:0 0 8px; font-size:14px; }
@@ -38,7 +40,7 @@
   table.logt td { overflow-wrap:anywhere; }
   table.logt td:first-child, table.logt td:last-child { white-space:nowrap; }
   th { background:var(--soft); position:sticky; top:0; font-weight:600; }
-  td.n { text-align:right; font-variant-numeric: tabular-nums; }
+  td.n, th.n { text-align:right; font-variant-numeric: tabular-nums; }   /* v2.7.1: หัวคอลัมน์ตัวเลขชิดขวาตรงกับข้อมูล (UAT G19-8) */
   .mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size:12px; }
   .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:8px 0; }
   .drop { border:1.5px dashed var(--line); border-radius:8px; padding:14px; }
@@ -141,15 +143,15 @@
   <span class="who" id="who"></span>
 </header>
 <nav id="nav">
-  <button data-t="overview" class="on">ภาพรวมและอนุมัติ</button>
+  <!-- v2.7.1: เรียงตามลำดับงาน ก่อนนับ → ระหว่างนับ → ตรวจ/ปิดรอบ -->
+  <button data-t="overview" class="on">หน้าหลัก</button>
+  <button data-t="staff">พนักงาน</button>
   <button data-t="upload">นำเข้าไฟล์</button>
-  <button data-t="checks">ตรวจความพร้อม</button>
-  <button data-t="conflicts">ขัดแย้ง<span class="badge" id="confBadge" style="display:none"></span></button>
-  <button data-t="compare">เทียบ SAP กับ POS</button>
+  <button data-t="product">ตรวจข้อมูลสินค้า<span class="badge" id="confBadge" style="display:none"></span></button>
   <button data-t="devices">เครื่อง TC21</button>
+  <button data-t="locations">Location</button>
   <button data-t="summary">สรุปผลนับ</button>
   <button data-t="audit">ตรวจสอบ</button>
-  <button data-t="staff">พนักงาน</button>
   <button data-t="log">บันทึก Admin</button>
 </nav>
 <main>
@@ -229,18 +231,21 @@
     </div>
   </section>
 
-  <!-- ตรวจความพร้อม -->
-  <section id="checks">
-    <table id="checkTbl"></table>
-  </section>
-
-  <!-- ขัดแย้ง -->
-  <section id="conflicts">
+  <!-- ตรวจข้อมูลสินค้า (v2.7.1 รวม 3 แท็บเดิม): ① ขัดแย้ง → ② ตรวจความพร้อม → ③ เทียบ SAP กับ POS · ทำก่อนอนุมัติ Master ที่หน้าหลัก -->
+  <section id="product">
+    <div class="chips" id="prodSub">
+      <button data-s="conflicts" onclick="prodSub('conflicts')">① ขัดแย้ง<span class="badge" id="confBadge2" style="display:none"></span></button>
+      <button data-s="checks" onclick="prodSub('checks')">② ตรวจความพร้อม</button>
+      <button data-s="compare" onclick="prodSub('compare')">③ เทียบ SAP กับ POS</button>
+      <span class="muted">ตรวจครบแล้ว → กลับไปกด "อนุมัติ Master" ที่หน้าหลัก</span>
+    </div>
+  <div class="sub" id="conflicts">
     <div id="confList"></div>
-  </section>
-
-  <!-- เทียบ SAP กับ POS -->
-  <section id="compare">
+  </div>
+  <div class="sub" id="checks">
+    <table id="checkTbl"></table>
+  </div>
+  <div class="sub" id="compare">
     <div class="row">
       <div class="chips" id="chips"></div>
       <input type="search" id="q" placeholder="ค้นหา Material / Cust-mat / บาร์โค้ด" oninput="renderCompare()" style="min-width:260px">
@@ -249,10 +254,20 @@
     </div>
     <div class="muted" id="cmpInfo"></div>
     <div class="scroll"><table id="cmpTbl"></table></div>
+  </div>
   </section>
 
   <!-- เครื่อง TC21 -->
+  <!-- เครื่อง TC21 (v2.7.1): ตารางเครื่องขึ้นก่อน · ที่อยู่ระบบ / พิมพ์ป้าย / ชุดทดสอบ อยู่ล่างสุด -->
   <section id="devices">
+    <div class="row" style="margin-top:0">
+      <button class="btn sec" onclick="seedDevices()">สร้างรหัสเครื่อง TC21-01 ถึง</button>
+      <input type="text" id="seedN" value="5" size="2"> เครื่อง
+      <button class="btn sec" onclick="loadDevices()">รีเฟรช</button>
+      <span class="muted" id="qInfo"></span>
+    </div>
+    <div class="scroll"><table id="devTbl"></table></div>
+    <h3 style="margin:20px 0 8px;font-size:14px">ตั้งค่าและพิมพ์</h3>
     <div class="grid">
       <div class="card">
         <h3>ที่อยู่ระบบ</h3>
@@ -271,16 +286,14 @@
         <div class="muted">สุ่มบาร์โค้ดจริงจาก Device_Master + เลขปลอม + QR ที่อยู่แอป + บัตรพนักงานที่ไม่ถูกต้อง · ทุกป้ายมีคำว่า TEST · กดสร้างใหม่ได้ชุดสุ่มใหม่</div>
       </div>
     </div>
-    <div class="row" style="margin-top:12px">
-      <button class="btn sec" onclick="seedDevices()">สร้างรหัสเครื่อง TC21-01 ถึง</button>
-      <input type="text" id="seedN" value="5" size="2"> เครื่อง
+  </section>
+
+  <!-- Location (v2.7.1 แยกจากแท็บเครื่อง): ความคืบหน้าการนับ · โอนการดูแล · ปิดธง · กระทบยอดทั้งรอบ (K4) — ใช้ข้อมูลชุดเดียวกับแท็บเครื่อง -->
+  <section id="locations">
+    <div class="row" style="align-items:center">
       <button class="btn sec" onclick="loadDevices()">รีเฟรช</button>
-      <span class="muted" id="qInfo"></span>
-    </div>
-    <div class="scroll"><table id="devTbl"></table></div>
-    <div class="row" style="margin-top:16px;align-items:center">
-      <h3 style="margin:0;font-size:14px">Location</h3>
       <button class="btn sec" onclick="reconcile()" title="อ่าน Count_Log ทั้งชีต เทียบกับยอดที่ระบบใช้ และยอดตอนปิดทุก Location">กระทบยอดทั้งรอบ</button>
+      <span class="muted">ผลกระทบยอดทั้งรอบใช้กับเงื่อนไขปิดรอบ K4</span> <span class="muted" id="locAt"></span>
     </div>
     <div id="recon"></div>
     <div class="row" style="margin:6px 0" id="locBar">
@@ -496,9 +509,10 @@ function call(fn, args, ok, msg) {
 document.querySelectorAll('#nav button').forEach(function (b) {
   b.onclick = function () {
     document.querySelectorAll('#nav button').forEach(function (x) { x.classList.toggle('on', x === b); });
-    document.querySelectorAll('main section').forEach(function (s) { s.classList.toggle('on', s.id === b.dataset.t); });
-    if (b.dataset.t === 'compare' && !CMP) loadCompare();
-    if (b.dataset.t === 'devices') loadDevices();
+    document.querySelectorAll('main > section').forEach(function (s) { s.classList.toggle('on', s.id === b.dataset.t); });
+    if (b.dataset.t === 'product') prodSub(PROD || (S && S.master && S.master.pendingConflicts ? 'conflicts' : 'checks'));
+    // เครื่อง TC21 กับ Location ใช้ข้อมูลชุดเดียวกัน — สลับไปมาภายใน 1 นาทีไม่ถามเซิร์ฟเวอร์ซ้ำ (กด "รีเฟรช" เพื่อดึงใหม่)
+    if (b.dataset.t === 'devices' || b.dataset.t === 'locations') { if (DEV && Date.now() - DEV_AT < 60000) renderDevices(DEV); else loadDevices(); }
     if (b.dataset.t === 'staff') loadStaff();
     if (b.dataset.t === 'summary' && !SUM) loadSummary();
     if (b.dataset.t === 'audit') { renderAuKinds(); $('auQ').focus(); }
@@ -506,6 +520,14 @@ document.querySelectorAll('#nav button').forEach(function (b) {
 });
 
 function load() { call('apiGetState', [], render); }
+/** แท็บตรวจข้อมูลสินค้า: ปุ่มย่อย ① ขัดแย้ง ② ตรวจความพร้อม ③ เทียบ SAP กับ POS (v2.7.1) */
+var PROD = '';
+function prodSub(k) {
+  PROD = k;
+  document.querySelectorAll('#prodSub button').forEach(function (x) { x.classList.toggle('on', x.dataset.s === k); });
+  ['conflicts', 'checks', 'compare'].forEach(function (id) { $(id).classList.toggle('on', id === k); });
+  if (k === 'compare' && !CMP) loadCompare();
+}
 // v2.5.6: ระหว่าง "เตรียมรอบ" ถามสถานะทุก 30 วินาที (เบา: อ่าน Config อย่างเดียว) — เครื่องส่งรายการแรกแล้ว หัวหน้าเปลี่ยนเป็น "กำลังนับ" เอง ไม่ต้องปิดเปิดหน้า
 setInterval(function () {
   if (!S || !S.round || S.round.status !== 'SETUP' || document.hidden || $('busy').style.display === 'flex') return;
@@ -540,7 +562,7 @@ function reconcile(then) {
       then();
       ask({ title: r.ok ? '✓ กระทบยอดทั้งรอบ: ตรงทั้งหมด' : '⚠ กระทบยอดทั้งรอบ: พบจุดต่าง', ok: 'ปิด', noCancel: true,
         body: '<div>' + r.locs + ' Location · Count_Log ' + n0(r.lines) + ' รายการ ' + n0(r.qty) + ' ชิ้น</div>' + auditHtml(r.audit, bad, ok, n0) +
-          (r.ok ? '' : '<div class="muted" style="margin-top:6px">รายละเอียดเต็มอยู่ที่แท็บ "เครื่อง TC21" ใต้หัวข้อ Location</div>') }, function () {});
+          (r.ok ? '' : '<div class="muted" style="margin-top:6px">รายละเอียดเต็มอยู่ที่แท็บ "Location"</div>') }, function () {});
     }
   }, 'กำลังกระทบยอด… อ่าน Count_Log ทั้งชีต อาจใช้เวลาครู่หนึ่ง');
 }
@@ -559,7 +581,7 @@ function auditHtml(A, bad, ok, n0) {
     '<div>Seq ต่อเครื่อง: ' + (seq || '<span class="muted">ยังไม่มีรายการ</span>') + '</div>' +
     (A.ok ? '' : '<div class="muted">ระบบไม่แก้ชีตให้ (หลักฐานต้องคงตามจริง) — ดูประวัติการแก้ไขของแถวที่ระบุ: คลิกขวา → Show edit history</div>') + '</div>';
 }
-function setState(s) { S = s; CMP = null; render(s); showLogWarn(s.logWarn); if ($('compare').classList.contains('on')) loadCompare(); }
+function setState(s) { S = s; CMP = null; render(s); showLogWarn(s.logWarn); if ($('product').classList.contains('on') && $('compare').classList.contains('on')) loadCompare(); }
 
 function render(s) {
   S = s;
@@ -588,7 +610,7 @@ function render(s) {
   renderApprove(s.master, s);
   renderChecks(s.master.checks);
   renderConflicts(s.master);
-  var b = $('confBadge'); b.textContent = s.master.pendingConflicts; b.style.display = s.master.pendingConflicts ? '' : 'none';
+  ['confBadge', 'confBadge2'].forEach(function (id) { var b = $(id); b.textContent = s.master.pendingConflicts; b.style.display = s.master.pendingConflicts ? '' : 'none'; });
   renderLog();
   renderClose(s);
   renderHistory(s);
@@ -601,7 +623,7 @@ var LOGQ = null;
 // v2.5.7: ส่งลงเครื่อง "2,330 รหัส · 2,318 บาร์โค้ด" แบบเดียวกับบนเครื่อง · ต่างกัน = รหัสบาร์โค้ด 0000 / ซ้ำ (ยิงหาไม่ได้)
 function barcodeText(m) {
   var st = m.stats || {}, rows = m.deviceCount || st.posItems || 0, bc = st.barcodes || 0;
-  return fmt(rows) + ' รหัส · ' + fmt(bc) + ' บาร์โค้ด' + (rows > bc ? '<br><span class="muted">' + fmt(rows - bc) + ' รหัสยิงหาไม่ได้ (บาร์โค้ด 0000 / ซ้ำ) — ดูแท็บ ตรวจความพร้อม</span>' : '');
+  return fmt(rows) + ' รหัส · ' + fmt(bc) + ' บาร์โค้ด' + (rows > bc ? '<br><span class="muted">' + fmt(rows - bc) + ' รหัสยิงหาไม่ได้ (บาร์โค้ด 0000 / ซ้ำ) — ดูแท็บ ตรวจข้อมูลสินค้า → ตรวจความพร้อม</span>' : '');
 }
 function logRoundLabel(p) { return p === '(ไม่ระบุรอบ)' ? 'ก่อนเปิดรอบแรก' : p; }
 function logRoundOptions(rounds, project, allCount) {
@@ -1327,6 +1349,15 @@ function natCmp(a, b) {
 var SILENT_MIN = 10;   // ไม่ติดต่อเกินกี่นาทีจึงเตือน
 /** ติดต่อล่าสุด: เครื่องรายงานตัวทุก 1 นาทีพร้อมจำนวนค้างส่ง (เก็บไว้ 6 ชม.) */
 /** v2.7.0: Location ที่เครื่องนี้เป็นผู้ดูแลและยังไม่เสร็จ (กำลังนับ / พัก) — ใช้ตอนเครื่องเสียกลางคัน: ค้าง 0 → โอนนับต่อ · ค้าง > 0 → โอนแล้วล้างนับใหม่ */
+/** v2.7.1: ป้ายจำนวนเหตุการณ์ของเครื่องในรอบนี้ → กดแล้วเปิดรายงานเหตุการณ์ (แท็บตรวจสอบ) ที่เครื่องนั้น */
+function incBadge(x, d) {
+  var n = (d.incidents || {})[x.id] || 0;
+  return n ? '<div><a href="#" class="pill warn" onclick="openIncidents(\'' + esc(x.id) + '\');return false">⚠ ' + n + ' เหตุการณ์</a></div>' : '';
+}
+function openIncidents(id) {
+  document.querySelector('#nav button[data-t=audit]').click();
+  INC_FOCUS = id; devIncidents();
+}
 function unfinishedLine(x, d) {
   var mine = (d.members || []).filter(function (m) { return m.device === x.id && m.role === 'OWNER' && (m.state === 'COUNTING' || m.state === 'PAUSED'); });
   if (!mine.length) return '';
@@ -1352,8 +1383,8 @@ function perfLine(p) {
   var bad = (p.sync && p.sync.to) || (p.locInfo && p.locInfo.to);
   return out.length ? '<div class="muted"' + (bad ? ' style="color:#b54708"' : '') + '>' + esc(out.join(' · ')) + '</div>' : '';
 }
-var DEV = null;
-function loadDevices() { call('apiDevicesState', [], renderDevices); }
+var DEV = null, DEV_AT = 0;
+function loadDevices() { call('apiDevicesState', [], function (d) { DEV_AT = Date.now(); renderDevices(d); }); }
 // "พร้อมรอบนี้" (v2.5.5): ✓ = เปิดใช้ · จับคู่ · แอปล่าสุด · ไม่ค้างส่ง · ตรวจความพร้อมผ่านในรอบนี้ · ✗ บอกข้อที่ยังไม่ผ่าน
 function readyCell(x) {
   var r = x.ready || { ok: false, why: [] };
@@ -1482,30 +1513,54 @@ function staffEdits() {
   }, 'กำลังสรุปผู้ตรวจ…');
 }
 function auJumpEdits(code) { AU.kind = 'staff'; renderAuKinds(); $('auQ').value = code; $('auEd').checked = true; auditGo(); }
-var INC_RES = { ok: ['ok', '✓ กลับมาปกติ'], warn: ['warn', '⚠ ยังไม่จบ'], bad: ['bad', '✗ กระทบข้อมูล'] };
-/** เหตุการณ์ของเครื่อง: เกิดอะไร → ระบบแก้อย่างไร → ข้อมูลครบไหม */
+var INC_RES = { ok: ['ok', '✓ ปกติ'], warn: ['warn', '⚠ ต้องตาม'], bad: ['bad', '✗ กระทบข้อมูล'] };
+var INC_FOCUS = '', INC_OPEN = {};
+/**
+ * เหตุการณ์ของเครื่อง (v2.7.1): ตารางสรุป 1 แถว/เครื่อง (มีปัญหาขึ้นก่อน) → แตะแถวเพื่อกาง
+ * รายละเอียดแยก "ตอนนี้" (ปัญหาที่ยังค้าง ต้องตาม) กับ "ที่ผ่านมา" (เหตุการณ์ที่จบแล้ว ระบบแก้อย่างไร)
+ */
 function devIncidents() {
   call('apiDeviceIncidents', [], function (R) {
     if (!auReportHead(R, 'บันทึกเหตุการณ์ของเครื่อง (ชีต Device_Log)')) return;
-    var cnt = { ok: 0, warn: 0, bad: 0 };
-    R.rows.forEach(function (d) { cnt[d.verdict]++; });
-    var h = '<div class="card"><h3>เหตุการณ์ของเครื่อง <span class="muted" style="font-weight:400">' + R.rows.length + ' เครื่อง · ✓ ' + cnt.ok + ' · ⚠ ' + cnt.warn + ' · ✗ ' + cnt.bad + ' · เหตุการณ์ทั้งหมด ' + R.total + '</span></h3>' +
-      '<div class="muted">เครื่องจดเฉพาะตอนมีปัญหา (เน็ตหลุด · เซิร์ฟเวอร์ช้า/ไม่ว่าง · แอปปิดแล้วเปิดใหม่ · เซิร์ฟเวอร์ไม่รับรายการ · เครื่องถูกยกเลิก) และส่งมาพร้อมการส่งข้อมูลครั้งถัดไป · เวลาตามนาฬิกาเครื่อง · ' +
-      '✓ = ระบบแก้ได้เอง ข้อมูลครบ · ⚠ = เครื่องเงียบเกิน ' + R.silentMin + ' นาที หรือยังส่งค้างไม่ครบ → ตามเครื่อง · ✗ = Seq ขาด / เซิร์ฟเวอร์ไม่รับรายการ → ต้องแก้ก่อนปิดรอบ</div></div>';
-    if (!R.rows.length) h += '<div class="card">ยังไม่มีเครื่องในรอบนี้</div>';
-    R.rows.forEach(function (d) {
-      var v = INC_RES[d.verdict];
-      h += '<div class="card"><h3>' + esc(d.device) + ' <span class="pill ' + v[0] + '">' + v[1] + '</span> <span class="muted" style="font-weight:400">' + d.incidents.length + ' เหตุการณ์' +
-        (d.verdict === 'ok' ? ' · ข้อมูลครบ (Seq ไม่ขาด · ค้างส่ง ' + (d.pending === null ? '-' : nf(d.pending)) + ')' : '') + (d.lastAt ? ' · สัญญาณล่าสุด ' + esc(d.lastAt.slice(11, 16)) : '') + (d.version ? ' · แอป ' + esc(d.version) : '') + '</span></h3>' +
-        (d.why.length ? '<div>' + d.why.map(function (w) { return '<div class="' + (d.verdict === 'bad' ? 'neg' : '') + '"><b>' + esc(w) + '</b></div>'; }).join('') + '</div>' : '') +
-        (d.incidents.length ? '<table style="margin-top:6px"><tr><th style="width:90px">เวลา</th><th style="width:170px">เหตุการณ์</th><th>เกิดอะไร</th><th>ระบบแก้อย่างไร</th><th style="width:120px">ผล</th><th style="width:150px">ผู้ตรวจ</th></tr>' +
+    INC = R; INC_OPEN = {};
+    R.rows.forEach(function (d) { if (d.verdict !== 'ok' || d.device === INC_FOCUS) INC_OPEN[d.device] = true; });
+    renderIncidents();
+  }, 'กำลังสรุปเหตุการณ์ของเครื่อง…');
+}
+var INC = null, INC_RANK = { bad: 0, warn: 1, ok: 2 };
+function incToggle(id) { INC_OPEN[id] = !INC_OPEN[id]; renderIncidents(); }
+function renderIncidents() {
+  var R = INC; if (!R) return;
+  var cnt = { ok: 0, warn: 0, bad: 0 };
+  R.rows.forEach(function (d) { cnt[d.verdict]++; });
+  var rows = R.rows.slice().sort(function (a, b) { return INC_RANK[a.verdict] - INC_RANK[b.verdict] || b.incidents.length - a.incidents.length || (a.device < b.device ? -1 : 1); });
+  var h = '<div class="card"><h3>เหตุการณ์ของเครื่อง <span class="muted" style="font-weight:400">' + R.rows.length + ' เครื่อง · ✓ ' + cnt.ok + ' · ⚠ ' + cnt.warn + ' · ✗ ' + cnt.bad + ' · เหตุการณ์ทั้งหมด ' + R.total + '</span></h3>' +
+    '<div class="muted">เครื่องจดเฉพาะตอนมีปัญหา (เน็ตหลุด · เซิร์ฟเวอร์ช้า/ไม่ว่าง · แอปปิดแล้วเปิดใหม่ · เซิร์ฟเวอร์ไม่รับรายการ · เครื่องถูกยกเลิก) และส่งมากับการส่งข้อมูลครั้งถัดไป · ' +
+    '✓ ปกติ = ระบบแก้ได้เอง ข้อมูลครบ · ⚠ ต้องตาม = เครื่องเงียบเกิน ' + R.silentMin + ' นาที หรือยังส่งค้างไม่ครบ · ✗ = Seq ขาด / เซิร์ฟเวอร์ไม่รับรายการ → ต้องแก้ก่อนปิดรอบ · แตะแถวเพื่อดูรายละเอียด</div>' +
+    '<div class="scroll" style="margin-top:6px"><table id="incTbl"><colgroup><col style="width:90px"><col style="width:120px"><col><col style="width:90px"><col style="width:110px"><col style="width:150px"></colgroup>' +
+    '<tr><th>เครื่อง</th><th>ผล</th><th>ตอนนี้</th><th class="n">เหตุการณ์</th><th>สัญญาณล่าสุด</th><th>ข้อมูล</th></tr>';
+  if (!rows.length) h += '<tr><td colspan="6" class="muted">ยังไม่มีเครื่องในรอบนี้</td></tr>';
+  rows.forEach(function (d) {
+    var v = INC_RES[d.verdict], open = !!INC_OPEN[d.device], can = d.incidents.length || d.why.length;
+    var now = d.why.length ? d.why.map(function (w) { return '<div class="' + (d.verdict === 'bad' ? 'neg' : '') + '">' + esc(w) + '</div>'; }).join('') : '<span class="muted">ไม่มีปัญหาค้าง</span>';
+    h += '<tr class="incrow' + (d.device === INC_FOCUS ? ' ed' : '') + '"' + (can ? ' style="cursor:pointer" onclick="incToggle(\'' + esc(d.device) + '\')"' : '') + '>' +
+      '<td><b>' + esc(d.device) + '</b> ' + (can ? (open ? '▾' : '▸') : '') + '</td><td><span class="pill ' + v[0] + '">' + v[1] + '</span></td><td>' + now + '</td>' +
+      '<td class="n">' + d.incidents.length + '</td><td>' + (d.lastAt ? esc(d.lastAt.slice(11, 16)) : '-') + ' <span class="muted">แอป ' + esc(d.version || '-') + '</span></td>' +
+      '<td>' + (d.gaps ? '<span class="neg">Seq ขาด ' + d.gaps + '</span>' : 'Seq ไม่ขาด') + ' · ค้าง ' + (d.pending === null ? '-' : nf(d.pending)) + '</td></tr>';
+    if (open && can) {
+      h += '<tr class="incdet"><td></td><td colspan="5">' +
+        (d.why.length ? '<div style="margin-bottom:6px"><b>ตอนนี้</b> <span class="muted">— ยังค้างอยู่ ต้องตาม</span>' + d.why.map(function (w) { return '<div class="' + (d.verdict === 'bad' ? 'neg' : '') + '">• ' + esc(w) + '</div>'; }).join('') + '</div>' : '') +
+        (d.incidents.length ? '<div><b>ที่ผ่านมา</b> <span class="muted">— เหตุการณ์ที่เกิดขึ้น และระบบแก้อย่างไร</span></div>' +
+          '<table style="margin-top:4px"><tr><th style="width:90px">เวลา</th><th style="width:150px">เหตุการณ์</th><th>เกิดอะไร</th><th>ระบบแก้อย่างไร</th><th style="width:90px">ผล</th><th style="width:150px">ผู้ตรวจ</th></tr>' +
           d.incidents.map(function (x) {
             var r = INC_RES[x.res];
-            return '<tr><td style="white-space:nowrap">' + esc(x.time) + '</td><td><b>' + esc(x.th) + '</b></td><td>' + esc(x.what) + '</td><td>' + esc(x.how) + '</td><td><span class="pill ' + r[0] + '">' + (x.res === 'ok' ? '✓ ปกติ' : r[1]) + '</span></td><td>' + auStaff(x.staff, x.name) + '</td></tr>';
-          }).join('') + '</table>' : '<div class="muted" style="margin-top:4px">ไม่มีเหตุการณ์ — ทำงานปกติตลอด</div>') + '</div>';
-    });
-    $('auBody').innerHTML = h;
-  }, 'กำลังสรุปเหตุการณ์ของเครื่อง…');
+            return '<tr><td style="white-space:nowrap">' + esc(x.time) + '</td><td><b>' + esc(x.th) + '</b></td><td>' + esc(x.what) + '</td><td>' + esc(x.how) + '</td><td><span class="pill ' + r[0] + '">' + (x.res === 'warn' ? '⚠ ยังส่งไม่ครบ' : r[1]) + '</span></td>' +
+              '<td>' + auStaff(x.staff, x.name) + '</td></tr>';
+          }).join('') + '</table>' : '<div class="muted">ไม่มีเหตุการณ์ที่จบแล้ว</div>') + '</td></tr>';
+    }
+  });
+  $('auBody').innerHTML = h + '</table></div></div>';
+  INC_FOCUS = '';
 }
 
 // ---------- พนักงาน (v2.5.5) ----------
@@ -1590,7 +1645,7 @@ function renderDevices(d) {
       var st = !x.active ? '<span class="pill bad">ปิดใช้งาน</span>' + rev + '<div class="muted">นำกลับ: กด "เปิดใช้" → "สร้างรหัสจับคู่"</div>' :
         x.paired ? '<span class="pill ok">จับคู่แล้ว</span>' + (x.repairedAt ? rev : '') :
         '<span class="pill warn">ยังไม่จับคู่</span>' + rev + '<div class="muted">กด "สร้างรหัสจับคู่" แล้วใส่รหัสที่เครื่อง' + (x.revokedAt ? ' (เครื่องเดิม: กด "จับคู่ใหม่ (เก็บข้อมูลเดิม)")' : '') + '</div>';
-      st += unfinishedLine(x, d);
+      st += unfinishedLine(x, d) + incBadge(x, d);
       var pair = x.pairCode ? '<span class="big mono">' + x.pairCode + '</span><br><span class="muted">หมดอายุใน ' + Math.max(0, Math.round((x.pairExpires - now) / 60000)) + ' นาที</span>' : '';
       return '<tr><td><b>' + esc(x.id) + '</b></td><td>' + st + '</td><td>' + contactCell(x, d) + '</td><td>' + esc(x.lastSync) + '</td><td class="n">' + esc(x.lastSeq) + '</td><td class="n">' +
         (Number(x.gaps) ? '<span class="pill bad">' + esc(x.gaps) + '</span>' : esc(x.gaps || '')) + '</td><td>' + esc(x.lastCheck) + ' <span class="muted">' + esc(x.lastCheckAt) + '</span></td><td>' + esc(x.appVersion) +
@@ -1599,6 +1654,7 @@ function renderDevices(d) {
     }).join('');
   renderLocTbl();
   renderLabelLinks();
+  $('locAt').textContent = DEV_AT ? '· ข้อมูล ณ ' + new Date(DEV_AT).toTimeString().slice(0, 8) : '';
 }
 
 // ตาราง Location (v2.5.1): สรุปจำนวนตามสถานะ · กรอง "ต้องทำต่อ" (ค่าเริ่มต้น) / ปิดแล้ว / ทั้งหมด · ค้นหาชื่อ — รอบจริงราว 300 Location

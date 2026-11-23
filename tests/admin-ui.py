@@ -104,7 +104,8 @@ with sync_playwright() as p:
     opts = pg.eval_on_selector_all('#logRound option', 'els => els.map(e => e.textContent)')
     check(any('ก่อนเปิดรอบแรก · 1' == o for o in opts) and not any('ไม่ระบุรอบ' in o for o in opts) and '2026Q4-R1 (รอบปัจจุบัน) · 8' in opts, 'v2.5.7 ช่องเลือกรอบ: "ก่อนเปิดรอบแรก" แทน "(ไม่ระบุรอบ)": ' + str(opts))
     tabs = pg.eval_on_selector_all('#nav button', 'els => els.map(e => e.dataset.t)')
-    check(tabs.index('summary') + 2 == tabs.index('staff') and tabs.index('staff') + 1 == tabs.index('log'), 'v2.5.6 ลำดับแท็บ: สรุปผลนับ → (ตรวจสอบ v2.6.0) → พนักงาน → บันทึก Admin')
+    check(tabs == ['overview', 'staff', 'upload', 'product', 'devices', 'locations', 'summary', 'audit', 'log'], 'v2.7.1 ลำดับแท็บ: หน้าหลัก → พนักงาน → นำเข้าไฟล์ → ตรวจข้อมูลสินค้า → เครื่อง TC21 → Location → สรุปผลนับ → ตรวจสอบ → บันทึก Admin: ' + str(tabs))
+    check(pg.inner_text('#nav button[data-t=overview]') == 'หน้าหลัก', 'แท็บแรกชื่อ "หน้าหลัก"')
     # กระทบยอดทั้งรอบ + คำเตือนบันทึก Admin_Log ไม่สำเร็จ (v2.3.8)
     pg.evaluate("""window.RECON = { at: '2026-11-12 16:30:00', ok: false, locs: 20, closed: 15, qty: 1234, lines: 900,
       indexDiffs: ['T9 TC21-01 ดัชนี 38/38 ชีต 38/37'], closeDiffs: [{ loc: 'T9', close: 39, sheet: 38, flag: '' }, { loc: 'D6', close: 30, sheet: 32, flag: 'มีรายการหลังปิด' }], missing: [],
@@ -318,7 +319,7 @@ with sync_playwright() as p:
     pg.fill('#logQ', '')
 
     print('v2.5.1: ตาราง Location กรอง/ค้นหา · ค้นหา SKU ทุกกลุ่ม · K1 แยกตามเครื่อง · ตัด "Error:"')
-    pg.click('#nav button[data-t=devices]') if pg.locator('#nav button[data-t=devices]').count() else None
+    pg.click('#nav button[data-t=locations]')
     pg.evaluate("st => { LOCF = 'todo'; $('locQ').value = ''; renderDevices(st); }", st)
     L = st['locations']
     todo = [l for l in L if l['Status'] != 'ปิดแล้ว' or l.get('Flag') or l.get('Last_Check') in ('MISMATCH', 'WAIT')]
@@ -456,7 +457,7 @@ with sync_playwright() as p:
     pg.evaluate("x => { setState(x); }", st['STATE'])
     check(not pg.is_visible('#archBanner'), 'ไฟล์ปกติ → ไม่มีแถบ')
     # ตาราง Location ความกว้างคอลัมน์ตายตัว (UAT G11)
-    pg.click('#nav button[data-t=devices]')
+    pg.click('#nav button[data-t=locations]')
     pg.evaluate("st => { LOCF = 'all'; renderDevices(st); }", st)
     check(pg.locator('#locTbl col').count() == 11 and pg.evaluate("getComputedStyle($('locTbl')).tableLayout") == 'fixed', 'ตาราง Location: 11 คอลัมน์ ความกว้างตายตัว (table-layout fixed)')
     w = pg.evaluate("[].map.call(document.querySelectorAll('#locTbl tr:nth-child(2) td'), function (t) { return Math.round(t.getBoundingClientRect().width); })")
@@ -516,7 +517,7 @@ with sync_playwright() as p:
     pg.click('#nav button[data-t="audit"]'); pg.wait_for_timeout(50)
     check(pg.is_visible('#audit') and pg.locator('#auKinds button').count() == 3 and 'SKU' in pg.inner_text('#auKinds button.on'), 'แท็บ "ตรวจสอบ" อยู่ถัดจากสรุปผลนับ · ปุ่ม SKU / Location / ผู้ตรวจ (เริ่มที่ SKU)')
     navs = pg.eval_on_selector_all('#nav button', 'b => b.map(x => x.dataset.t)')
-    check(navs.index('audit') == navs.index('summary') + 1 and navs.index('staff') == navs.index('audit') + 1, 'ลำดับแท็บ: สรุปผลนับ → ตรวจสอบ → พนักงาน')
+    check(navs.index('audit') == navs.index('summary') + 1 and navs.index('log') == navs.index('audit') + 1, 'ลำดับแท็บ: สรุปผลนับ → ตรวจสอบ → บันทึก Admin')
     pg.evaluate('CALLS.length = 0'); pg.click('#audit button:has-text("ค้น")'); pg.wait_for_timeout(50)
     check(not any(c[0] == 'apiAudit' for c in pg.evaluate('CALLS')), 'ไม่ใส่คำค้น → ไม่เรียกเซิร์ฟเวอร์')
     pg.fill('#auQ', 'A112101UT0'); pg.press('#auQ', 'Enter'); pg.wait_for_timeout(80)
@@ -586,7 +587,7 @@ with sync_playwright() as p:
     check(any(c[0] == 'apiDeviceIncidents' for c in pg.evaluate('CALLS')) and ('%d เครื่อง' % len(IR['rows'])) in body, 'ปุ่ม "เหตุการณ์ของเครื่อง" → การ์ดรายเครื่อง %d เครื่อง' % len(IR['rows']))
     check('✗ กระทบข้อมูล' in body and 'เซิร์ฟเวอร์ไม่รับรายการ 1 ครั้ง' in body and 'ส่งครบเมื่อ 10:52' in body, 'แสดงผลตัดสิน ✗ + เหตุผล + เกิดอะไร → ระบบแก้อย่างไร')
     if len(IR['rows']) > 1:
-        check('ไม่มีเหตุการณ์ — ทำงานปกติตลอด' in body and 'Seq ขาด' in body, 'เครื่องที่ไม่มีเหตุการณ์ → "ทำงานปกติตลอด" · ชุดทดสอบนี้มี Seq ขาด → ✗ พร้อมเหตุผล')
+        check(pg.locator('#incTbl tr.incrow').count() == len(IR['rows']) and 'Seq ขาด' in body and 'ตอนนี้' in body, 'v2.7.1 แถวสรุป 1 แถว/เครื่อง · Seq ขาด → อยู่ในคอลัมน์ข้อมูล + ส่วน "ตอนนี้"')
     pg.screenshot(path='/tmp/admin-incidents.png', full_page=True)
     pg.evaluate("renderAudit({ none: true })")
     pg.evaluate("window.INCRES = { closed: true, project: 'R9', statusTh: 'ปิดรอบแล้ว', at: 'x' }"); pg.click('#audit button:has-text("เหตุการณ์ของเครื่อง")'); pg.wait_for_timeout(80)
@@ -633,6 +634,51 @@ with sync_playwright() as p:
     check(pg.evaluate("getComputedStyle(document.querySelector('#devTbl td')).whiteSpace") == 'nowrap', 'รหัสเครื่อง (TC21-01) ไม่ตัดคำ')
     pg.set_viewport_size({'width': 1280, 'height': 900}); pg.wait_for_timeout(100)
     pg.screenshot(path='/tmp/admin-devtbl.png')
+    print('\nv2.7.1: จัดหน้า Admin ใหม่ + แก้จาก UAT 19')
+    import re as _re
+    src = open(os.path.join(os.path.dirname(__file__), '..', 'gas', 'Admin.html'), encoding='utf-8').read()
+    fns = sorted(set(_re.findall(r'onclick=\\?"([A-Za-z_][A-Za-z0-9_]*)\(', src)) | set(_re.findall(r"onclick=\\'([A-Za-z_][A-Za-z0-9_]*)\(", src)) | set(_re.findall(r'onclick="([A-Za-z_][A-Za-z0-9_]*)\(', src)))
+    missing = pg.evaluate("fs => fs.filter(function (f) { return typeof window[f] !== 'function'; })", fns)
+    check(len(fns) > 40 and not missing, 'ทุกปุ่มในหน้า (onclick %d ฟังก์ชัน) ยังมีฟังก์ชันรองรับ — กันปุ่มหายตอนย้าย: ' % len(fns) + ', '.join(missing))
+    pg.click('#nav button[data-t=product]'); pg.wait_for_timeout(100)
+    check(pg.is_visible('#prodSub') and pg.locator('#prodSub button').count() == 3, 'แท็บตรวจข้อมูลสินค้า: ปุ่มย่อย 3 ปุ่ม')
+    for k, el in (('conflicts', '#confList'), ('checks', '#checkTbl'), ('compare', '#cmpTbl')):
+        pg.click('#prodSub button[data-s=%s]' % k); pg.wait_for_timeout(60)
+        vis = [x for x in ('conflicts', 'checks', 'compare') if pg.is_visible('#' + x)]
+        check(vis == [k], 'ปุ่มย่อย %s → แสดงเฉพาะส่วนนั้น: %s' % (k, vis))
+    pg.evaluate('CALLS.length = 0')
+    pg.click('#nav button[data-t=devices]'); pg.wait_for_timeout(80)
+    n1 = sum(1 for c in pg.evaluate('CALLS') if c[0] == 'apiDevicesState')
+    pg.evaluate("st => { DEV_AT = Date.now(); renderDevices(st); }", st)
+    pg.evaluate('CALLS.length = 0'); pg.click('#nav button[data-t=locations]'); pg.wait_for_timeout(80)
+    n2 = sum(1 for c in pg.evaluate('CALLS') if c[0] == 'apiDevicesState')
+    check(n2 == 0 and pg.is_visible('#locTbl') and not pg.is_visible('#devTbl'), 'สลับไปแท็บ Location ภายใน 1 นาที → ไม่ถามเซิร์ฟเวอร์ซ้ำ · เห็นตาราง Location ไม่เห็นตารางเครื่อง')
+    check('ข้อมูล ณ' in pg.inner_text('#locAt') and 'K4' in pg.inner_text('#locations'), 'แท็บ Location: บอกเวลาข้อมูล · หมายเหตุกระทบยอด = K4')
+    pg.click('#nav button[data-t=devices]'); pg.wait_for_timeout(60)
+    order = pg.evaluate("[$('devTbl').getBoundingClientRect().top, $('urlKv').getBoundingClientRect().top]")
+    check(order[0] < order[1], 'แท็บเครื่อง TC21: ตารางเครื่องอยู่บน · ที่อยู่ระบบ/พิมพ์ป้ายอยู่ล่าง')
+    pg.evaluate("st => { var d = JSON.parse(JSON.stringify(st)); d.incidents = { 'TC21-01': 2 }; renderDevices(d); }", st)
+    check('⚠ 2 เหตุการณ์' in pg.inner_text('#devTbl'), 'แถวเครื่องมีป้าย "⚠ 2 เหตุการณ์"')
+    pg.evaluate('CALLS.length = 0'); pg.click('#devTbl a:has-text("เหตุการณ์")'); pg.wait_for_timeout(80)
+    check(pg.is_visible('#audit') and any(c[0] == 'apiDeviceIncidents' for c in pg.evaluate('CALLS')), 'กดป้าย → แท็บตรวจสอบ เปิดรายงานเหตุการณ์')
+    R = {'project': 'P', 'status': 'COUNTING', 'statusTh': 'กำลังนับ', 'at': '2026-11-23 15:37:45', 'silentMin': 3, 'total': 3, 'rows': [
+        {'device': 'TC21-01', 'verdict': 'ok', 'why': [], 'gaps': 0, 'pending': 0, 'lastAt': '2026-11-23 15:37:00', 'lastSeq': 9, 'version': '2.7.1',
+         'incidents': [{'time': '15:27–15:29', 'th': 'แอปปิดแล้วเปิดใหม่', 'what': 'แอปปิดแล้วเปิดใหม่ (ปิดไป 1 นาที)', 'how': 'ข้อมูลในเครื่องอยู่ครบ', 'res': 'ok', 'staff': 'TA909', 'name': 'วีกูล'}]},
+        {'device': 'TC21-02', 'verdict': 'warn', 'why': ['เงียบไปตั้งแต่ 15:31 (6 นาที)'], 'gaps': 0, 'pending': 0, 'lastAt': '2026-11-23 15:31:00', 'lastSeq': 9, 'version': '2.7.1',
+         'incidents': [{'time': '15:20–15:22', 'th': 'เน็ตหลุด', 'what': 'เน็ตหลุด 1 นาที', 'how': 'ส่งครบเมื่อ 15:22', 'res': 'ok', 'staff': 'T9062', 'name': 'วิษณุ'}]},
+        {'device': 'TC21-03', 'verdict': 'ok', 'why': [], 'gaps': 0, 'pending': 0, 'lastAt': '', 'lastSeq': 0, 'version': '2.7.1', 'incidents': []}]}
+    pg.evaluate("R => { INC = R; INC_OPEN = { 'TC21-02': true }; renderIncidents(); }", R)
+    first = pg.locator('#incTbl tr.incrow').first.inner_text()
+    check(pg.locator('#incTbl tr.incrow').count() == 3 and first.startswith('TC21-02'), 'ตารางสรุป 1 แถว/เครื่อง · เครื่องที่ต้องตามขึ้นก่อน: ' + first.split('\n')[0])
+    det = pg.inner_text('#incTbl tr.incdet')
+    check('ตอนนี้' in det and 'เงียบไปตั้งแต่ 15:31' in det and 'ที่ผ่านมา' in det and 'ส่งครบเมื่อ 15:22' in det, 'กางแล้วแยก "ตอนนี้" (ค้าง) กับ "ที่ผ่านมา" (จบแล้ว)')
+    check(pg.locator('#incTbl tr.incdet').count() == 1, 'เครื่องปกติไม่กางเอง (รายงานไม่ยาวตามจำนวนเครื่อง)')
+    pg.click('#incTbl tr.incrow:has-text("TC21-01")'); pg.wait_for_timeout(50)
+    check(pg.locator('#incTbl tr.incdet').count() == 2, 'แตะแถวเครื่อง → กางรายละเอียด')
+    pg.screenshot(path='/tmp/admin-incidents.png')
+    check(pg.evaluate("getComputedStyle(document.querySelector('th.n') || document.createElement('th')).textAlign") in ('right', 'start') and
+          pg.evaluate("(function () { var t = document.createElement('table'); t.innerHTML = '<tr><th class=\"n\">x</th></tr>'; document.body.appendChild(t); var a = getComputedStyle(t.querySelector('th')).textAlign; t.remove(); return a; })()") == 'right',
+          'หัวคอลัมน์ตัวเลข (th.n) ชิดขวาตรงกับข้อมูล (UAT G19-8)')
     check(not dialogs, 'ไม่มี popup ของเบราว์เซอร์: ' + json.dumps(dialogs, ensure_ascii=False))
     b.close()
 print('\nผล: ผ่าน %d / ไม่ผ่าน %d' % (P, F))
