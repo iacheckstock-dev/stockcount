@@ -670,6 +670,23 @@ console.log('\nv2.7.0: 1 Location = 1 เครื่อง · ปล่อย�
     const cr = N.sync([], [N.ev('CLOSE', 'X75', { total: 3 })]);
     assert.ok(/ปิดขณะข้อมูลจากเครื่องอื่นยังไม่ครบ \(TC21-01\)/.test(loc('X75').Flag), JSON.stringify(cr.events) + JSON.stringify(members('X75')));
   });
+  test('UAT 19: เปิดซ้อนตอนออฟไลน์ที่ Location ที่ปิดแล้ว → ธง · ผู้ดูแลเปิดนับเพิ่ม → ล้างนับใหม่ → นับใหม่ → ปิด → ไม่มีธง ยอด = ที่นับใหม่', () => {
+    O.at = Date.now() + 200000; H.at = Date.now() + 200000;
+    O.sync([O.scan('X76', BC2, MAT2, 4)], [O.ev('OPEN', 'X76')]);
+    O.sync([], [O.ev('CLOSE', 'X76', { total: 4 })]);
+    assert.strictEqual(loc('X76').Flag, '');
+    const r = H.sync([H.scan('X76', BC2, MAT2, 1)], [H.ev('OPEN', 'X76')]);
+    assert.strictEqual(r.events[0].role, 'HELPER');
+    assert.ok(/นับซ้อน: TC21-02/.test(loc('X76').Flag) && /หลังปิด/.test(loc('X76').Flag), loc('X76').Flag);
+    H.sync([], [H.ev('SUBMIT', 'X76', { auto: true })]);
+    O.sync([], [O.ev('OPEN', 'X76')]);
+    O.sync([O.scan('X76', BC2, MAT2, -5, { type: 'RECOUNT_SET', basis: 5, reason: 'ล้าง Location นับใหม่ (เดิม 5) · เหตุผล: นับซ้อน' })], [O.ev('EDIT', 'X76', { clear: true })]);
+    O.sync([O.scan('X76', BC2, MAT2, 4)]);
+    O.sync([], [O.ev('CLOSE', 'X76', { total: 4 })]);
+    assert.strictEqual(loc('X76').Status, 'ปิดแล้ว');
+    assert.strictEqual(loc('X76').Flag, '', 'ธงหายหมด: ' + loc('X76').Flag);
+    assert.strictEqual(run('apiDevicesState()').locTotals.X76.qty, 4);
+  });
   test('เครื่องที่ถูกโอนออกเปิดซ้ำตอนออฟไลน์ → ติดธงนับซ้อน (ระบุว่าถูกโอนออก)', () => {
     run('apiLocResolveFlag("X75", "ตรวจแล้ว")');
     O.at = Date.now() + 120000;   // แอปจริงใช้เวลาเครื่อง (ms)
