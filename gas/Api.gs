@@ -1062,8 +1062,15 @@ function applyRole_(mt, locs, project, loc, deviceId, ev, match, upTo) {
         set({ Role: 'OWNER', State: 'COUNTING', State_At: now_() });
         locSet({ Opened_At: L.Opened_At || String(ev.time || now_()) });
       } else {
+        // v2.6.2: ไม่มีการนับร่วมแล้ว — เครื่องถามเซิร์ฟเวอร์ก่อนเปิดและถูกปฏิเสธ (1 Location = 1 เครื่อง)
+        // มาถึงตรงนี้ได้เฉพาะตอนเครื่องเปิดขณะออฟไลน์ / เปิดพร้อมกันพอดี → รับข้อมูลไว้แบบเดิม (ผู้ช่วย) แต่ติดธง "ต้องตรวจซ้ำ" (K2) ให้หัวหน้าทีมตัดสิน
+        if (ev.type === 'OPEN' && !me && !stale && !allowJoin_()) {   // JOIN = แอปรุ่นเก่า (< 2.6.2) ที่ตั้งใจเข้าร่วม → คงแบบเดิม
+          var fc = String(L.Flag_Check || ''), why = 'นับซ้อน: ' + deviceId + (staff ? ' ' + staff : '') + ' เปิด ' + loc + ' ขณะ ' + owner.m.Device_ID + ' เป็นผู้ดูแล (เปิดตอนออฟไลน์ / พร้อมกัน)';
+          if (fc.indexOf(why) < 0) locSet({ Flag_Check: (fc ? fc + ' · ' : '') + 'ต้องตรวจซ้ำ: ' + why });
+          logSys_('LOC_DOUBLE_OPEN', loc, why);
+        }
         res.role = 'HELPER'; res.state = 'COUNTING';
-        if (ev.type === 'OPEN') res.note = 'มีผู้ดูแลแล้ว (' + owner.m.Device_ID + ') — เป็นผู้ช่วย';
+        if (ev.type === 'OPEN') res.note = 'มีผู้ดูแลแล้ว (' + owner.m.Device_ID + ') — นับซ้อน ติดธงตรวจซ้ำ';
         if (closed) res.note = (res.note ? res.note + ' · ' : '') + 'เข้าร่วมหลังผู้ดูแลปิดแล้ว';
         if (me && me.State === 'SUBMITTED') res.note = (res.note ? res.note + ' · ' : '') + 'กลับมาช่วยอีกครั้ง';
         set({ Role: 'HELPER', State: 'COUNTING', State_At: now_() });
@@ -1368,7 +1375,7 @@ function apiLocInfo_(a, req) {
     if (cp || it.le) edits[k] = { cp: cp, by: it.le ? it.le[0] : '', at: it.le ? it.le[1] : '' };
   });
   return {
-    ok: true, location: loc, status: L.Status || '', flag: L.Flag || '', owner: owner, me: me, members: list,
+    ok: true, location: loc, status: L.Status || '', flag: L.Flag || '', owner: owner, me: me, members: list, allowJoin: allowJoin_(),
     others: { items: others, qty: r3_(othersQty) }, total: D.qty,
     clr: (D.clr && D.clr[a.deviceId]) || 0, edits: edits
   };
@@ -1569,3 +1576,10 @@ function deviceLogAdd_(deviceId, list, appVersion) {
   if (rows.length) appendRows_(sh, rows);
   return ack;
 }
+
+
+/**
+ * v2.6.2: 1 Location = 1 เครื่อง (ไม่มีการนับร่วม) — ช่วยนับให้แยกใช้ป้าย Location สำรอง
+ * สวิตช์ซ่อน Config ALLOW_JOIN = Y → กลับไปใช้การนับร่วมแบบเดิม (ใช้ในชุดทดสอบการนับร่วม · ทางถอยฉุกเฉิน) ไม่มีในหน้า Admin
+ */
+function allowJoin_() { return String(readConfig_().ALLOW_JOIN || '').toUpperCase() === 'Y'; }

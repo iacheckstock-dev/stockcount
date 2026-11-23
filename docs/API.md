@@ -171,6 +171,8 @@ sequenceDiagram
 
 `others` = ยอดต่อ SKU ของ**เครื่องอื่น**ตามที่เซิร์ฟเวอร์มี เครื่องรวมกับยอดในเครื่องตัวเองเป็นยอดรวมทุกเครื่อง (รวมรายการที่ยังไม่ได้ส่ง)
 `owner` = null แปลว่ายังไม่มีใครเปิด · `me` = null แปลว่าเครื่องนี้ยังไม่เคยร่วม
+`allowJoin` (v2.6.2) = false ปกติ → เครื่องที่ไม่ใช่สมาชิกยิง Location ที่มีผู้ดูแลแล้ว แอปปฏิเสธ (1 Location = 1 เครื่อง) · true เมื่อ Config `ALLOW_JOIN = Y` (นับร่วมแบบเดิม)
+**sync — OPEN ซ้อน (v2.6.2):** เครื่องที่ไม่ใช่สมาชิกส่ง OPEN Location ที่มีผู้ดูแลอยู่ (เปิดตอนออฟไลน์) → รับข้อมูลไว้ในฐานะผู้ช่วย + ติด `Flag_Check` "ต้องตรวจซ้ำ: นับซ้อน …" + System_Log `LOC_DOUBLE_OPEN` (JOIN จากแอปรุ่นเก่ายังเข้าร่วมได้ตามเดิม)
 
 ## myLocs
 คำตอบ: `{ ok, locs: [{ location, role, state, match, status, total, devices, flag, owner, mineSc, closedTime, closeTotal, helpers, helpersDone }], names: ["A1", "D80", …], at }`

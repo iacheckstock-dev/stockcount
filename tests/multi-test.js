@@ -72,10 +72,18 @@ test('ก เช็ก D80 → เห็นผู้ดูแล นาย ค; 
   assert.strictEqual(r.events[0].role, 'HELPER');
   assert.strictEqual(r.events[0].owner, 'TC21-01');
 });
-test('ข เปิด D80 ตอนออฟไลน์ (ส่ง OPEN ไม่ใช่ JOIN) → เซิร์ฟเวอร์ตัดสินเป็นผู้ช่วย', () => {
+test('v2.6.2: ข เปิด D80 ตอนออฟไลน์ (ส่ง OPEN) ขณะมีผู้ดูแล → รับข้อมูลไว้ (ผู้ช่วย) แต่ติดธง "นับซ้อน" ให้หัวหน้าทีมตัดสิน', () => {
   const r = KH.sync([KH.scan('D80', BC2, MAT2, 2)], [KH.ev('OPEN', 'D80')]);
   assert.strictEqual(r.events[0].role, 'HELPER');
-  assert.ok(/เป็นผู้ช่วย/.test(env.sheets.Loc_Checks.data.slice(-1)[0][12]));
+  assert.ok(/นับซ้อน/.test(env.sheets.Loc_Checks.data.slice(-1)[0][12]));
+  assert.ok(/ต้องตรวจซ้ำ: นับซ้อน: TC21-03 .* เปิด D80 ขณะ TC21-01 เป็นผู้ดูแล/.test(loc('D80').Flag), loc('D80').Flag);
+  assert.ok(env.sheets.Admin_Log.data.some(x => x.indexOf('LOC_DOUBLE_OPEN') >= 0));
+  // ส่ง OPEN ซ้ำ → ไม่ติดธงซ้ำ
+  KH.sync([], [KH.ev('OPEN', 'D80')]);
+  assert.strictEqual((loc('D80').Flag.match(/นับซ้อน/g) || []).length, 1);
+  // เทสต์ถัดไปเป็นกรณีนับร่วมแบบเดิม (แอปรุ่นเก่า) → ล้างธงในชีตเพื่อไม่ให้ปนผล
+  const lt = env.sheets.Locations.data, c = lt[0].indexOf('Flag_Check');
+  lt.forEach((row, i) => { if (i && row[0] === 'D80') row[c] = ''; });
 });
 test('ก ยิง 3 ชิ้น · ผู้ดูแลเห็นยอดเครื่องอื่นแยกจากของตัวเอง', () => {
   K.sync([K.scan('D80', BC1, MAT1, 1), K.scan('D80', BC1, MAT1, 1), K.scan('D80', BC2, MAT2, 1)]);

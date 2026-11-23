@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2.6.1';
+  var APP_VERSION = '2.6.2';
   var QTY_CONFIRM = 150;      // จำนวนที่ป้อนเองเกินนี้ต้องยืนยันอีกครั้ง
   var QTY_MAX_DIGITS = 5;     // ยาวกว่านี้ = น่าจะยิงบาร์โค้ดเข้าช่องจำนวน
   var INFO_EVERY = 15000;     // ถามสถานะผู้ช่วย/ผู้ดูแลระหว่างนับร่วมกัน
@@ -1079,6 +1079,14 @@
         if (closed) { show('count'); return; }
         return openLocation2(loc, pre, 'HELPER');
       });
+    } else if (pre && pre.owner && pre.owner.device !== S.cfg.deviceId && !pre.me && !pre.allowJoin) {
+      // v2.6.2: ไม่มีการนับร่วม — 1 Location = 1 เครื่อง · ถ้าต้องช่วยนับ ให้แยกใช้ป้าย Location สำรอง
+      SOUND.bad();
+      var isClosed = pre.status === 'ปิดแล้ว';
+      return result(false, loc + (isClosed ? ' ปิดแล้ว' : ' มีผู้นับอยู่แล้ว'), (isClosed ? 'นับโดย ' : 'กำลังนับโดย ') + (pre.owner.staff ? pre.owner.staff + ' ' : '') + by +
+        '\nเครื่องนี้เปิด ' + loc + ' ไม่ได้ (1 Location นับได้ 1 เครื่อง)' +
+        '\n• ช่วยนับ → ใช้ป้าย Location สำรอง (เลขถัดไป)' +
+        '\n• เครื่องเดิมใช้งานไม่ได้ → ให้หัวหน้าทีม "โอนการดูแล"').then(function () { show('count'); });
     } else if (pre && pre.status === 'ปิดแล้ว' && pre.me && pre.me.role === 'HELPER') {
       // ผู้ดูแลปิดแล้ว (หรือถูกโอนออก แล้วผู้ดูแลใหม่ปิด) → ผู้ช่วยกลับไปยิงเพิ่มไม่ได้
       SOUND.bad();
