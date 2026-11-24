@@ -634,6 +634,14 @@ with sync_playwright() as p:
     check(pg.evaluate("getComputedStyle(document.querySelector('#devTbl td')).whiteSpace") == 'nowrap', 'รหัสเครื่อง (TC21-01) ไม่ตัดคำ')
     pg.set_viewport_size({'width': 1280, 'height': 900}); pg.wait_for_timeout(100)
     pg.screenshot(path='/tmp/admin-devtbl.png')
+    print('\nv2.7.2: ปุ่มกรองหน้าสรุปผลนับบอกว่าเลือกอันไหนอยู่ (UAT G20-12)')
+    pg.click('#nav button[data-t=summary]'); pg.wait_for_timeout(100)
+    pg.evaluate("SUMF = 'diff'; renderSkus()")
+    for f in ('over', 'short', 'all', 'diff'):
+        pg.click('#sumChips button[data-f=%s]' % f); pg.wait_for_timeout(40)
+        dark = pg.evaluate("Array.from(document.querySelectorAll('#sumChips button')).filter(function (b) { return !b.classList.contains('sec'); }).map(function (b) { return b.dataset.f; })")
+        check(dark == [f], 'กด %s → ปุ่มนั้นปุ่มเดียวเป็นสีเข้ม: %s' % (f, dark))
+
     print('\nv2.7.1: จัดหน้า Admin ใหม่ + แก้จาก UAT 19')
     import re as _re
     src = open(os.path.join(os.path.dirname(__file__), '..', 'gas', 'Admin.html'), encoding='utf-8').read()
@@ -676,6 +684,8 @@ with sync_playwright() as p:
     pg.click('#incTbl tr.incrow:has-text("TC21-01")'); pg.wait_for_timeout(50)
     check(pg.locator('#incTbl tr.incdet').count() == 2, 'แตะแถวเครื่อง → กางรายละเอียด')
     pg.screenshot(path='/tmp/admin-incidents.png')
+    ws = pg.evaluate("Array.from(document.querySelectorAll('#incTbl table.incsub')).map(function (t) { return Array.from(t.rows[0].cells).map(function (c) { return Math.round(c.getBoundingClientRect().left); }).join(','); })")
+    check(len(ws) == 2 and ws[0] == ws[1], 'v2.7.2 (G20-11) ตารางย่อย 2 เครื่องคอลัมน์ตรงกัน: ' + str(ws))
     check(pg.evaluate("getComputedStyle(document.querySelector('th.n') || document.createElement('th')).textAlign") in ('right', 'start') and
           pg.evaluate("(function () { var t = document.createElement('table'); t.innerHTML = '<tr><th class=\"n\">x</th></tr>'; document.body.appendChild(t); var a = getComputedStyle(t.querySelector('th')).textAlign; t.remove(); return a; })()") == 'right',
           'หัวคอลัมน์ตัวเลข (th.n) ชิดขวาตรงกับข้อมูล (UAT G19-8)')

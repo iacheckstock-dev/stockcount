@@ -168,6 +168,16 @@ with sync_playwright() as p:
     l = loc('D90')
     check(l.get('Status') == 'ปิดแล้ว' and not l.get('Flag'), 'D90 ปิดแล้ว ไม่มีธง')
 
+    print('v2.7.2 (UAT G20-9): เปิด Location ใหม่ ยิงแล้ว → ถูกโอนออก → เครื่องเดิมต้องได้กล่องแจ้ง')
+    openloc(C, 'D95'); scan(C, BC1); scan(C, BC1); synced(C); settle(C)
+    get('/debug/transfer?loc=D95&to=TC21-03&why=' + urllib.parse.quote('ทดสอบ G20-9'))
+    C.evaluate('window.__SC.helloNow()')
+    t = box(C, 30000)
+    check('หัวหน้าทีมโอนการดูแล D95 แล้ว' in t and 'เครื่องนี้หยุดนับที่ D95' in t, 'เครื่องเดิมได้กล่องแจ้ง แม้ไม่เคยถามสถานะหลังเปิด: ' + t.replace('\n', ' ')[:100])
+    boxok(C); settle(C)
+    check(C.evaluate('window.__SC.S.loc') != 'D95', 'เครื่องเดิมออกจาก D95')
+    check(C.inner_text('#syncText').startswith('TC21-02 · รายการ'), 'v2.7.2 แถบบนบอกรหัสเครื่อง: ' + C.inner_text('#syncText'))
+
     print('เปิดซ้อนตอนออฟไลน์ → เซิร์ฟเวอร์รับข้อมูล + ติดธง → เครื่องแจ้งให้หยุด และออกจาก Location')
     openloc(C, 'F11'); scan(C, BC1); synced(C)
     K.context.set_offline(True); K.wait_for_timeout(300)

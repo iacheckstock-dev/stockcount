@@ -712,6 +712,20 @@ console.log('\nv2.7.0: 1 Location = 1 เครื่อง · ปล่อย�
     assert.strictEqual(JSON.stringify(run('apiDevicesState()').incidents), JSON.stringify(exp));
     assert.ok(exp['TC21-02'] >= 2);
   });
+  test('v2.7.2 (UAT G20-11) เวลาในชีตชั่วโมงหลักเดียว ("9:14:57") → รายงานเหตุการณ์ได้ 09:14 · padTs_ ไม่แตะค่าอื่น', () => {
+    assert.strictEqual(run('padTs_("2026-11-24 9:14:57")'), '2026-11-24 09:14:57');
+    assert.strictEqual(run('padTs_("2026-11-24 10:14:57")'), '2026-11-24 10:14:57');
+    assert.strictEqual(run('padTs_("TC21-01-abcdefghij")'), 'TC21-01-abcdefghij');
+    const lg = env.sheets.Device_Log.data, h = lg[0], row = h.map(() => '');
+    const set = (k, v) => { row[h.indexOf(k)] = v; };
+    set('Incident_ID', 'TC21-02-x9'); set('Project_ID', '2026Q4'); set('Device_ID', 'TC21-02'); set('Staff_Code', 'EMP-B'); set('Type', 'OFFLINE');
+    set('Start_Time', '2026-11-24 9:14:57'); set('End_Time', '2026-11-24 9:16:49'); set('Minutes', '1'); set('Scans', '1'); set('Pending', '1'); set('Drained_At', '2026-11-24 9:16:50');
+    lg.push(row);
+    const R = run('apiDeviceIncidents()'), d = R.rows.find(x => x.device === 'TC21-02'), x = d && d.incidents.find(i => i.id === 'TC21-02-x9');
+    assert.ok(x, JSON.stringify(R).slice(0, 300));
+    assert.strictEqual(x.time, '09:14–09:16');
+    assert.ok(x.how.indexOf('09:16') >= 0 && x.how.indexOf('9:16:') < 0, x.how);
+  });
 }
 
 console.log('\nยอดแยกเครื่องหลังล้าง Location (v2.3.6 — UAT D3 -5)');

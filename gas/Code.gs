@@ -12,7 +12,7 @@ var SCHEMA_VERSION = 13;   // 13 = v2.6.1 ชีต Device_Log · 6 = v2.4.1 Var
  * เวอร์ชันของระบบ (ใช้เลขเดียวทั้งแอป TC21 และเซิร์ฟเวอร์ ตาม Semantic Versioning MAJOR.MINOR.PATCH)
  * ต้องตรงกับ APP_VERSION ใน app/app.js และ appVersion ใน app/config.json — ดู CHANGELOG.md
  */
-var SYSTEM_VERSION = '2.7.1';
+var SYSTEM_VERSION = '2.7.2';
 
 var SHEETS = {
   Config: ['Key', 'Value', 'Note'],
@@ -371,7 +371,21 @@ function writeTable_(name, header, rows) {
 function readRaw_(name) {
   var sh = SpreadsheetApp.getActive().getSheetByName(name);
   if (!sh || sh.getLastRow() === 0) return [];
-  return sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getDisplayValues();
+  return dv_(sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()));
+}
+
+/**
+ * v2.7.2 (UAT G20-11): เวลาที่เขียนเป็นข้อความ "2026-11-24 09:14:57" ชีตแปลงเป็นวันที่เอง แล้วแสดง "2026-11-24 9:14:57" (ชั่วโมงหลักเดียว)
+ * ทำให้ตัด slice(11, 16) ได้ "9:14:" และเทียบเวลาแบบข้อความผิดช่วงก่อน 10 โมง ("9:…" > "10:…")
+ * อ่านชีตผ่านตัวนี้ → เติม 0 ให้ชั่วโมง · ไม่ใช้กับ checksum ไฟล์สำรอง (ต้องเทียบค่าที่ชีตแสดงตรง ๆ)
+ */
+function padTs_(v) {
+  return typeof v === 'string' && v.length === 18 && v.charCodeAt(12) === 58 && v.charCodeAt(10) === 32 && /^\d{4}-\d{2}-\d{2} \d:\d{2}:\d{2}$/.test(v) ? v.slice(0, 11) + '0' + v.slice(11) : v;
+}
+function dv_(range) {
+  var a = range.getDisplayValues();
+  for (var i = 0; i < a.length; i++) { var r = a[i]; for (var j = 0; j < r.length; j++) if (r[j].length === 18) r[j] = padTs_(r[j]); }
+  return a;
 }
 
 function readDecisions_() {
@@ -501,7 +515,7 @@ function logView_(log, project) {
  */
 function apiAdminLog(round, q, offset) {
   var sh = SpreadsheetApp.getActive().getSheetByName('Admin_Log');
-  var rows = logRows_(sh.getDataRange().getDisplayValues());
+  var rows = logRows_(dv_(sh.getDataRange()));
   var rounds = logRounds_(rows);
   if (round && round !== '*') rows = rows.filter(function (r) { return (r[5] || '(ไม่ระบุรอบ)') === round; });
   var term = String(q || '').trim().toLowerCase();
@@ -774,7 +788,7 @@ function incidentCounts_(project) {
 function countLogAudit_(project) {
   var sh = SpreadsheetApp.getActive().getSheetByName('Count_Log'), last = sh.getLastRow();
   var H = SHEETS.Count_Log, c = function (n) { return H.indexOf(n); };
-  var vals = last > 1 ? sh.getRange(2, 1, last - 1, c('Received_Time') + 1).getDisplayValues() : [];
+  var vals = last > 1 ? dv_(sh.getRange(2, 1, last - 1, c('Received_Time') + 1)) : [];
   var A = { lastRow: last, rows: 0, blank: 0, blankRows: [], noTime: 0, noScan: 0, noRecv: 0, noTimeRows: [], dupIds: 0, dupRows: [], devices: [] };
   var ids = {}, dev = {};
   vals.forEach(function (r, i) {
@@ -2081,7 +2095,7 @@ function apiDeviceIncidents() {
 
 /** ข้อความอ่านง่าย: เกิดอะไร → ระบบแก้อย่างไร → ผล (ok / warn / bad) */
 function incText_(x, names) {
-  var hm = function (t) { return String(t || '').slice(11, 16); }, mins = x.minutes ? x.minutes + ' นาที' : 'ไม่ถึง 1 นาที';
+  var hm = function (t) { return padTs_(String(t || '')).slice(11, 16); }, mins = x.minutes ? x.minutes + ' นาที' : 'ไม่ถึง 1 นาที';
   var drained = x.drainedAt ? 'ส่งครบเมื่อ ' + hm(x.drainedAt) : '', what = '', how = '', res = 'ok';
   if (x.type === 'OFFLINE') {
     what = 'เน็ตหลุด ' + mins + (x.scans ? ' · ยิงระหว่างนั้น ' + x.scans + ' รายการ เก็บไว้ในเครื่อง' : ' · ไม่ได้ยิงระหว่างนั้น');

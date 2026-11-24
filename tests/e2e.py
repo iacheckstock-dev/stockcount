@@ -82,7 +82,7 @@ with sync_playwright() as p:
     pg.wait_for_function("/พร้อมนับ ✓/.test(document.querySelector('#readyHead').textContent)", timeout=10000)
     shot('03-ready-pass')
     check(pg.is_visible('#btnStart'), 'ผ่านทุกข้อ ขึ้นปุ่มเริ่มนับ')
-    check('แอป 2.7.1 · เซิร์ฟเวอร์ 2.7.1' in pg.inner_text('#readyList'), 'แสดงเวอร์ชันแอปและเซิร์ฟเวอร์ตรงกัน')
+    check('แอป 2.7.2 · เซิร์ฟเวอร์ 2.7.2' in pg.inner_text('#readyList'), 'แสดงเวอร์ชันแอปและเซิร์ฟเวอร์ตรงกัน')
     pg.click('#btnStart'); pg.wait_for_selector('#v-count.on')
     check('นุ่น' in pg.inner_text('#tbStaff'), 'เข้างานเป็น นุ่น')
 
@@ -135,6 +135,7 @@ with sync_playwright() as p:
     pg.click('#btnLocUndo'); pg.click('#mYes'); pg.wait_for_timeout(300)
     check(pg.inner_text('#locSum').startswith('7 ชิ้น'), 'ย้อนการแก้ล่าสุด → กลับเป็น 7')
     pg.locator('#locItems li', has_text='UT0550XK').click(); pg.fill('#mInput', '3'); pg.click('#mYes'); pg.wait_for_timeout(300)
+    check(pg.inner_text('#btnLocBack') == 'กลับหน้านับ' and 'ยอดรวมของ SKU นั้นใน Location นี้ (ทุกเครื่อง)' in pg.inner_text('#locRule'), 'v2.7.2 หน้าดู/แก้ Location: ปุ่ม "กลับหน้านับ" · บอกว่าแก้ = ยอดรวมทุกเครื่อง ข้อมูลเดิมไม่ถูกลบ')
     pg.click('#btnLocBack'); pg.wait_for_selector('#v-count.on')
     pg.click('#btnClose'); check('5' in pg.inner_text('#mBody'), 'กล่องปิด Location แสดงยอดรวม 5'); pg.click('#mYes')
     pg.wait_for_selector('#result:not(.hidden)', timeout=15000)
@@ -237,7 +238,7 @@ with sync_playwright() as p:
     check('9.9.9' in pg.inner_text('#readyList'), 'มีเวอร์ชันใหม่ → ขึ้น ✗ พร้อมปุ่ม "อัปเดตแอปตอนนี้"')
     shot('11-update')
     pg.click('#btnUpdate'); pg.wait_for_load_state('load'); pg.wait_for_timeout(1500)
-    get('/debug/version?v=2.7.1')
+    get('/debug/version?v=2.7.2')
     pg.wait_for_selector('.view.on', timeout=10000)
     check('รายการ 38' in pg.inner_text('#syncText'), 'หลังกดอัปเดต แอปโหลดใหม่ ข้อมูลในเครื่องยังครบ 38 รายการ')
 
@@ -273,7 +274,7 @@ with sync_playwright() as p:
     ctx2.set_offline(True)
     scan(BC2); pg.wait_for_timeout(500)
     check('ส่งครบ' not in pg.inner_text('#locSku') and 'ค้าง 1' in pg.inner_text('#syncText'), 'ออฟไลน์ยิงเพิ่ม: ไม่ขึ้น ส่งครบ (' + pg.inner_text('#locSku') + ' · ' + pg.inner_text('#syncText') + ')')
-    check(pg.inner_text('#syncText').startswith('รายการ '), 'แถบบนใช้คำว่า "รายการ" (' + pg.inner_text('#syncText') + ')')
+    check(pg.inner_text('#syncText').startswith('TC21-01 · รายการ '), 'แถบบน: รหัสเครื่อง · "รายการ" (v2.7.2) (' + pg.inner_text('#syncText') + ')')
     ctx2.set_offline(False)
     pg.wait_for_function("/ค้าง 0/.test(document.querySelector('#syncText').textContent)", timeout=30000)
 

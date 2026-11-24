@@ -17,6 +17,7 @@
   nav button.on { color:#111; border-bottom-color:#111; font-weight:600; }
   nav .badge { display:inline-block; min-width:18px; padding:0 5px; margin-left:4px; border-radius:9px; font-size:11px; background:var(--badbg); color:var(--bad); }
   main { padding:16px; }
+  table.incsub { table-layout:fixed; width:100%; margin-top:4px; } table.incsub td { overflow-wrap:anywhere; }
   main > section { display:none; } main > section.on { display:block; }
   .sub { display:none; } .sub.on { display:block; }
   #prodSub { margin-bottom:10px; }
@@ -1089,7 +1090,7 @@ function renderSummary(R) {
   // 3 ราย SKU
   var chips = [['diff', 'ที่ต่างทั้งหมด'], ['short', 'ขาด'], ['over', 'เกิน'], ['special', 'มี IT/QI/BL'], ['match', 'ตรง'], ['adj', 'มีปรับยอด'], ['all', 'ทั้งหมด'], ['unmapped', 'ไม่มีใน Master']];
   h += '<div class="card" style="margin-top:12px"><h3>3. ผลต่างราย SKU <span class="muted" style="font-weight:400">แตะแถวเพื่อดูว่านับที่ Location ไหน เครื่องไหน ใครนับ</span></h3><div class="row">' +
-    chips.map(function (c) { return '<button class="btn ' + (SUMF === c[0] ? '' : 'sec') + '" onclick="SUMF=\'' + c[0] + '\';renderSkus()">' + c[1] + '</button>'; }).join('') +
+    '<span id="sumChips" style="display:contents">' + chips.map(function (c) { return '<button class="btn ' + (SUMF === c[0] ? '' : 'sec') + '" data-f="' + c[0] + '" onclick="SUMF=\'' + c[0] + '\';renderSkus()">' + c[1] + '</button>'; }).join('') + '</span>' +
     '<input type="search" id="sumQ" placeholder="ค้นหา Material / ชื่อ / บาร์โค้ด" oninput="renderSkus()" style="min-width:220px">' +
     '<span>ต่างตั้งแต่ <input type="text" id="sumMinQ" inputmode="decimal" placeholder="ทุกจำนวน" style="width:90px" oninput="renderSkus()"> ชิ้น</span></div>' +
     '<div class="muted" id="skuInfo"></div><div class="scroll" style="max-height:520px"><table id="skuTbl"></table></div></div>';
@@ -1112,6 +1113,8 @@ function sumRows() {
 /** v2.6.1 (UAT 18): ยอดบัญชี 0 แต่นับได้ → ไม่มีราคาทุน ผลต่างเป็นบาท = 0.00 · กรองด้วยบาทจะหลุด จึงติดป้ายและไม่ให้หลุดตัวกรองบาท */
 function book0(r) { return r[2] === 0 && r[5] > 0; }
 function renderSkus() {
+  // v2.7.2 (UAT G20-12): ปุ่มที่เลือกอยู่เป็นสีเข้ม (เดิมวาดใหม่แค่ตาราง ปุ่มค้างสีเดิม ไม่รู้ว่ากรองอะไรอยู่)
+  document.querySelectorAll('#sumChips button').forEach(function (b) { b.classList.toggle('sec', b.dataset.f !== SUMF); });
   var rows = sumRows(), MAX = 300, h;
   if (SUMF === 'unmapped') {
     h = '<tr><th>บาร์โค้ด</th><th class="n">นับได้ (ชิ้น)</th><th>Location=ชิ้น</th></tr>' + rows.map(function (u) { return '<tr><td class="mono">' + esc(u[0]) + '</td><td class="n">' + nf(u[1]) + '</td><td>' + esc(u[2]) + '</td></tr>'; }).join('');
@@ -1551,7 +1554,9 @@ function renderIncidents() {
       h += '<tr class="incdet"><td></td><td colspan="5">' +
         (d.why.length ? '<div style="margin-bottom:6px"><b>ตอนนี้</b> <span class="muted">— ยังค้างอยู่ ต้องตาม</span>' + d.why.map(function (w) { return '<div class="' + (d.verdict === 'bad' ? 'neg' : '') + '">• ' + esc(w) + '</div>'; }).join('') + '</div>' : '') +
         (d.incidents.length ? '<div><b>ที่ผ่านมา</b> <span class="muted">— เหตุการณ์ที่เกิดขึ้น และระบบแก้อย่างไร</span></div>' +
-          '<table style="margin-top:4px"><tr><th style="width:90px">เวลา</th><th style="width:150px">เหตุการณ์</th><th>เกิดอะไร</th><th>ระบบแก้อย่างไร</th><th style="width:90px">ผล</th><th style="width:150px">ผู้ตรวจ</th></tr>' +
+          // v2.7.2 (UAT G20-11): ตารางย่อยทุกเครื่องกว้างคอลัมน์เท่ากัน (เดิมแต่ละตารางกว้างตามข้อความของตัวเอง กางหลายเครื่องแล้วเหลื่อมกัน)
+          '<table class="incsub"><colgroup><col style="width:100px"><col style="width:130px"><col style="width:34%"><col><col style="width:120px"><col style="width:170px"></colgroup>' +
+          '<tr><th>เวลา</th><th>เหตุการณ์</th><th>เกิดอะไร</th><th>ระบบแก้อย่างไร</th><th>ผล</th><th>ผู้ตรวจ</th></tr>' +
           d.incidents.map(function (x) {
             var r = INC_RES[x.res];
             return '<tr><td style="white-space:nowrap">' + esc(x.time) + '</td><td><b>' + esc(x.th) + '</b></td><td>' + esc(x.what) + '</td><td>' + esc(x.how) + '</td><td><span class="pill ' + r[0] + '">' + (x.res === 'warn' ? '⚠ ยังส่งไม่ครบ' : r[1]) + '</span></td>' +

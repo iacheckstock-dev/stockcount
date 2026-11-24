@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2.7.1';
+  var APP_VERSION = '2.7.2';
   var QTY_CONFIRM = 150;      // จำนวนที่ป้อนเองเกินนี้ต้องยืนยันอีกครั้ง
   var QTY_MAX_DIGITS = 5;     // ยาวกว่านี้ = น่าจะยิงบาร์โค้ดเข้าช่องจำนวน
   var INFO_EVERY = 15000;     // ถามสถานะผู้ช่วย/ผู้ดูแลระหว่างนับร่วมกัน
@@ -475,7 +475,9 @@
       if (r && !r.flag) delete S.flags[loc];   // เซิร์ฟเวอร์ว่าไม่มีธง (ล้างนับใหม่/หัวหน้าทีมปิดธง) → ไม่เตือนค้าง (v2.2.9)
       // เทียบกับบทบาทที่เซิร์ฟเวอร์ยืนยันครั้งก่อน (ไม่ใช่ที่เครื่องเดาไว้ตอนเพิ่งเปิด Location)
       S.srvRole = S.srvRole || {};
-      var was = S.srvRole[loc];
+      // v2.7.2 (UAT G20-9): ยังไม่เคยได้บทบาทจากเซิร์ฟเวอร์ (เช่น ถามก่อนเปิด Location ตอนยังไม่เป็นสมาชิก) → ใช้บทบาทที่เครื่องจำไว้
+      // เดิมใช้แต่ srvRole จึงไม่รู้ว่าถูกโอนออก เครื่องเดิมนับต่อได้โดยไม่มีกล่องแจ้ง
+      var was = S.srvRole[loc] || (S.roles[loc] && S.roles[loc].state !== 'SUBMITTED' ? S.roles[loc].role : '');
       if (r.me) S.srvRole[loc] = r.me.role;
       if (r.me) setRole(loc, { role: r.me.role, state: S.loc === loc && r.me.state !== 'CLOSED' ? 'COUNTING' : r.me.state, owner: r.owner ? r.owner.device : '', ownerLabel: r.owner ? memberLabel(r.owner) : '' });
       // หัวหน้าทีมโอนการดูแล (v2.3.4 · v2.7.0)
@@ -793,7 +795,8 @@
     $('tbStaff').textContent = S.staff ? (S.staff.name || S.staff.code) : 'ยังไม่เข้างาน';
     var p = pending().length;
     // นับเป็น "รายการ" (บรรทัดที่บันทึก รวมลบ/แก้) ไม่ใช่ชิ้น — จำนวนที่ส่งแล้วดูได้ที่หน้าสถานะ
-    $('syncText').textContent = 'รายการ ' + fmt(S.entries.length) + ' · ค้าง ' + fmt(p);
+    // v2.7.2: บอกรหัสเครื่องที่แถบบน (รูปหน้าจอ/โทรคุยกันรู้ทันทีว่าเครื่องไหน) — บรรทัดสอง ไม่ต่อท้ายชื่อ กันชื่อยาวตัดบรรทัด
+    $('syncText').textContent = (S.cfg.deviceId ? S.cfg.deviceId + ' · ' : '') + 'รายการ ' + fmt(S.entries.length) + ' · ค้าง ' + fmt(p);
     $('netDot').className = 'dot ' + (S.syncing ? 'busy' : S.online === false ? 'off' : S.slow ? 'slow' : S.online === true ? 'on' : '');
     renderBanner();
   }

@@ -86,7 +86,7 @@ function table_(name) {
   if (memo && REQ_['t_' + name]) return REQ_['t_' + name];
   var sh = SpreadsheetApp.getActive().getSheetByName(name);
   var lastRow = sh.getLastRow(), lastCol = Math.max(sh.getLastColumn(), 1);
-  var values = lastRow ? sh.getRange(1, 1, lastRow, lastCol).getDisplayValues() : [[]];
+  var values = lastRow ? dv_(sh.getRange(1, 1, lastRow, lastCol)) : [[]];
   var header = values[0];
   var idx = {};
   header.forEach(function (h, i) { if (h) idx[h] = i; });
@@ -328,7 +328,7 @@ function apiStock_(a) {
 // - ยอดแต่ละ Location เก็บ upto (แถวที่รวมแล้ว) กันนับซ้ำเมื่ออ่านขณะเครื่องอื่นกำลังบันทึก
 // - บันทึกดัชนีกลับเฉพาะตอนถือล็อก (ingest_) · คำขออ่านอย่างเดียว (locInfo) คำนวณในหน่วยความจำ ไม่เขียน
 
-var LX_VER = 4;   // 2 = v2.3.1 (ตราประจำ Location + ยอดต่อ SKU สำหรับผู้ช่วยแก้ยอดตัวเอง)
+var LX_VER = 5;   // 5 = v2.7.2 เวลาเติม 0 ชั่วโมง (padTs_) — สร้างดัชนีใหม่ ทิ้งค่าเวลาเก่าที่ชั่วโมงหลักเดียว ·   // 2 = v2.3.1 (ตราประจำ Location + ยอดต่อ SKU สำหรับผู้ช่วยแก้ยอดตัวเอง)
 var LX_TTL = 21600;
 var LX_COLS = 14;
 var LX_PREFIX = 'lx_L_';
@@ -460,7 +460,7 @@ function lxNewMeta_(project, last) { return { v: LX_VER, project: project, last:
 function lxFromSheet_(sh, project) {
   var last = sh.getLastRow();
   var st = { meta: lxNewMeta_(project, last), locs: {}, dirty: {} };
-  var rows = last > 1 ? sh.getRange(2, 1, last - 1, LX_COLS).getDisplayValues() : [];
+  var rows = last > 1 ? dv_(sh.getRange(2, 1, last - 1, LX_COLS)) : [];
   lxApply_(st, rows, 2, project);
   Object.keys(st.locs).forEach(function (l) { st.locs[l].upto = last; delete st.locs[l]._clearing; });
   st.last = last;
@@ -521,7 +521,7 @@ function logIdx_(project, opt) {
     if (!X.meta.lv) X.meta.lv = {};
     if (meta.last < last) {
       // มีแถวเพิ่มจากทางอื่น (หรือเครื่องอื่นกำลังบันทึก) → อ่านเฉพาะแถวที่เพิ่ม
-      var rows = sh.getRange(meta.last + 1, 1, last - meta.last, LX_COLS).getDisplayValues();
+      var rows = dv_(sh.getRange(meta.last + 1, 1, last - meta.last, LX_COLS));
       var need = {};
       rows.forEach(function (r) { if (r[1] === project && r[5]) need[r[5]] = true; });
       if (!lxLoad_(X, Object.keys(need))) rebuild('cache ไม่ครบ');
@@ -881,7 +881,7 @@ function locData_(project, onlyLocs) {
   if (onlyLocs) return logIdx_(project).loc(onlyLocs);
   var sh = SpreadsheetApp.getActive().getSheetByName('Count_Log');
   var n = sh.getLastRow() - 1;
-  var vals = n > 0 ? sh.getRange(2, 1, n, 14).getDisplayValues() : [];
+  var vals = n > 0 ? dv_(sh.getRange(2, 1, n, 14)) : [];
   var want = onlyLocs ? {} : null;
   if (onlyLocs) onlyLocs.forEach(function (l) { want[l] = true; });
   var out = {};
