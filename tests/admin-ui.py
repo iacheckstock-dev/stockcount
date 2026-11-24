@@ -642,6 +642,26 @@ with sync_playwright() as p:
         dark = pg.evaluate("Array.from(document.querySelectorAll('#sumChips button')).filter(function (b) { return !b.classList.contains('sec'); }).map(function (b) { return b.dataset.f; })")
         check(dark == [f], 'กด %s → ปุ่มนั้นปุ่มเดียวเป็นสีเข้ม: %s' % (f, dark))
 
+    print('\nv2.7.3: สินค้าไม่มีราคาขึ้นบนสุด · แสดงเพิ่ม · หมายเหตุมูลค่า (UAT G21-7)')
+    pg.evaluate("""() => { var R = JSON.parse(JSON.stringify(SUM)), r = R.skus[R.skus.length - 1].slice();
+      r[0] = 'ZZBOOK0'; r[1] = 'สินค้าบัญชี 0'; r[2] = 0; r[3] = 3; r[4] = 0; r[5] = 3; r[6] = 3; r[7] = 0; r[8] = 0; r[13] = [['D1', 3]];
+      R.skus.push(r); while (R.skus.length < 650) { var x = R.skus[R.skus.length % 20].slice(); x[0] = 'FILL' + R.skus.length; x[6] = -1; x[7] = 10; x[8] = -10; R.skus.splice(0, 0, x); }
+      SUMF = 'diff'; SUMKEY = ''; renderSummary(R); }""")
+    pg.wait_for_timeout(80)
+    first = pg.locator('#skuTbl tr.click').first.inner_text()
+    check(first.startswith('ZZBOOK0') and 'ยอดบัญชี 0' in first, 'ที่ต่างทั้งหมด: สินค้าบัญชี 0 ที่นับได้อยู่แถวแรก: ' + first.split('\t')[0])
+    check('อยู่บนสุด' in pg.inner_text('#skuInfo'), 'บรรทัดจำนวน SKU บอกว่าสินค้าไม่มีราคาอยู่บนสุด: ' + pg.inner_text('#skuInfo'))
+    check('ไม่รวมสินค้าไม่มีราคา' in pg.inner_text('#noValNote') and 'เกิน' in pg.inner_text('#noValNote'), 'การ์ดผลต่าง (บาท) บอกว่าไม่รวมสินค้าไม่มีราคา: ' + pg.inner_text('#noValNote'))
+    n1 = pg.locator('#skuTbl tr.click').count()
+    check(n1 == 300 and pg.is_visible('#sumMore'), 'แสดง 300 แรก + ปุ่มแสดงเพิ่ม: ' + pg.inner_text('#sumMore'))
+    pg.click('#sumMore'); pg.wait_for_timeout(60)
+    check(pg.locator('#skuTbl tr.click').count() == 600, 'กดแสดงเพิ่ม → 600 แถว')
+    pg.click('#sumChips button[data-f=over]'); pg.wait_for_timeout(60)
+    check(pg.locator('#skuTbl tr.click').first.inner_text().startswith('ZZBOOK0'), 'ปุ่มเกิน: สินค้าบัญชี 0 อยู่แถวแรก')
+    pg.click('#sumChips button[data-f=diff]'); pg.wait_for_timeout(60)
+    check(pg.locator('#skuTbl tr.click').count() == 300, 'เปลี่ยนตัวกรอง → กลับไปแสดง 300 แรก')
+    pg.screenshot(path='/tmp/admin-v273.png', full_page=False)
+
     print('\nv2.7.1: จัดหน้า Admin ใหม่ + แก้จาก UAT 19')
     import re as _re
     src = open(os.path.join(os.path.dirname(__file__), '..', 'gas', 'Admin.html'), encoding='utf-8').read()
