@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2.7.5';
+  var APP_VERSION = '2.8.0';
   var QTY_CONFIRM = 150;      // จำนวนที่ป้อนเองเกินนี้ต้องยืนยันอีกครั้ง
   var QTY_MAX_DIGITS = 5;     // ยาวกว่านี้ = น่าจะยิงบาร์โค้ดเข้าช่องจำนวน
   var INFO_EVERY = 15000;     // ถามสถานะผู้ช่วย/ผู้ดูแลระหว่างนับร่วมกัน
@@ -780,6 +780,7 @@
     // v2.4.1: เข้าหน้าตั้งค่าใหม่ทุกครั้ง ล้างข้อความเก่า (เดิมขึ้น "จับคู่สำเร็จ" ค้างหลังยกเลิกการจับคู่)
     if (v === 'setup' && S.view !== 'setup') setupMsg('', true);
     if (v === 'sku' && S.view !== 'sku') S.skuBack = S.view;
+    if (v === 'help' && S.view !== 'help') S.helpBack = S.view;
     S.view = v;
     document.querySelectorAll('.view').forEach(function (el) { el.classList.toggle('on', el.id === 'v-' + v); });
     window.scrollTo(0, 0);
@@ -934,6 +935,8 @@
     var code = String(raw).trim(), up = code.toUpperCase();
     if (!code) return;
     if (S.view === 'setup') { if (/^DEV:/.test(up)) $('setDevice').value = up.slice(4); return; }
+    // v2.8.0: หน้าวิธีใช้เปิดอยู่ → ไม่รับการยิงใด ๆ (กันยิงแล้วนึกว่าบันทึก)
+    if (S.view === 'help') { SOUND.bad(); result(false, 'ปิดวิธีใช้ก่อนยิง', 'การยิงนี้ไม่ถูกบันทึก\nกด "ปิดวิธีใช้" แล้วยิงใหม่', { scanCloses: true }); return; }
     if (S.revoked) { SOUND.bad(); result(false, 'เครื่องนี้ถูกยกเลิก — ไม่บันทึก', 'กด "จับคู่ใหม่ (เก็บข้อมูลเดิม)"', { scanCloses: true }); return; }
     if (/^EMP:/.test(up)) return setStaff(up.slice(4));
     if (/^DEV:/.test(up)) { toast('นี่คือสติกเกอร์เครื่อง ' + up.slice(4)); return; }
@@ -1331,6 +1334,7 @@
     else if (b.dataset.m === 'locs') show('locs');
     else if (b.dataset.m === 'ready') { show('ready'); runChecks(false); }
     else if (b.dataset.m === 'sku') show('sku');
+    else if (b.dataset.m === 'help') show('help');
   });
 
   // ---------- ค้นหา SKU (v2.4.1) ----------
@@ -1377,6 +1381,11 @@
   }
   $('btnSkuGo').onclick = function () { skuLookup($('skuQ').value); };
   $('skuQ').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); skuLookup(this.value); } });
+  $('btnHelpBack').onclick = function () {
+    var b = S.helpBack && S.helpBack !== 'help' ? S.helpBack : 'count';
+    if (b === 'count' && !isReady()) b = 'ready';
+    show(b);
+  };
   $('btnSkuBack').onclick = function () {
     var b = S.skuBack && S.skuBack !== 'sku' && S.skuBack !== 'setup' ? S.skuBack : 'ready';
     if ((b === 'count' || b === 'loc' || b === 'locs' || b === 'manual') && !isReady()) b = 'ready';

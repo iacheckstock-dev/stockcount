@@ -17,6 +17,17 @@
   nav button.on { color:#111; border-bottom-color:#111; font-weight:600; }
   nav .badge { display:inline-block; min-width:18px; padding:0 5px; margin-left:4px; border-radius:9px; font-size:11px; background:var(--badbg); color:var(--bad); }
   main { padding:16px; }
+  /* v2.8.0 วิธีใช้: ข้อความล้วน ไม่เรียกเซิร์ฟเวอร์ · สร้างเนื้อหาตอนเปิดเท่านั้น */
+  nav .helpbtn { margin-left:auto; color:var(--acc); font-weight:600; }
+  #helpPanel { position:fixed; top:0; right:0; width:460px; max-width:100%; height:100vh; overflow:auto; background:#fff; border-left:1px solid var(--line);
+               box-shadow:-6px 0 18px rgba(0,0,0,.08); z-index:30; padding:14px 18px 30px; display:none; }
+  #helpPanel.on { display:block; }
+  #helpPanel h2 { font-size:16px; margin:0 0 4px; } #helpPanel h4 { margin:14px 0 4px; font-size:14px; }
+  #helpPanel ol, #helpPanel ul { padding-left:20px; margin:4px 0; } #helpPanel li { margin:3px 0; line-height:1.5; }
+  #helpPanel details { border:1px solid var(--line); border-radius:8px; padding:6px 10px; margin:10px 0; }
+  #helpPanel summary { font-weight:600; cursor:pointer; }
+  #helpPanel dt { font-weight:600; margin-top:6px; } #helpPanel dd { margin:0 0 4px; color:#333; line-height:1.5; }
+  #helpPanel .x { float:right; border:0; background:none; font-size:20px; cursor:pointer; color:var(--mut); }
   table.incsub { table-layout:fixed; width:100%; margin-top:4px; } table.incsub td { overflow-wrap:anywhere; }
   main > section { display:none; } main > section.on { display:block; }
   .sub { display:none; } .sub.on { display:block; }
@@ -154,6 +165,7 @@
   <button data-t="summary">สรุปผลนับ</button>
   <button data-t="audit">ตรวจสอบ</button>
   <button data-t="log">บันทึก Admin</button>
+  <button class="helpbtn" id="btnHelp" onclick="helpToggle()">? วิธีใช้</button>
 </nav>
 <main>
   <!-- บันทึก Admin_Log ไม่สำเร็จ (v2.3.8): แสดงจนกว่าจะกดรับทราบ -->
@@ -358,6 +370,7 @@
     <div class="row" style="margin-top:8px"><button class="btn sec" id="logMore" style="display:none" onclick="logQuery(LOGQ.offset + LOGQ.rows.length, true)">แสดงเพิ่ม</button></div>
   </section>
 </main>
+<aside id="helpPanel" aria-label="วิธีใช้"></aside>
 <div id="trDlg" class="dlg"><div class="box">
   <h3 style="margin-top:0">โอนการดูแล <span id="trLoc"></span></h3>
   <div class="muted">ผู้ดูแลเดิม <b id="trFrom"></b> หยุดนับที่ Location นี้ (ยอดเดิมยังอยู่ เครื่องใหม่นับต่อจากยอดนั้น) · เลือกได้เฉพาะเครื่องที่เปิดใช้และจับคู่แล้ว</div>
@@ -507,9 +520,10 @@ function call(fn, args, ok, msg) {
     .withFailureHandler(function (e) { busy(false); errBox(e && e.message ? e.message : String(e)); })[fn].apply(null, args || []);
 }
 
-document.querySelectorAll('#nav button').forEach(function (b) {
+document.querySelectorAll('#nav button[data-t]').forEach(function (b) {
   b.onclick = function () {
-    document.querySelectorAll('#nav button').forEach(function (x) { x.classList.toggle('on', x === b); });
+    document.querySelectorAll('#nav button[data-t]').forEach(function (x) { x.classList.toggle('on', x === b); });
+    if ($('helpPanel').classList.contains('on')) helpRender();   // v2.8.0: วิธีใช้เปิดอยู่ → เปลี่ยนตามแท็บ
     document.querySelectorAll('main > section').forEach(function (s) { s.classList.toggle('on', s.id === b.dataset.t); });
     if (b.dataset.t === 'product') prodSub(PROD || (S && S.master && S.master.pendingConflicts ? 'conflicts' : 'checks'));
     // เครื่อง TC21 กับ Location ใช้ข้อมูลชุดเดียวกัน — สลับไปมาภายใน 1 นาทีไม่ถามเซิร์ฟเวอร์ซ้ำ (กด "รีเฟรช" เพื่อดึงใหม่)
@@ -519,6 +533,69 @@ document.querySelectorAll('#nav button').forEach(function (b) {
     if (b.dataset.t === 'audit') { renderAuKinds(); $('auQ').focus(); }
   };
 });
+
+// ---------- วิธีใช้ (v2.8.0) ----------
+// ข้อความล้วนในหน้านี้ ไม่เรียกเซิร์ฟเวอร์ · สร้าง HTML ตอนกด "? วิธีใช้" เท่านั้น · เปลี่ยนตามแท็บที่เปิดอยู่
+var HELP = {
+  overview: ['หน้าหลัก', '<h4>เปิดรอบ</h4><ol><li>การ์ด “รอบนับ” → ใส่รหัสรอบใหม่ (เช่น 2026Q4) · วันนับ · ประเภทรอบ → <b>เปิด/แก้รอบ</b></li>' +
+    '<li>รหัสที่ปิดรอบไปแล้วใช้ซ้ำไม่ได้ · ประเภท: <b>รอบจริง</b> = นับจริง · <b>รอบทดลอง</b> = ฝึก / นำร่อง</li>' +
+    '<li>นำเข้าไฟล์ (แท็บนำเข้าไฟล์) → ตรวจข้อมูลสินค้า → กลับมาการ์ด “อนุมัติ Master” → อนุมัติ</li>' +
+    '<li>ให้ทุกเครื่อง ⋮ → ตรวจความพร้อมใหม่</li></ol>' +
+    '<h4>ปิดการนับ และปิดรอบ</h4><ol><li>ทุกเครื่อง: ปิด Location สุดท้าย · รอ “ค้าง 0”</li>' +
+    '<li>กด <b>ปิดการนับ</b> → เครื่องยิงสินค้าไม่ได้แล้ว (ย้อนได้ด้วย “เปิดการนับอีกครั้ง”)</li>' +
+    '<li>ทำขั้นที่ 1–5 ทีละขั้นจน K1–K7 ✓ · ขั้นที่ 1 (K3) รอประมาณ 1 นาทีหลังปิดการนับ เปิดจอทุกเครื่องไว้ แล้วกด “ตรวจอีกครั้ง”</li>' +
+    '<li>ขั้นที่ 6 <b>ปิดรอบ</b> → พิมพ์รหัสรอบ → รอ 1–3 นาที (ทำไฟล์สำรอง แล้วล้างชีตงาน) · <b>ย้อนกลับไม่ได้</b></li>' +
+    '<li>การ์ด “รอบที่ปิดแล้ว” → <b>ตรวจไฟล์สำรอง</b> → ✓ ทุกชีต</li></ol>'],
+  staff: ['พนักงาน', '<ul><li><b>+ เพิ่มพนักงาน</b> — รหัสผู้ตรวจสอบ + ชื่อ · ใช้กับบัตร EMP:รหัส</li>' +
+    '<li>ปิดใช้ = บัตรนั้นเข้างานไม่ได้ · เครื่องที่ใช้บัตรนั้นอยู่จะถูกให้ยิงบัตรใหม่</li>' +
+    '<li>แก้ข้อมูลพนักงานแล้ว เครื่องรู้เองในไม่กี่นาที</li></ul>'],
+  upload: ['นำเข้าไฟล์', '<ol><li><b>POS</b> (Stock_Shop .xls) ก่อน</li><li><b>SAP</b> (ZMMD002A) ยอดสิ้นวัน D−1 ของวันนับ</li>' +
+    '<li>ยังไม่มี SAP → ใช้ยอด POS ชั่วคราวได้ (ป้าย “ยอดชั่วคราว (POS)”) · ได้ SAP แล้วอัปโหลดทับ</li></ol>' +
+    '<ul><li><b>ไฟล์จากเครื่อง</b> — นำเข้าไฟล์ Export จาก TC21 (เครื่องเสีย / ส่งไม่ได้) หรือไฟล์ Dolphin เดิม</li></ul>'],
+  product: ['ตรวจข้อมูลสินค้า', '<p>ทำก่อนอนุมัติ Master ที่หน้าหลัก ตามลำดับ</p><ol><li><b>① ขัดแย้ง</b> — บาร์โค้ดเดียวกันชี้หลายรหัส → เลือกตัวที่ถูก</li>' +
+    '<li><b>② ตรวจความพร้อม</b> — ✗ ต้องแก้ · ⚠ อ่านแล้วรับทราบได้</li><li><b>③ เทียบ SAP กับ POS</b> — ดูรหัสที่ยอดต่างกัน · Export ส่งทีม SAP ได้</li></ol>'],
+  devices: ['เครื่อง TC21', '<h4>จับคู่เครื่อง (ครั้งแรก / หลังล้างข้อมูล)</h4><ol><li>แถวเครื่อง → <b>จับคู่ใหม่</b> → ได้รหัสจับคู่</li>' +
+    '<li>ที่เครื่อง: ใส่รหัสเครื่อง (TC21-01) + รหัสจับคู่ → จับคู่</li></ol>' +
+    '<ul><li><b>ส่งล่าสุด / ค้างส่ง</b> — เครื่องที่ค้างนาน: ให้ต่อ Wi-Fi แล้ว ⋮ → สถานะ → ส่งข้อมูลตอนนี้</li>' +
+    '<li><b>ยกเลิกเครื่อง</b> — เครื่องหาย / ใช้ผิดคน · ข้อมูลที่ส่งแล้วยังอยู่ · นำกลับมาใช้ได้</li>' +
+    '<li><b>เหตุการณ์ของเครื่อง</b> (แท็บตรวจสอบ) — ออฟไลน์นาน · แอปปิดแล้วเปิดใหม่ · ถูกยกเลิก</li></ul>'],
+  locations: ['Location', '<ul><li>1 Location นับได้ 1 เครื่อง · ตัวกรอง <b>ต้องทำต่อ / ปิดแล้ว / ทั้งหมด</b></li>' +
+    '<li><b>ตรวจยอดกับเครื่อง</b> ✓ ตรง = ยอดที่เครื่องปิดตรงกับเซิร์ฟเวอร์</li>' +
+    '<li><b>ต้องตรวจซ้ำ</b> (ธง) — เช่น 2 เครื่องนับซ้อนตอนออฟไลน์ / แก้ยอดชนกัน → ให้เครื่องล้าง Location นับใหม่ (ธงปิดเอง) หรือตรวจแล้วยอดถูก → ปุ่ม <b>ปิดธง</b> พร้อมเหตุผล</li>' +
+    '<li><b>โอนการดูแล</b> — เครื่องผู้ดูแลเสีย / ย้ายคน → โอนให้เครื่องอื่นนับต่อ (ยอดเดิมรวมให้)</li>' +
+    '<li><b>กระทบยอดทั้งรอบ</b> — ทำหลังปิดการนับ (K4)</li></ul>'],
+  summary: ['สรุปผลนับ', '<ul><li>การ์ดผลต่าง (ชิ้น / บาท) · ตัวกรอง <b>เกิน / ขาด / ที่ต่างทั้งหมด</b></li>' +
+    '<li>เรียงตามมูลค่า · สินค้าที่ต่างแต่ไม่มีราคา (บัญชี 0) อยู่บนสุด</li><li>แสดง 300 แถวแรก → <b>แสดงเพิ่มอีก 300</b></li>' +
+    '<li><b>พิมพ์ใบเดินตรวจ</b> — รายการที่ต้องเดินนับซ้ำ · <b>สรุปผลและบันทึก</b> = K5 ตอนปิดรอบ</li></ul>'],
+  audit: ['ตรวจสอบ', '<ul><li>ค้นตาม <b>SKU / Location / ผู้ตรวจ</b> — ดูทุกรายการที่ยิงและแก้ พร้อมเวลาและเครื่อง (อ่านอย่างเดียว)</li>' +
+    '<li><b>ผู้ตรวจแก้ข้อมูลบ่อย</b> — คนที่แก้ยอดมากผิดปกติ</li><li><b>เหตุการณ์ของเครื่อง</b> — ออฟไลน์ / เปิดแอปใหม่ / ถูกยกเลิก</li></ul>'],
+  log: ['บันทึก Admin', '<ul><li>ทุกการกระทำในหน้านี้ (เปิดรอบ · อัปโหลด · อนุมัติ · โอน · ปิดการนับ · ปิดรอบ) พร้อมเวลาและผู้กด</li>' +
+    '<li>แก้หรือลบไม่ได้ · ใช้ตรวจย้อนหลัง</li></ul>']
+};
+var HELP_FLOW = '<ol><li>หน้าหลัก: เปิดรอบ</li><li>นำเข้าไฟล์ POS → SAP → ตรวจข้อมูลสินค้า → อนุมัติ Master</li>' +
+  '<li>เครื่อง: ตรวจความพร้อม → ยิงบัตร → เริ่มนับ</li><li>นับ: ยิงป้าย → ยิงสินค้า → ยิงป้ายถัดไป (ปิดอันเดิมให้เอง) · อันสุดท้ายกด ปิด Location</li>' +
+  '<li>ระหว่างนับ: ดูแท็บ Location / เครื่อง TC21 / สรุปผลนับ</li><li>หน้าหลัก: ปิดการนับ → ขั้นที่ 1–5 → ปิดรอบ → ตรวจไฟล์สำรอง</li></ol>';
+var HELP_FAQ = '<dl><dt>เครื่องขึ้น “เป็นของเครื่องอื่น”</dt><dd>1 Location = 1 เครื่อง · ให้ใช้ป้ายสำรอง หรือ โอนการดูแล (แท็บ Location)</dd>' +
+  '<dt>เครื่องค้างส่งไม่ลด</dt><dd>ต่อ Wi-Fi → ⋮ → สถานะ → ส่งข้อมูลตอนนี้ · เครื่องเสียและมีค้าง → Export จากเครื่อง แล้วนำเข้าไฟล์จากเครื่อง</dd>' +
+  '<dt>K3 ไม่ผ่าน</dt><dd>รอประมาณ 1 นาทีหลังปิดการนับ (เปิดจอทุกเครื่อง) แล้วกด “ตรวจอีกครั้ง”</dd>' +
+  '<dt>K1 / K2 ไม่ผ่าน</dt><dd>มี Location ยังไม่ปิด / มีธงต้องตรวจซ้ำ → แท็บ Location ตัวกรอง “ต้องทำต่อ”</dd>' +
+  '<dt>K4 ไม่ผ่าน</dt><dd>กด กระทบยอดทั้งรอบ ใหม่ หลังทุกเครื่องส่งครบ</dd>' +
+  '<dt>ต้องนับเพิ่มหลังปิดการนับ</dt><dd>หน้าหลัก → เปิดการนับอีกครั้ง (ทำได้ก่อนปิดรอบเท่านั้น)</dd>' +
+  '<dt>เครื่องขึ้น “เปิดรอบใหม่แล้ว”</dt><dd>ให้เครื่องนั้น ⋮ → ตรวจความพร้อมใหม่</dd></dl>';
+function helpRender() {
+  var t = (document.querySelector('#nav button[data-t].on') || {}).dataset || {};
+  var h = HELP[t.t] || HELP.overview;
+  $('helpPanel').innerHTML = '<button class="x" onclick="helpToggle()" aria-label="ปิด">✕</button><h2>วิธีใช้ — ' + h[0] + '</h2>' +
+    '<div class="muted">เปลี่ยนแท็บ = เปลี่ยนหัวข้อ · ไม่ติดต่อเซิร์ฟเวอร์</div>' + h[1] +
+    '<details><summary>ลำดับงานทั้งรอบ</summary>' + HELP_FLOW + '</details>' +
+    '<details><summary>ปัญหาที่พบบ่อย</summary>' + HELP_FAQ + '</details>';
+}
+function helpToggle() {
+  var on = !$('helpPanel').classList.contains('on');
+  if (on) helpRender();
+  $('helpPanel').classList.toggle('on', on);
+  $('btnHelp').textContent = on ? '✕ ปิดวิธีใช้' : '? วิธีใช้';
+}
 
 function load() { call('apiGetState', [], render); }
 /** แท็บตรวจข้อมูลสินค้า: ปุ่มย่อย ① ขัดแย้ง ② ตรวจความพร้อม ③ เทียบ SAP กับ POS (v2.7.1) */

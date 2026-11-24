@@ -12,7 +12,7 @@ var SCHEMA_VERSION = 13;   // 13 = v2.6.1 ชีต Device_Log · 6 = v2.4.1 Var
  * เวอร์ชันของระบบ (ใช้เลขเดียวทั้งแอป TC21 และเซิร์ฟเวอร์ ตาม Semantic Versioning MAJOR.MINOR.PATCH)
  * ต้องตรงกับ APP_VERSION ใน app/app.js และ appVersion ใน app/config.json — ดู CHANGELOG.md
  */
-var SYSTEM_VERSION = '2.7.5';
+var SYSTEM_VERSION = '2.8.0';
 
 var SHEETS = {
   Config: ['Key', 'Value', 'Note'],
