@@ -1021,7 +1021,7 @@ function applyLocEvents_(deviceId, events, project, source, X) {
     }
     if (ev.type !== 'OPEN' && ev.type !== 'JOIN' || res.note) {
       checks.push([now_(), project, deviceId, loc, res.logType || ev.type, normStaff_(ev.staff), Number(ev.lines) || 0, Number(ev.qty) || 0,
-        srvLines, srvQty, ev.type === 'OPEN' || ev.type === 'JOIN' ? '' : match, upTo, res.note || '']);
+        srvLines, srvQty, ev.type === 'OPEN' || ev.type === 'JOIN' ? '' : match, upTo, [res.logNote, res.note].filter(Boolean).join(' · ')]);
     } else {
       checks.push([now_(), project, deviceId, loc, ev.type, normStaff_(ev.staff), '', '', '', '', '', '', ROLE_TH[res.role] || '']);
     }
@@ -1105,6 +1105,7 @@ function applyRole_(mt, locs, project, loc, deviceId, ev, match, upTo) {
       }
       set({ Role: 'OWNER', State: 'CLOSED', State_At: now_(), Cover_Seq: upTo, Sub_Lines: Number(ev.lines) || 0, Sub_Qty: Number(ev.qty) || 0, Match: match });
       res.role = 'OWNER'; res.owner = deviceId; res.state = 'CLOSED';
+      if (ev.auto) res.logNote = 'ปิดอัตโนมัติ — ยิงป้าย Location ถัดไป';   // v2.7.4: ลง Loc_Checks เท่านั้น (res.note = เตือนเครื่อง)
       if (stale) break;
       // ครอบคลุมตอนปิด: ผู้ดูแล = upTo ของเหตุการณ์ปิด, ผู้ช่วย = Cover_Seq ของการส่งงานล่าสุด (ถ้ายังไม่ส่งงาน = 0)
       var cover = {}, waiting = [];

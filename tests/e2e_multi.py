@@ -96,10 +96,11 @@ with sync_playwright() as p:
     openloc(K, 'D81'); scan(K, BC1); synced(K)
     check(K.inner_text('#tbLoc') == 'D81', 'ใช้ป้ายสำรอง D81 แทน → เปิดได้ตามปกติ')
 
-    print('ยิง Location ที่เครื่องอื่นพักไว้')
+    print('v2.7.4 เครื่องเจ้าของยิงป้ายถัดไป → ปิด D80 ให้เอง · เครื่องอื่นยิง D80 เห็น "นับเสร็จแล้ว"')
     openloc(C, 'D82'); scan(C, BC1); synced(C)
+    check(C.evaluate("window.__SC.S.roles['D80'].state") == 'CLOSED', 'เครื่องเจ้าของ: D80 เป็น ปิดแล้ว (ไม่ใช่พักไว้)')
     scan(K, 'LOC:D80'); t = box(K)
-    check('พักไว้โดย นุ่น (TC21-02)' in t, 'บอกว่า "พักไว้โดย …": ' + t.replace('\n', ' ')[:80])
+    check('นับเสร็จแล้ว' in t and 'นุ่น (TC21-02)' in t, 'กล่องบอก "D80 นับเสร็จแล้ว นับโดย …": ' + t.replace('\n', ' ')[:80])
     boxok(K)
     check(K.inner_text('#tbLoc') == 'D81', 'ยังอยู่ที่ D81 (ไม่ถูกดึงออก)')
 

@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2.7.3';
+  var APP_VERSION = '2.7.4';
   var QTY_CONFIRM = 150;      // จำนวนที่ป้อนเองเกินนี้ต้องยืนยันอีกครั้ง
   var QTY_MAX_DIGITS = 5;     // ยาวกว่านี้ = น่าจะยิงบาร์โค้ดเข้าช่องจำนวน
   var INFO_EVERY = 15000;     // ถามสถานะผู้ช่วย/ผู้ดูแลระหว่างนับร่วมกัน
@@ -1065,11 +1065,15 @@
     }
     return ask.then(function (ok) {
       if (!ok) { show('count'); return; }
-      var prev = S.loc;
-      return (prev ? leaveLocation(prev) : Promise.resolve()).then(function () {
+      var prev = S.loc, prevNote = '';
+      // v2.7.4: ยิงป้ายใหม่ = ปิด Location เดิมให้เอง (เดิม "พักไว้" แล้วลืมปิด สะสมจนต้องตามปิดทีละอันก่อนปิดรอบ)
+      // ปิดแล้วยังเปิดนับเพิ่มได้เสมอ (ยิงป้ายเดิม → "เปิดนับเพิ่ม") · ยังไม่ยิงอะไร / เป็นของเครื่องอื่น → ออกแบบเดิม
+      var leave = !prev ? Promise.resolve() : autoCloseable(prev) ? autoClose(prev).then(function (n) { prevNote = 'ปิด ' + prev + ' แล้ว (' + fmt(n) + ' ชิ้น)'; })
+        : leaveLocation(prev).then(function () { prevNote = isHelperBefore(prev) ? 'ออกจาก ' + prev + ' แล้ว' : ''; });
+      return leave.then(function () {
         S.loc = loc; S.recountBanner = ''; S.lastSku = null; clearResume();
         setRole(loc, { role: 'OWNER', state: 'COUNTING' });
-        var note = prev ? (isHelperBefore(prev) ? 'ออกจาก ' + prev + ' แล้ว' : prev + ' พักไว้ (ยังไม่ปิด)') : '';
+        var note = prevNote;
         // ถามเซิร์ฟเวอร์ก่อนว่าใครเป็นผู้ดูแล — ระหว่างนี้ยังไม่รับการยิง (v2.2.6)
         S.checking = loc;
         SOUND.ok();
@@ -1113,6 +1117,18 @@
     }
     return res(loc + ' เป็นของเครื่องอื่น', (o.state === 'PAUSED' ? 'พักไว้โดย ' : 'กำลังนับโดย ') + who + rule + wrong +
       '\n• มาช่วยนับ → ใช้ป้าย Location สำรองถัดไป');
+  }
+
+  /** v2.7.4: ปิดเองได้เมื่อเป็นผู้ดูแลและเครื่องนี้ยิงใน Location นั้นแล้ว (ยังไม่ยิง → พัก = เซิร์ฟเวอร์คืน Location ให้เอง) */
+  function autoCloseable(loc) {
+    return !isHelper(loc) && S.entries.some(function (e) { return e.location === loc; });
+  }
+  /** v2.7.4: ปิดโดยไม่ถาม ไม่รอเซิร์ฟเวอร์ (ส่งตามรอบปกติ) · ยอดตอนปิด = ยอดรวมทุกเครื่องที่รู้ตอนนี้ · คืนจำนวนชิ้น */
+  function autoClose(loc) {
+    var total = combinedSummary(loc).qty;
+    setRole(loc, { role: 'OWNER', state: 'CLOSED' });
+    if (S.loc === loc) S.loc = null;
+    return addEvent('CLOSE', loc, { total: total, auto: true }).then(saveState).then(function () { return total; });
   }
 
   /** ออกจาก Location โดยไม่ปิด: ผู้ดูแล → พัก · ผู้ช่วย → ส่งงานอัตโนมัติ */
@@ -1439,7 +1455,23 @@
     if (f !== 'todo') html += grp('เสร็จแล้ว', done);
     if (f === 'todo' && !todo.length) html += '<li class="grp">ไม่มีงานค้าง · แตะ "ทั้งหมด" เพื่อดู Location ที่เสร็จแล้ว</li>';
     $('locsList').innerHTML = html;
+    var np = pausedLocs().filter(autoCloseable).length;
+    $('btnLocsCloseAll').classList.toggle('hidden', !np);
+    $('btnLocsCloseAll').textContent = 'ปิดทุก Location ที่พักไว้ (' + np + ')';
   }
+  // v2.7.4: ปิดทุก Location ที่พักไว้ (เก็บกวาดที่ค้างจากเวอร์ชันก่อน / ก่อนปิดการนับ)
+  $('btnLocsCloseAll').onclick = function () {
+    var p = pausedLocs().filter(autoCloseable);
+    if (!p.length) { toast('ไม่มี Location ที่พักไว้'); return; }
+    confirmBox('ปิดทุก Location ที่พักไว้', p.length + ' Location: <b>' + esc(p.join(', ')) + '</b><br>ยอดตอนปิด = ยอดที่นับไว้ตอนนี้<br><span class="muted">ปิดแล้วยังเปิดนับเพิ่มได้ (ยิงป้ายเดิม)</span>', 'ปิดทั้งหมด')
+      .then(function (yes) {
+        if (!yes) return;
+        return p.reduce(function (pr, l) { return pr.then(function () { return autoClose(l); }); }, Promise.resolve()).then(function () {
+          SOUND.ok(); render(); renderLocs(); syncNow();
+          return result(true, 'ปิดแล้ว ' + p.length + ' Location', p.join(', '));
+        });
+      });
+  };
   $('locsChips').addEventListener('click', function (e) {
     var b = e.target.closest('button[data-f]'); if (!b) return;
     S.locsFilter = b.dataset.f; renderLocs(); $('locsList').scrollTop = 0; window.scrollTo(0, 0);

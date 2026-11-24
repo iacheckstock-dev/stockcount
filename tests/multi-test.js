@@ -420,6 +420,20 @@ test('เครื่องหมดเวลารอแล้วส่งเ�
   assert.strictEqual(r1.events[0].match, 'OK');
 });
 
+test('v2.7.4 ปิดอัตโนมัติ (ยิงป้ายถัดไป) → Loc_Checks มีหมายเหตุ "ปิดอัตโนมัติ" · ไม่ส่งคำเตือนกลับเครื่อง', () => {
+  const d = device('TC21-02', 'EMP-KH'); d.seq = 940; d.at = 7400;
+  const e = d.scan('P4', BC1, MAT1, 3);
+  d.sync([e], [d.ev('OPEN', 'P4')]);
+  const r = d.sync([], [d.ev('CLOSE', 'P4', { total: 3, auto: true })]);
+  const ec = r.events.find(x => x.type === 'CLOSE') || r.events[r.events.length - 1];
+  assert.strictEqual(ec.match, 'OK'); assert.ok(!ec.note, 'ไม่มี note กลับเครื่อง: ' + ec.note);
+  const lc = env.sheets.Loc_Checks.data, last = lc[lc.length - 1];
+  assert.ok(last.includes('P4') && last.some(c => String(c).indexOf('ปิดอัตโนมัติ') === 0), JSON.stringify(last));
+  const r2 = d.sync([], [d.ev('OPEN', 'P4'), d.ev('CLOSE', 'P4', { total: 3 })]);
+  const lc2 = env.sheets.Loc_Checks.data; assert.ok(!lc2[lc2.length - 1].some(c => String(c).indexOf('ปิดอัตโนมัติ') >= 0), 'ปิดเองไม่มีหมายเหตุ');
+  assert.ok(r2.ok);
+});
+
 console.log('\nโอนการดูแล / hello บอกจำนวนเครื่อง (v2.2.7)');
 test('hello บอกจำนวนเครื่องใน Location ที่อยู่', () => {
   const a = device('TC21-05', 'EMP-K'); a.seq = 950;
