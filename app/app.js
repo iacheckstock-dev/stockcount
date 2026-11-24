@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2.7.4';
+  var APP_VERSION = '2.7.5';
   var QTY_CONFIRM = 150;      // จำนวนที่ป้อนเองเกินนี้ต้องยืนยันอีกครั้ง
   var QTY_MAX_DIGITS = 5;     // ยาวกว่านี้ = น่าจะยิงบาร์โค้ดเข้าช่องจำนวน
   var INFO_EVERY = 15000;     // ถามสถานะผู้ช่วย/ผู้ดูแลระหว่างนับร่วมกัน
@@ -181,15 +181,20 @@
       // v2.5.5 (B1 · B2): รอบในเซิร์ฟเวอร์เปลี่ยนแล้ว — หยุดยิง + บอกกลางจอครั้งเดียว (ตรวจความพร้อมใหม่จะพาเข้ารอบใหม่)
       if (project && S.boot.project.id && S.serverProject !== project) {
         S.serverProject = project;
-        SOUND.warn();
-        var h = 'เปิดรอบใหม่ <b>' + esc(project) + '</b> แล้ว · เครื่องยังอยู่รอบ ' + esc(S.boot.project.id) + '<br>• ยิงไม่ได้จนกว่าจะเข้ารอบใหม่<br>• กด ⋮ → <b>ตรวจความพร้อมใหม่</b>';
-        notice('เปิดรอบใหม่แล้ว', h);
+        // v2.7.5 (UAT G23): แจ้งครั้งเดียวต่อรหัสรอบ — จำไว้ในเครื่อง (เดิมจำแค่ในหน่วยความจำ → ตรวจความพร้อมแบบเร็ว / เปิดแอปใหม่ แล้วแจ้งซ้ำ)
+        if (S.boot.noticedProject !== project) {
+          S.boot.noticedProject = project; DB.set('boot', S.boot);
+          SOUND.warn();
+          var h = 'เปิดรอบใหม่ <b>' + esc(project) + '</b> แล้ว · เครื่องยังอยู่รอบ ' + esc(S.boot.project.id) + '<br>• ยิงไม่ได้จนกว่าจะเข้ารอบใหม่<br>• กด ⋮ → <b>ตรวจความพร้อมใหม่</b>';
+          notice('เปิดรอบใหม่แล้ว', h);
+        }
         render();
       }
       return;
     }
     var wasMoved = !!S.serverProject;
     S.serverProject = '';
+    if (S.boot.noticedProject) { delete S.boot.noticedProject; DB.set('boot', S.boot); }
     var prev = S.boot.project.status;
     if (prev === st) { if (wasMoved) render(); return; }
     S.boot.project.status = st;
@@ -199,7 +204,8 @@
       var html = 'รอบ ' + esc(S.boot.project.id) + ' ปิดการนับจากหน้า Admin แล้ว<br>• <b>ยิงสินค้าและเปิด Location ใหม่ไม่ได้</b><br>• รายการที่ค้างส่ง ระบบส่งให้เองตามปกติ' +
         (S.loc ? '<br>• ' + esc(S.loc) + ' ยังเปิดอยู่: ตรวจยอดแล้วกด "ปิด Location"' : '') + '<br>• ค้นหา SKU ได้ที่เมนู ⋮';
       notice('ปิดการนับแล้ว', html);
-    } else if (st === 'CLOSED' || st === 'CLOSING') {
+    } else if ((st === 'CLOSED' || st === 'CLOSING') && prev !== 'CLOSED' && prev !== 'CLOSING') {
+      // v2.7.5 (UAT G23): ปิดรอบ = CLOSING (ทำไฟล์สำรอง 1–3 นาที) → CLOSED · แจ้งครั้งเดียว (เดิมแจ้งทั้ง 2 ขั้น)
       SOUND.warn();
       notice('ปิดรอบแล้ว', 'รอบ ' + esc(S.boot.project.id) + ' ปิดรอบแล้ว<br>• ยิงไม่ได้<br>• รอเปิดรอบใหม่ แล้วกด ⋮ → ตรวจความพร้อมใหม่');
     } else if (prev === 'COUNT_CLOSED' && st === 'COUNTING') {
@@ -1064,7 +1070,12 @@
       ask = confirmBox(loc + ' ปิดไปแล้ว', 'ยอดตอนปิด ' + fmt(s0.qty) + ' ชิ้น ' + s0.sku + ' SKU' + by0 + '<br>ต้องการเปิดเพื่อนับเพิ่มหรือแก้ไข?', 'เปิดนับเพิ่ม');
     }
     return ask.then(function (ok) {
-      if (!ok) { show('count'); return; }
+      if (!ok) {
+        // v2.7.5 (UAT G23-6): กดยกเลิก → การ์ดกลับมาบอกว่ายังอยู่ที่เดิม (เดิมค้าง "กำลังตรวจ …")
+        if (S.loc) setCard('idle', 'ยังอยู่ที่ ' + S.loc + ' — ยิงสินค้าต่อได้', 'ไม่ได้เปิด ' + esc(loc));
+        else setCard('idle', 'ไม่ได้เปิด ' + loc, 'ยิงป้าย Location ที่จะนับ');
+        show('count'); return;
+      }
       var prev = S.loc, prevNote = '';
       // v2.7.4: ยิงป้ายใหม่ = ปิด Location เดิมให้เอง (เดิม "พักไว้" แล้วลืมปิด สะสมจนต้องตามปิดทีละอันก่อนปิดรอบ)
       // ปิดแล้วยังเปิดนับเพิ่มได้เสมอ (ยิงป้ายเดิม → "เปิดนับเพิ่ม") · ยังไม่ยิงอะไร / เป็นของเครื่องอื่น → ออกแบบเดิม
@@ -1926,9 +1937,10 @@
       var offline = b.err && b.err.code === 'NETWORK';
       var chain = Promise.resolve();
       if (b.boot) {
+        var fromServer = !(quick && v[0].boot === S.boot);   // v2.7.5: ตรวจแบบเร็วใช้ข้อมูลรอบที่จำไว้ ไม่ใช่คำตอบเซิร์ฟเวอร์ → ไม่ล้างสถานะ "เปิดรอบใหม่แล้ว"
         S.boot = b.boot; DB.set('boot', b.boot);
         var prevProject = S.projectId;
-        S.serverProject = '';
+        if (fromServer) S.serverProject = '';
         chain = bumpSeq(b.boot.device && b.boot.device.maxSeqAll).then(function () { return switchProject(b.boot.project.id); }).then(function () {
           // v2.5.5 (B3): เข้ารอบใหม่ = ยิงบัตรผู้ตรวจสอบใหม่ (คนนับรอบใหม่อาจไม่ใช่คนเดิม)
           if (prevProject && prevProject !== b.boot.project.id && S.staff) { S.staff = null; S.dwOk = false; saveState(); }
