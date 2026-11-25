@@ -64,7 +64,12 @@ test('ปิดรอบได้เฉพาะตอนปิดการน�
   assert.ok(E.run('apiCloseCheck()').ok, 'K1–K7 ผ่านครบ');
   assert.throws(() => E.run('apiCloseRound("EMP-K", "2026Q4", false)'), /พิมพ์ยืนยันไม่ตรง/);
   assert.throws(() => E.run('apiCloseRound("", "2026Q4-R1", false)'), /ผู้ตรวจสอบ/);
-  assert.throws(() => E.run('apiCloseRound("EMP-K", "ล้างข้อมูลทดสอบ 2026Q4-R1", true)'), /โหมดรอบทดสอบใช้ได้เฉพาะรอบ 2026Q4/);
+  assert.throws(() => E.run('apiCloseRound("EMP-K", "ล้างข้อมูลทดสอบ 2026Q4-R1", true)'), /ปิดโหมดรอบทดสอบแล้ว/);
+});
+test('v2.8.1: ค่าเริ่มต้นปิดโหมดรอบทดสอบ — รอบชื่อ 2026Q4 ก็ไม่มี testAllowed', () => {
+  const X = setup('2026Q4', 'REAL');
+  assert.ok(X.run('apiGetState()').round.testAllowed === false);
+  assert.ok(X.run('TEST_ROUND_IDS.length') === 0);
 });
 test('สำเนาไฟล์ไม่สำเร็จ → หยุด ไม่ล้างอะไร · บันทึก CLOSE_ROUND_START_FAILED', () => {
   const n = E.env.sheets.Count_Log.data.length;
@@ -174,6 +179,7 @@ test('เปิดรอบใหม่: รหัสที่ปิดแล้
 
 console.log('\nโหมดรอบทดสอบ — 2026Q4 ข้อมูลไม่ครบ (Location ค้าง) ข้าม K1 K2 K4 K5');
 const T = setup('2026Q4', 'PILOT');
+T.run('TEST_ROUND_IDS = ["2026Q4"]');   // v2.8.1 ค่าจริงว่าง — เปิดเฉพาะในเทสต์เพื่อคุมโค้ดโหมดทดสอบไว้
 T.call('sync', { entries: [T.scan('B1', 2)], events: [T.ev('OPEN', 'B1')] });
 test('รอบปกติปิดไม่ได้เพราะ K1 / K4 / K5 · โหมดทดสอบต้องพิมพ์ "ล้างข้อมูลทดสอบ 2026Q4"', () => {
   T.run('apiCountClose("EMP-K")'); T.call('hello', { pending: 0, location: 'B1' });

@@ -12,7 +12,7 @@ var SCHEMA_VERSION = 13;   // 13 = v2.6.1 ชีต Device_Log · 6 = v2.4.1 Var
  * เวอร์ชันของระบบ (ใช้เลขเดียวทั้งแอป TC21 และเซิร์ฟเวอร์ ตาม Semantic Versioning MAJOR.MINOR.PATCH)
  * ต้องตรงกับ APP_VERSION ใน app/app.js และ appVersion ใน app/config.json — ดู CHANGELOG.md
  */
-var SYSTEM_VERSION = '2.8.0';
+var SYSTEM_VERSION = '2.8.1';
 
 var SHEETS = {
   Config: ['Key', 'Value', 'Note'],
@@ -1025,8 +1025,9 @@ function apiCountReopen(staff, why) {
 //   5 สถานะ CLOSING (เก็บ CLOSE_STATE) → Count_History 1 แถว → ล้างชีตงาน → CLOSED · Admin_Log CLOSE_ROUND
 // หลุดกลางทางหลังขั้น 5 (เช่น หมดเวลา 6 นาที): กด "ปิดรอบ" อีกครั้ง = ทำต่อจาก CLOSE_STATE ไม่สำรองซ้ำ
 
-/** รหัสรอบที่ใช้ "โหมดรอบทดสอบ" ได้ (ข้าม K1 K2 K4 K5) — ล้างข้อมูลทดสอบก่อนใช้งานจริง · แก้ได้เฉพาะในโค้ด (ตรวจย้อนหลังจาก GitHub) */
-var TEST_ROUND_IDS = ['2026Q4'];
+/** รหัสรอบที่ใช้ "โหมดรอบทดสอบ" ได้ (ข้าม K1 K2 K4 K5) · ว่าง = ปิดโหมดนี้ (v2.8.1 ปิดก่อนใช้งานจริง กันรอบจริงชื่อ 2026Q4 ปิดแบบข้ามเงื่อนไข)
+ *  แก้ได้เฉพาะในโค้ด (ตรวจย้อนหลังจาก GitHub) */
+var TEST_ROUND_IDS = [];
 var ROUND_TYPE_TH = { REAL: 'รอบจริง', PILOT: 'รอบทดลอง', TEST: 'รอบทดสอบ (ล้างข้อมูล)' };
 /** ชีตงานที่ล้างตอนปิดรอบ (อยู่ครบในไฟล์สำรอง) · เก็บไว้: Config Staff Devices Count_History Admin_Log */
 var CLOSE_CLEAR_TABLES = ['Count_Log', 'Adjustments', 'Variance', 'Dash_Data', 'Locations', 'Loc_Members', 'Loc_Checks', 'Device_Checks', 'Device_Log',
@@ -1087,7 +1088,7 @@ function apiCloseRound(staff, confirm, test) {
     if (String(confirm || '').trim() !== want) throw new Error('พิมพ์ยืนยันไม่ตรง — ต้องพิมพ์ "' + want + '"');
     if (st === 'CLOSING') return closeFinish_(s, 'ทำต่อจากที่ค้าง');
     if (st !== 'COUNT_CLOSED') throw new Error('ปิดรอบได้เมื่อ "ปิดการนับแล้ว" (ตอนนี้: ' + (ROUND_STATUS_TH[st] || st) + ')');
-    if (test && TEST_ROUND_IDS.indexOf(project) < 0) throw new Error('โหมดรอบทดสอบใช้ได้เฉพาะรอบ ' + TEST_ROUND_IDS.join(', '));
+    if (test && TEST_ROUND_IDS.indexOf(project) < 0) throw new Error(TEST_ROUND_IDS.length ? 'โหมดรอบทดสอบใช้ได้เฉพาะรอบ ' + TEST_ROUND_IDS.join(', ') : 'ปิดโหมดรอบทดสอบแล้ว — ใช้ปิดรอบแบบปกติ');
     var type = test ? 'TEST' : (cfg.ROUND_TYPE === 'PILOT' ? 'PILOT' : 'REAL');
 
     // 1) เงื่อนไข — ตรวจใหม่ในล็อก ไม่เชื่อผลบนหน้าจอ
