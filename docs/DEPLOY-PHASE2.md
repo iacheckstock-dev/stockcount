@@ -61,7 +61,7 @@
 - คู่มือ Zebra ที่ตรงเวอร์ชัน: techdocs.zebra.com/datawedge/8-2/
 - DataWedge 8.2 มี **Send Characters as Events** (มีตั้งแต่ 7.3) และ Export/Import Profile ในเมนู Settings
 - ไฟล์ Profile ที่ Export ได้ชื่อ `dwprofile_StockCount.db` อยู่ที่ `Android/data/com.symbol.datawedge/files/` ในหน่วยความจำเครื่อง **ห้ามเปลี่ยนชื่อไฟล์** (Import จะล้มเหลว)
-- ยังไม่ได้ยืนยันบนเครื่องจริง: ช่อง Associated apps ใช้ `org.chromium.webapk.…` หรือ `com.android.chrome` ได้ — รอผลทดสอบแล้วบันทึกที่นี่
+- **ค่าที่ใช้งานได้จริงบน TC21-01** (ภาพหน้าจอจากผู้ใช้ 25 พ.ย. 2569 · UAT ทุกรอบผ่านด้วยค่านี้): Associated apps = `com.android.chrome` / `*` (แอปที่ติดตั้งจาก Chrome เปิดผ่าน Chrome จึงตรงทุกเครื่อง ไม่ต้องแก้หลัง Import)
 
 ### 5.1 ติดตั้งแอป
 1. ต่อ Wi-Fi → เปิด **Chrome** → https://iacheckstock-dev.github.io/stockcount/app/
@@ -70,22 +70,19 @@
 
 ### 5.2 DataWedge profile "StockCount" (ไม่แตะ Profile0)
 1. เปิดแอป **DataWedge** → ⋮ → **New profile** → ชื่อ `StockCount`
-2. **Associated apps** → ⋮ New app/activity → หาแอปตรวจนับ
-   - ถ้าเห็นชื่อ `org.chromium.webapk.…` (แอปที่ติดตั้ง) เลือกตัวนั้น → activity `*`
-   - **ถ้าไม่เห็น** เลือก `com.android.chrome` → `*` แทน (ทดสอบแล้วแจ้งผมด้วยว่าใช้แบบไหนได้)
-3. **Barcode input**: Enabled
-   - Decoders: เปิด **EAN-13, EAN-8, UPC-A, Code 128** ปิดตัวอื่นทั้งหมด
-   - Reader params → **Picklist: Enabled**
-   - Scan params → **Decode audio feedback: None** (ให้แอปส่งเสียงเอง)
-4. **Keystroke output**: Enabled
-   - Basic data formatting → **Send data ✓** และ **Send ENTER key ✓**
+2. **Associated apps** → ⋮ New app/activity → `com.android.chrome` → `*`
+3. **Barcode input**: Enabled · Hardware Trigger ✓ → **Configure scanner settings**
+   - Decoders (ค่าที่ใช้จริง): **EAN13 · EAN8 · UPCA · UPCE0 · Code128 · Code39 · Codabar · QRCode** เปิด · ตัวอื่นปิด (QR เปิดไว้ได้ แอปไม่นับ QR เป็นสินค้า — ดูป้าย ④ ในชุดทดสอบ)
+   - Reader params → **Picklist: Hardware Picklist**
+   - Scan params → **Decode Audio Feedback: ไม่มีเสียง** (หน้าจอภาษาไทยแสดง "ไม่รู้จัก") ให้แอปส่งเสียงเอง
+4. **Keystroke output**: Enabled · Action key character = None
+   - Basic data formatting (ตัวใต้ Keystroke output) → **Enable ✓ · Send data ✓ · Send ENTER key ✓** · Send TAB key ✗
    - Key event options → **Send Characters as Events ✓**
 5. **Intent output**: Disabled
 6. ทดสอบเสร็จแล้ว Export เก็บไว้ลงเครื่องอื่น (DataWedge 8.2):
-   - หน้า Profiles → ☰ → **Settings** → **Export Profile** → เลือก `StockCount` → **Export**
+   - หน้า Profiles → ⋮ → **Settings** → **Export Profile** → เลือก `StockCount` → **Export**
    - ได้ไฟล์ `dwprofile_StockCount.db` ใน `Android/data/com.symbol.datawedge/files/` → ต่อสาย USB คัดลอกเก็บไว้ (ห้ามเปลี่ยนชื่อ)
-7. เครื่องถัดไป: คัดลอกไฟล์ไปที่โฟลเดอร์เดียวกันบนเครื่องใหม่ → DataWedge → ☰ → **Settings** → **Import Profile** → เลือกไฟล์
-   - ถ้าแอปตรวจนับบนเครื่องใหม่เป็น `org.chromium.webapk.…` ชื่อจะต่างจากเครื่องแรก ต้องเข้า Associated apps แก้ให้ตรงหลัง Import
+7. เครื่องถัดไป: คัดลอกไฟล์ไปที่โฟลเดอร์เดียวกันบนเครื่องใหม่ → DataWedge → ⋮ → **Settings** → **Import Profile** → เลือกไฟล์ (Associated apps เป็น `com.android.chrome` เหมือนกันทุกเครื่อง ไม่ต้องแก้)
 
 ### 5.3 จับคู่เครื่อง
 1. หน้า Admin → TC21-01 → **สร้างรหัสจับคู่** (ได้เลข 6 หลัก ใช้ได้ 30 นาที)
