@@ -48,6 +48,21 @@
 
 ## 5. ตั้งเครื่อง TC21 เครื่องแรก
 
+### 5.0 ข้อมูลเครื่องที่ใช้จริง (ผู้ใช้ส่งภาพหน้าจอ 25 พ.ย. 2569)
+
+| รายการ | ค่า | ดูที่ไหนบนเครื่อง |
+|---|---|---|
+| รุ่น | Zebra TC21 · รุ่นย่อย **TC210K** | การตั้งค่า → เกี่ยวกับโทรศัพท์ → โมเดลและฮาร์ดแวร์ |
+| Android | **10** | การตั้งค่า → เกี่ยวกับโทรศัพท์ → เวอร์ชันของ Android |
+| DataWedge | **8.2.308** | แอป DataWedge → ⋮ → About |
+| Scanning Framework | 28.11.2.0 | (หน้าเดียวกับ DataWedge About) |
+| Scanner | 2D Barcode Imager PAACDS00-001-R03 | (หน้าเดียวกับ DataWedge About) |
+
+- คู่มือ Zebra ที่ตรงเวอร์ชัน: techdocs.zebra.com/datawedge/8-2/
+- DataWedge 8.2 มี **Send Characters as Events** (มีตั้งแต่ 7.3) และ Export/Import Profile ในเมนู Settings
+- ไฟล์ Profile ที่ Export ได้ชื่อ `dwprofile_StockCount.db` อยู่ที่ `Android/data/com.symbol.datawedge/files/` ในหน่วยความจำเครื่อง **ห้ามเปลี่ยนชื่อไฟล์** (Import จะล้มเหลว)
+- ยังไม่ได้ยืนยันบนเครื่องจริง: ช่อง Associated apps ใช้ `org.chromium.webapk.…` หรือ `com.android.chrome` ได้ — รอผลทดสอบแล้วบันทึกที่นี่
+
 ### 5.1 ติดตั้งแอป
 1. ต่อ Wi-Fi → เปิด **Chrome** → https://iacheckstock-dev.github.io/stockcount/app/
 2. เมนู **⋮ → ติดตั้งแอป** (หรือ "เพิ่มลงในหน้าจอหลัก") → ไอคอน "ตรวจนับ" จะอยู่บนหน้าจอหลัก
@@ -66,7 +81,11 @@
    - Basic data formatting → **Send data ✓** และ **Send ENTER key ✓**
    - Key event options → **Send Characters as Events ✓**
 5. **Intent output**: Disabled
-6. ทดสอบเสร็จแล้ว: ⋮ → **Export profile** เก็บไฟล์ไว้ลงเครื่องอื่น (Import profile)
+6. ทดสอบเสร็จแล้ว Export เก็บไว้ลงเครื่องอื่น (DataWedge 8.2):
+   - หน้า Profiles → ☰ → **Settings** → **Export Profile** → เลือก `StockCount` → **Export**
+   - ได้ไฟล์ `dwprofile_StockCount.db` ใน `Android/data/com.symbol.datawedge/files/` → ต่อสาย USB คัดลอกเก็บไว้ (ห้ามเปลี่ยนชื่อ)
+7. เครื่องถัดไป: คัดลอกไฟล์ไปที่โฟลเดอร์เดียวกันบนเครื่องใหม่ → DataWedge → ☰ → **Settings** → **Import Profile** → เลือกไฟล์
+   - ถ้าแอปตรวจนับบนเครื่องใหม่เป็น `org.chromium.webapk.…` ชื่อจะต่างจากเครื่องแรก ต้องเข้า Associated apps แก้ให้ตรงหลัง Import
 
 ### 5.3 จับคู่เครื่อง
 1. หน้า Admin → TC21-01 → **สร้างรหัสจับคู่** (ได้เลข 6 หลัก ใช้ได้ 30 นาที)

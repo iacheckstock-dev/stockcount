@@ -11,7 +11,7 @@
 
 | ชั้น | เทคโนโลยี | หมายเหตุ |
 |---|---|---|
-| เครื่องนับ | Zebra TC21 (Android 10) + Chrome | สแกนผ่าน DataWedge profile "StockCount" ส่งเป็นการกดแป้น + Enter |
+| เครื่องนับ | Zebra TC21 รุ่น TC210K (Android 10 · DataWedge 8.2.308) + Chrome | สแกนผ่าน DataWedge profile "StockCount" ส่งเป็นการกดแป้น + Enter |
 | แอปบนเครื่อง | PWA: HTML + JavaScript (ES5) + CSS ไม่มี framework ไม่มีขั้นตอน build | ติดตั้งเป็นไอคอนบนหน้าจอ ทำงานออฟไลน์ |
 | ที่เก็บในเครื่อง | IndexedDB (`kv`, `master`, `entries`, `events`) | บันทึกก่อนมีเสียง/จอเขียวทุกครั้ง |
 | แคชแอป | Service Worker แบบ network-first (รอเน็ต 3 วินาที / ไฟล์ประกอบ 1.5 วินาที แล้วใช้สำเนา) | อัปเดตแอปได้เองเมื่อมีเน็ต |
