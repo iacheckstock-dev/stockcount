@@ -63,7 +63,13 @@ test('เครื่องที่จับคู่อยู่แต่ไ�
   env.post({ action: 'pair', deviceId: 'TC21-02', code: c2 });
   let k3 = item(run('closeCheck_(false)'), 'K3');
   assert.ok(!k3.ok && k3.list.indexOf('TC21-02: ไม่มีสัญญาณ') >= 0, JSON.stringify(k3.list));
+  // v2.9.0: apiK3Status (เบา ไม่ใช้ล็อก) ให้ผลเดียวกับ K3 ในตรวจแบบเต็ม · wait = เฉพาะเครื่องที่ยังรอ
+  let q = run('apiK3Status()');
+  assert.ok(q.status === 'COUNT_CLOSED' && q.k3 && !q.k3.ok && q.k3.wait.length === 1 && /^TC21-02: ไม่มีสัญญาณ/.test(q.k3.wait[0]), JSON.stringify(q));
+  assert.strictEqual(JSON.stringify(k3.wait), JSON.stringify(q.k3.wait));
   run('apiSetDeviceActive("TC21-02", false, "TEMP", "ไม่ได้ใช้รอบนี้")');
+  q = run('apiK3Status()');
+  assert.ok(q.k3.ok && !q.k3.wait.length);
   k3 = item(run('closeCheck_(false)'), 'K3');
   assert.ok(k3.ok, JSON.stringify(k3.list));
 });

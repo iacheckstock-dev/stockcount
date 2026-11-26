@@ -12,7 +12,7 @@ var SCHEMA_VERSION = 13;   // 13 = v2.6.1 ชีต Device_Log · 6 = v2.4.1 Var
  * เวอร์ชันของระบบ (ใช้เลขเดียวทั้งแอป TC21 และเซิร์ฟเวอร์ ตาม Semantic Versioning MAJOR.MINOR.PATCH)
  * ต้องตรงกับ APP_VERSION ใน app/app.js และ appVersion ใน app/config.json — ดู CHANGELOG.md
  */
-var SYSTEM_VERSION = '2.8.1';
+var SYSTEM_VERSION = '2.9.0';
 
 var SHEETS = {
   Config: ['Key', 'Value', 'Note'],
@@ -97,7 +97,8 @@ var CONFIG_DEFAULTS = [
   ['LAST_RECONCILE', '', 'ผลกระทบยอดทั้งรอบครั้งล่าสุด (JSON) — ใช้ตรวจเงื่อนไขปิดรอบ K4'],
   ['SUMMARY_SAVED', '', 'ผลสรุปที่บันทึกล่าสุด (JSON: project, run, at, sig) — ใช้ตรวจเงื่อนไขปิดรอบ K5'],
   ['ROUND_TYPE', '', 'ประเภทรอบ REAL = รอบจริง · PILOT = รอบทดลอง (เลือกตอนเปิดรอบ · v2.5.2)'],
-  ['CLOSE_STATE', '', 'ข้อมูลระหว่างปิดรอบ (JSON) — ใช้ทำต่อเมื่อปิดรอบค้างกลางทาง · ว่าง = ไม่มีค้าง']
+  ['CLOSE_STATE', '', 'ข้อมูลระหว่างปิดรอบ (JSON) — ใช้ทำต่อเมื่อปิดรอบค้างกลางทาง · ว่าง = ไม่มีค้าง'],
+  ['STORE_NAME', '', 'ชื่อร้าน / สาขา บนรายงานผลต่าง (v2.9.0) · คงไว้ข้ามรอบ แก้ได้ที่การ์ดรอบนับ']
 ];
 
 // ---------- เมนูและหน้า Admin ----------
@@ -450,6 +451,7 @@ function apiGetState() {
     spreadsheetUrl: SpreadsheetApp.getActive().getUrl(),
     round: { projectId: cfg.PROJECT_ID, countDate: cfg.COUNT_DATE, status: cfg.ROUND_STATUS || 'NONE',
       statusTh: ROUND_STATUS_TH[cfg.ROUND_STATUS || 'NONE'] || cfg.ROUND_STATUS, closedAt: cfg.COUNT_CLOSED_AT || '', closedBy: cfg.COUNT_CLOSED_BY || '',
+      storeName: cfg.STORE_NAME || '',
       type: cfg.ROUND_TYPE || '', typeTh: ROUND_TYPE_TH[cfg.ROUND_TYPE] || '', testAllowed: TEST_ROUND_IDS.indexOf(cfg.PROJECT_ID) >= 0,
       archived: cfg.ROUND_STATUS === 'ARCHIVED', archivedType: cfg.ARCHIVED_TYPE || '',
       closeType: (function () { try { return (JSON.parse(cfg.CLOSE_STATE || 'null') || {}).type || ''; } catch (e) { return ''; } })() },
@@ -1224,14 +1226,48 @@ function apiCloseCheck() {
   });
 }
 
+/** K3 (v2.9.0 แยกจาก closeCheck_): อ่านชีต Devices + สัญญาณใน Cache เท่านั้น — เบา ไม่ใช้ล็อก */
+function k3Check_(cfg) {
+  var dt = table_('Devices'), devs = [];
+  dt.rows.forEach(function (r) { var d = rowObj_(dt, r); if (d.Device_ID && d.Active === 'Y' && d.Token_Hash) devs.push(String(d.Device_ID)); });
+  devs.sort(natCmp_);
+  // v2.5.1 (UAT G10-6): นับเฉพาะสัญญาณที่ส่งมา "หลังปิดการนับ" — เครื่องได้รับสถานะปิดในคำตอบครั้งนั้น ยิงเพิ่มไม่ได้อีก
+  // สัญญาณก่อนปิด (เช่น ปิด Wi-Fi ไว้) ไม่นับ เพราะเครื่องอาจยังยิงต่อแบบออฟไลน์ได้
+  var hb = heartbeats_(devs), bad = [], good = [], closedAt = cfg.COUNT_CLOSED_AT || '';
+  devs.forEach(function (id) {
+    var h = hb[id], ago = h ? Math.max(0, Math.round((Date.now() - h.at) / 60000)) : null, at = h ? ts_(h.at) : '';
+    if (!h) bad.push(id + ': ไม่มีสัญญาณ');
+    else if (h.pending > 0) bad.push(id + ': ค้างส่ง ' + h.pending + ' รายการ (สัญญาณ ' + ago + ' นาทีที่แล้ว)');
+    else if (!closedAt) good.push(id + ': ค้าง 0 (สัญญาณ ' + ago + ' นาทีที่แล้ว · ยังไม่ได้ปิดการนับ)');
+    else if (at < closedAt) bad.push(id + ': ยังไม่ได้ติดต่อหลังปิดการนับ (สัญญาณล่าสุด ' + at.slice(11, 16) + ' ก่อนปิด ' + closedAt.slice(11, 16) + ')');
+    else good.push(id + ': ค้าง 0 (สัญญาณ ' + ago + ' นาทีที่แล้ว หลังปิดการนับ)');
+  });
+  var k3ok = !bad.length && !!closedAt;
+  var detail = devs.length ? (bad.length ? 'ไม่ผ่าน ' + bad.length + ' จาก ' + devs.length + ' เครื่อง' : !closedAt ? 'ค้าง 0 ครบ ' + devs.length + ' เครื่อง แต่ยังไม่ได้ปิดการนับ — ตรวจจริงหลังปิด' : 'ครบ ' + devs.length + ' เครื่อง') : 'ไม่มีเครื่องที่จับคู่อยู่';
+  var fix = !closedAt && !bad.length ? 'กด "ปิดการนับ" แล้วรอให้ทุกเครื่องส่งสัญญาณ (ไม่เกิน 1 นาที)' :
+    'ปลุกจอเครื่องที่รออยู่แล้วเปิดแอปตรวจนับ ในจุดที่มี Wi-Fi (ส่งสัญญาณทันที) · เครื่องเสีย / ไม่ได้ใช้ในรอบนี้: "ยกเลิกเครื่อง" ในแท็บเครื่อง TC21 (มีข้อมูลค้าง → Export ไฟล์จากเครื่องแล้วนำเข้า)';
+  var short = bad.length ? 'เครื่องยังไม่พร้อม ' + bad.length + ' จาก ' + devs.length : 'เครื่องค้างส่ง 0 ครบ ' + devs.length;
+  return { ok: !bad.length && !!closedAt, wait: bad, detail: detail, fix: fix, short: short, list: bad.concat(good) };
+}
+
+/** หน้า Admin: ตรวจเฉพาะ K3 แบบเบา (v2.9.0) — ใช้ตอนรอเครื่องหลังปิดการนับ (หน้า Admin เรียกเองทุก 15 วินาที สูงสุด 3 นาที) · ไม่ใช้ล็อก ไม่เขียนชีต */
+function apiK3Status() {
+  var cfg = readConfig_();
+  var out = { at: now_(), project: cfg.PROJECT_ID || '', status: cfg.ROUND_STATUS || 'NONE' };
+  if (out.status === 'COUNT_CLOSED') out.k3 = k3Check_(cfg);
+  return out;
+}
+
 /**
  * เงื่อนไขปิดรอบ · full = คำนวณผลสรุปใหม่เทียบลายนิ้วมือ (K5) — false ใช้ตอนกดปิด/เปิดการนับ (เร็ว ไม่เทียบ K5)
  * คืน { at, project, status, statusTh, closedAt, closedBy, after, full, ok, items:[{id, ok, title, detail, fix, short, list}] }
  */
 function closeCheck_(full) {
   var cfg = readConfig_(), project = cfg.PROJECT_ID, st = cfg.ROUND_STATUS || 'NONE', items = [];
-  function add(id, ok, title, detail, fix, short, list) {
-    items.push({ id: id, ok: !!ok, title: title, detail: detail || '', fix: ok ? '' : fix, short: short || '', list: list || [] });
+  function add(id, ok, title, detail, fix, short, list, extra) {
+    var it = { id: id, ok: !!ok, title: title, detail: detail || '', fix: ok ? '' : fix, short: short || '', list: list || [] };
+    if (extra) Object.keys(extra).forEach(function (k) { it[k] = extra[k]; });
+    items.push(it);
   }
   // K1 / K2 จากชีต Locations
   var lt = table_('Locations'), open = [], flags = [], total = 0, groups = {};
@@ -1262,27 +1298,9 @@ function closeCheck_(full) {
     open.length ? 'Location ยังไม่ปิด ' + open.length : 'Location ปิดครบ ' + total, k1list);
   add('K2', !flags.length, 'ไม่มีธง "ต้องตรวจซ้ำ" ค้าง', flags.length ? 'มีธง ' + flags.length + ' Location' : 'ไม่มีธง',
     'ตรวจแล้วกด "ปิดธง" พร้อมเหตุผล (แท็บเครื่อง TC21) หรือเปิดการนับอีกครั้งให้ผู้ดูแลล้าง Location แล้วนับใหม่', '', flags.slice(0, 30));
-  // K3 ทุกเครื่องที่เปิดใช้และจับคู่อยู่ ค้างส่ง 0 ตามสัญญาณล่าสุด
-  var dt = table_('Devices'), devs = [];
-  dt.rows.forEach(function (r) { var d = rowObj_(dt, r); if (d.Device_ID && d.Active === 'Y' && d.Token_Hash) devs.push(String(d.Device_ID)); });
-  devs.sort(natCmp_);
-  // v2.5.1 (UAT G10-6): นับเฉพาะสัญญาณที่ส่งมา "หลังปิดการนับ" — เครื่องได้รับสถานะปิดในคำตอบครั้งนั้น ยิงเพิ่มไม่ได้อีก
-  // สัญญาณก่อนปิด (เช่น ปิด Wi-Fi ไว้) ไม่นับ เพราะเครื่องอาจยังยิงต่อแบบออฟไลน์ได้
-  var hb = heartbeats_(devs), bad = [], good = [], closedAt = cfg.COUNT_CLOSED_AT || '';
-  devs.forEach(function (id) {
-    var h = hb[id], ago = h ? Math.max(0, Math.round((Date.now() - h.at) / 60000)) : null, at = h ? ts_(h.at) : '';
-    if (!h) bad.push(id + ': ไม่มีสัญญาณ');
-    else if (h.pending > 0) bad.push(id + ': ค้างส่ง ' + h.pending + ' รายการ (สัญญาณ ' + ago + ' นาทีที่แล้ว)');
-    else if (!closedAt) good.push(id + ': ค้าง 0 (สัญญาณ ' + ago + ' นาทีที่แล้ว · ยังไม่ได้ปิดการนับ)');
-    else if (at < closedAt) bad.push(id + ': ยังไม่ได้ติดต่อหลังปิดการนับ (สัญญาณล่าสุด ' + at.slice(11, 16) + ' ก่อนปิด ' + closedAt.slice(11, 16) + ')');
-    else good.push(id + ': ค้าง 0 (สัญญาณ ' + ago + ' นาทีที่แล้ว หลังปิดการนับ)');
-  });
-  var k3ok = !bad.length && !!closedAt;
-  add('K3', k3ok, 'ทุกเครื่องค้างส่ง 0 ตามสัญญาณหลังปิดการนับ',
-    devs.length ? (bad.length ? 'ไม่ผ่าน ' + bad.length + ' จาก ' + devs.length + ' เครื่อง' : !closedAt ? 'ค้าง 0 ครบ ' + devs.length + ' เครื่อง แต่ยังไม่ได้ปิดการนับ — ตรวจจริงหลังปิด' : 'ครบ ' + devs.length + ' เครื่อง') : 'ไม่มีเครื่องที่จับคู่อยู่',
-    !closedAt && !bad.length ? 'กด "ปิดการนับ" แล้วรอให้ทุกเครื่องส่งสัญญาณ (ไม่เกิน 1 นาที)' :
-    'เปิดแอปบนเครื่องในจุดที่มี Wi-Fi (ส่งสัญญาณทุก 1 นาที) หรือ Export ไฟล์จากเครื่องแล้วนำเข้า · เครื่องที่ไม่ได้ใช้ในรอบนี้: "ยกเลิกเครื่อง" ในแท็บเครื่อง TC21',
-    bad.length ? 'เครื่องยังไม่พร้อม ' + bad.length + ' จาก ' + devs.length : 'เครื่องค้างส่ง 0 ครบ ' + devs.length, bad.concat(good));
+  // K3 ทุกเครื่องที่เปิดใช้และจับคู่อยู่ ค้างส่ง 0 ตามสัญญาณล่าสุด (v2.9.0 แยกเป็น k3Check_ ใช้ร่วมกับ apiK3Status)
+  var k3 = k3Check_(cfg);
+  add('K3', k3.ok, 'ทุกเครื่องค้างส่ง 0 ตามสัญญาณหลังปิดการนับ', k3.detail, k3.fix, k3.short, k3.list, { wait: k3.wait });
   // K4 กระทบยอดทั้งรอบครั้งล่าสุด: ตรงทั้งหมด · ทำหลังปิดการนับ · Count_Log ไม่มีแถวเพิ่มหลังจากนั้น
   var R = null; try { R = JSON.parse(cfg.LAST_RECONCILE || 'null'); } catch (e) { }
   var lastRow = SpreadsheetApp.getActive().getSheetByName('Count_Log').getLastRow(), k4 = '', k4ok = false;
@@ -1692,6 +1710,65 @@ function apiSummarySave() {
 function summarySig_(R) {
   var T = R.totals;
   return sha_(JSON.stringify([R.sap, T.book, T.final, R.skus.map(function (x) { return [x[0], x[2], x[5]]; }), R.unmapped, R.locs.closed, R.locs.total])).slice(0, 16);
+}
+
+// ---------- รายงานผลต่าง (v2.9.0) ----------
+// เอกสารให้ ผู้ตรวจสอบ · พนักงานร้าน · ผู้จัดการร้าน ลงนามรับทราบ — พิมพ์ได้เฉพาะตัวเลขชุดที่ "สรุปผลและบันทึก" ล่าสุด (ลายนิ้วมือตรง)
+// กระดาษที่เซ็นจึงตรงกับผลในชีต Variance ครั้งที่ระบุเสมอ · ผลต่าง = ยอดตรวจนับ − ยอดคงเหลือทางบัญชี · มูลค่า = ผลต่าง × ราคาทุน (Unit_Cost จาก SAP)
+
+/** หน้า Admin: ชื่อร้าน / สาขา (คงไว้ข้ามรอบ) */
+function apiSetStoreName(name) {
+  return withLock_(function () {
+    name = String(name || '').replace(/\s+/g, ' ').trim();
+    if (name.length > 80) throw new Error('ชื่อร้าน / สาขา ยาวเกิน 80 ตัวอักษร');
+    var old = readConfig_().STORE_NAME || '';
+    if (name !== old) {
+      logAdmin_('SET_STORE_NAME', name || '(ว่าง)', old ? 'เดิม: ' + old : '');
+      setConfig_({ STORE_NAME: name });
+    }
+    return apiGetState();
+  });
+}
+
+/** หน้า Admin: ข้อมูลรายงานผลต่าง — ใช้ล็อก (คำนวณผลสรุปใหม่เทียบลายนิ้วมือกับครั้งที่บันทึก) · บันทึก Admin_Log ทุกครั้งที่ออกรายงาน */
+function apiVarianceReport() {
+  return withLock_(function () {
+    var cfg = readConfig_(), project = cfg.PROJECT_ID;
+    if (!project) throw new Error('ยังไม่ได้เปิดรอบนับ');
+    if (cfg.ROUND_STATUS === 'CLOSED') throw new Error('รอบ ' + project + ' ปิดแล้ว ชีตงานถูกล้าง — รายงานผลต่างต้องพิมพ์ก่อนปิดรอบ (ข้อมูลอยู่ในไฟล์สำรอง ชีต Variance)');
+    var SV = null; try { SV = JSON.parse(cfg.SUMMARY_SAVED || 'null'); } catch (e) { }
+    if (!SV || SV.project !== project) throw new Error('ยังไม่ได้ "สรุปผลและบันทึก" ในรอบนี้ — กดสรุปผลและบันทึกก่อน แล้วจึงพิมพ์รายงานผลต่าง');
+    var R = summary_(project, 'รายงานผลต่าง (หน้า Admin)');
+    if (summarySig_(R) !== SV.sig) throw new Error('ตัวเลขเปลี่ยนหลังสรุปผลครั้งที่ ' + SV.run + ' (' + SV.at + ') เช่น มีปรับยอดหรือรายการเข้ามาเพิ่ม — กด "สรุปผลและบันทึก" ใหม่ แล้วจึงพิมพ์');
+    var rep = varianceReport_(R);
+    rep.store = cfg.STORE_NAME || ''; rep.project = project; rep.countDate = cfg.COUNT_DATE || ''; rep.roundType = ROUND_TYPE_TH[cfg.ROUND_TYPE] || '';
+    rep.run = SV.run; rep.savedAt = SV.at; rep.sig = SV.sig; rep.printedAt = now_(); rep.complete = R.complete;
+    logAdmin_('PRINT_VARIANCE', project, 'รายงานผลต่าง ผลสรุปครั้งที่ ' + SV.run + ' (' + SV.at + ') · ขาด ' + rep.totals.short + ' SKU (' + rep.totals.shortQty + ' ชิ้น) · เกิน ' +
+      rep.totals.over + ' SKU (' + rep.totals.overQty + ' ชิ้น) · มูลค่าผลต่างสุทธิ ' + rep.totals.diffValue + ' บาท');
+    return rep;
+  });
+}
+
+/** แยกผลสรุปเป็นรายการขาด / เกิน (เรียงตามรหัสสินค้า) + ยอดรวม · แยกฟังก์ชันไว้ทดสอบ */
+function varianceReport_(R) {
+  var r3 = function (v) { return Math.round(v * 1000) / 1000; }, r2 = function (v) { return Math.round(v * 100) / 100; };
+  var T = { skus: 0, match: 0, short: 0, over: 0, book: 0, count: 0, diff: 0, shortQty: 0, overQty: 0, shortValue: 0, overValue: 0, diffValue: 0, noCost: 0, unmapped: 0, unmappedQty: 0 };
+  var short = [], over = [];
+  R.skus.forEach(function (x) {
+    // [Material, ชื่อ, บัญชี, เครื่อง, ปรับ, สุดท้าย, ต่าง, ต้นทุน, ต่างบาท, ...]
+    var diff = x[6], cost = Number(x[7]) || 0, val = cost ? r2(diff * cost) : null;
+    T.skus++; T.book = r3(T.book + x[2]); T.count = r3(T.count + x[5]);
+    if (diff === 0) { T.match++; return; }
+    if (!cost) T.noCost++;
+    var row = [x[0], x[1], x[2], x[5], diff, cost || null, val];
+    if (diff < 0) { short.push(row); T.short++; T.shortQty = r3(T.shortQty + diff); T.shortValue = r2(T.shortValue + (val || 0)); }
+    else { over.push(row); T.over++; T.overQty = r3(T.overQty + diff); T.overValue = r2(T.overValue + (val || 0)); }
+  });
+  var byMat = function (a, b) { return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0; };
+  short.sort(byMat); over.sort(byMat);
+  T.diff = r3(T.count - T.book); T.diffValue = r2(T.shortValue + T.overValue);
+  var unmapped = (R.unmapped || []).map(function (u) { T.unmapped++; T.unmappedQty = r3(T.unmappedQty + u[1]); return [u[0], u[1]]; });
+  return { totals: T, short: short, over: over, unmapped: unmapped, sap: R.sap, bookSource: R.bookSource };
 }
 
 /** ไล่ย้อน SKU: นับที่ Location ไหน เครื่องไหน ใครนับ เท่าไร */

@@ -137,13 +137,36 @@
   #walkDoc .grp { break-inside:avoid; page-break-inside:avoid; margin-top:10px; }
   #walkDoc .grp h3 { font-size:13px; margin:0 0 3px; }
   #walkDoc .sign { margin-top:18px; display:flex; gap:40px; font-size:12px; }
+  #vrep { position:fixed; inset:0; background:#fff; z-index:20; overflow:auto; display:none; }
+  #vrep.on { display:block; }
+  #vrep .bar { position:sticky; top:0; background:var(--soft); border-bottom:1px solid var(--line); padding:8px 16px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  #vrepDoc { padding:12px 16px; font-size:12px; max-width:190mm; color:#000; }
+  #vrepDoc h2 { font-size:17px; text-align:center; margin:0 0 8px; }
+  #vrepDoc .hd { display:grid; grid-template-columns:auto 1fr auto 1fr; gap:2px 10px; margin-bottom:8px; }
+  #vrepDoc .hd div:nth-child(odd) { color:#444; }
+  #vrepDoc .sm { border:1px solid #000; padding:6px 8px; margin-bottom:8px; display:grid; grid-template-columns:repeat(4, auto); gap:2px 14px; justify-content:start; }
+  #vrepDoc table { width:100%; border-collapse:collapse; font-size:11px; table-layout:fixed; }
+  #vrepDoc thead { display:table-header-group; } #vrepDoc tfoot { display:table-footer-group; }
+  #vrepDoc tr { break-inside:avoid; page-break-inside:avoid; }
+  #vrepDoc th, #vrepDoc td { border:1px solid #000; padding:3px 5px; vertical-align:top; }
+  #vrepDoc th { background:#eee; font-weight:600; }
+  #vrepDoc td { overflow-wrap:anywhere; }
+  #vrepDoc .n { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
+  #vrepDoc tr.sec td { background:#f3f3f3; font-weight:700; }
+  #vrepDoc tr.tot td { font-weight:700; border-top:2px solid #000; }
+  #vrepDoc .mono { font-size:10.5px; }
+  #vrepDoc tfoot td { border:0; border-top:1px solid #000; font-size:10px; padding-top:4px; }
+  #vrepDoc th.cap { background:#fff; font-weight:400; text-align:left; border:0; border-bottom:1px solid #000; padding:0 0 3px; font-size:10px; }
+  #vrepDoc .note { margin-top:6px; font-size:11px; }
+  #vrepDoc .ack { margin-top:14px; break-inside:avoid; page-break-inside:avoid; }
+  #vrepDoc .sig { display:grid; grid-template-columns:repeat(3, 1fr); gap:14px; margin-top:26px; text-align:center; }
+  #vrepDoc .sig div { line-height:2; }
   @media print {
-    body > *:not(#walk) { display:none !important; }
-    #walk { position:static; overflow:visible; display:block !important; }
-    #walk .bar { display:none; }
-    #walkDoc { padding:0; }
+    body > *:not(#walk):not(#vrep) { display:none !important; }
+    #walk.on, #vrep.on { position:static; overflow:visible; display:block !important; }
+    #walk .bar, #vrep .bar { display:none; }
+    #walkDoc, #vrepDoc { padding:0; max-width:none; }
     #walkDoc th { position:static; background:#eee; }
-    @page { size:A4 landscape; margin:8mm; }
   }
 </style>
 </head>
@@ -182,6 +205,10 @@
           <input type="date" id="cdate">
           <select id="rtype"><option value="">— ประเภทรอบ —</option><option value="REAL">รอบจริง</option><option value="PILOT">รอบทดลอง</option></select>
           <button class="btn sec" onclick="openRound()">เปิด/แก้รอบ</button>
+        </div>
+        <div class="row" style="margin-top:6px">
+          <input type="text" id="storeIn" placeholder="ชื่อร้าน / สาขา (บนรายงานผลต่าง)" maxlength="80" style="flex:1;min-width:180px">
+          <button class="btn sec" onclick="saveStore()">บันทึกชื่อร้าน</button>
         </div>
         <div class="muted">วันนับ D เทียบกับยอด SAP สิ้นวัน D−1 · รอบทดลอง = นำร่อง / ฝึกใช้ (ขั้นตอนเหมือนรอบจริงทุกอย่าง แต่ประวัติติดป้าย "ทดลอง")</div>
       </div>
@@ -324,6 +351,7 @@
       <button class="btn" onclick="saveSummary()" title="กระทบยอด แล้วเก็บผลราย SKU ลงชีต Variance เป็นหลักฐาน">สรุปผลและบันทึก</button>
       <button class="btn sec" onclick="exportSummary()">ส่งออก .xlsx</button>
       <button class="btn sec" onclick="walkOpen()" title="ใบสำหรับเดินตรวจตามจุด พร้อมช่องเขียนยอดนับทวน">พิมพ์ใบเดินตรวจ</button>
+      <button class="btn sec" onclick="vrepOpen()" title="ผลต่างราย SKU ตามผลสรุปที่บันทึกล่าสุด พร้อมช่องลงนามรับทราบ">พิมพ์รายงานผลต่าง</button>
       <span class="muted" id="sumInfo"></span>
     </div>
     <div id="sumBody"><div class="muted">กด "รีเฟรช" เพื่อคำนวณ</div></div>
@@ -460,6 +488,11 @@
 <div id="walk"><div class="bar"><b>ตัวอย่างใบเดินตรวจ</b><span class="muted" id="walkInfo"></span><span style="flex:1"></span>
   <button class="btn" onclick="window.print()">พิมพ์</button><button class="btn sec" onclick="$('walk').classList.remove('on')">ปิด</button></div>
   <div id="walkDoc"></div></div>
+<!-- รายงานผลต่าง (v2.9.0): A4 แนวตั้ง · ตารางเดียว (หัว/ท้ายตารางพิมพ์ซ้ำทุกหน้า) · ลงนามท้ายเอกสาร -->
+<div id="vrep"><div class="bar"><b>ตัวอย่างรายงานผลต่าง</b><span class="muted" id="vrepInfo"></span><span style="flex:1"></span>
+  <button class="btn" onclick="window.print()">พิมพ์</button><button class="btn sec" onclick="vrepClose()">ปิด</button></div>
+  <div id="vrepDoc"></div></div>
+<style id="pageSize">@page { size:A4 landscape; margin:8mm; }</style>
 <!-- กล่องยืนยัน/ใส่เหตุผลกลางหน้า แทน confirm()/prompt() ของเบราว์เซอร์ (v2.3.6) -->
 <div id="askDlg"><div class="box">
   <h3 style="margin-top:0" id="askTitle"></h3>
@@ -543,7 +576,7 @@ var HELP = {
     '<li>ให้ทุกเครื่อง ⋮ → ตรวจความพร้อมใหม่</li></ol>' +
     '<h4>ปิดการนับ และปิดรอบ</h4><ol><li>ทุกเครื่อง: ปิด Location สุดท้าย · รอ “ค้าง 0”</li>' +
     '<li>กด <b>ปิดการนับ</b> → เครื่องยิงสินค้าไม่ได้แล้ว (ย้อนได้ด้วย “เปิดการนับอีกครั้ง”)</li>' +
-    '<li>ทำขั้นที่ 1–5 ทีละขั้นจน K1–K7 ✓ · ขั้นที่ 1 (K3) รอประมาณ 1 นาทีหลังปิดการนับ เปิดจอทุกเครื่องไว้ แล้วกด “ตรวจอีกครั้ง”</li>' +
+    '<li>ทำขั้นที่ 1–5 ทีละขั้นจน K1–K7 ✓ · ขั้นที่ 1 (K3) ปลุกจอทุกเครื่องแล้วเปิดแอป ผ่านเองภายในไม่กี่วินาที (หน้านี้ตรวจให้ทุก 15 วินาที 3 นาที)</li>' +
     '<li>ขั้นที่ 6 <b>ปิดรอบ</b> → พิมพ์รหัสรอบ → รอ 1–3 นาที (ทำไฟล์สำรอง แล้วล้างชีตงาน) · <b>ย้อนกลับไม่ได้</b></li>' +
     '<li>การ์ด “รอบที่ปิดแล้ว” → <b>ตรวจไฟล์สำรอง</b> → ✓ ทุกชีต</li></ol>'],
   staff: ['พนักงาน', '<ul><li><b>+ เพิ่มพนักงาน</b> — รหัสผู้ตรวจสอบ + ชื่อ · ใช้กับบัตร EMP:รหัส</li>' +
@@ -577,7 +610,7 @@ var HELP_FLOW = '<ol><li>หน้าหลัก: เปิดรอบ</li><li
   '<li>ระหว่างนับ: ดูแท็บ Location / เครื่อง TC21 / สรุปผลนับ</li><li>หน้าหลัก: ปิดการนับ → ขั้นที่ 1–5 → ปิดรอบ → ตรวจไฟล์สำรอง</li></ol>';
 var HELP_FAQ = '<dl><dt>เครื่องขึ้น “เป็นของเครื่องอื่น”</dt><dd>1 Location = 1 เครื่อง · ให้ใช้ป้ายสำรอง หรือ โอนการดูแล (แท็บ Location)</dd>' +
   '<dt>เครื่องค้างส่งไม่ลด</dt><dd>ต่อ Wi-Fi → ⋮ → สถานะ → ส่งข้อมูลตอนนี้ · เครื่องเสียและมีค้าง → Export จากเครื่อง แล้วนำเข้าไฟล์จากเครื่อง</dd>' +
-  '<dt>K3 ไม่ผ่าน</dt><dd>รอประมาณ 1 นาทีหลังปิดการนับ (เปิดจอทุกเครื่อง) แล้วกด “ตรวจอีกครั้ง”</dd>' +
+  '<dt>K3 ไม่ผ่าน</dt><dd>ปลุกจอเครื่องที่ขึ้นว่ารอ แล้วเปิดแอปในจุดที่มี Wi-Fi · เครื่องเสีย / ไม่ได้ใช้ → ยกเลิกเครื่อง (มีค้าง → Export แล้วนำเข้าไฟล์)</dd>' +
   '<dt>K1 / K2 ไม่ผ่าน</dt><dd>มี Location ยังไม่ปิด / มีธงต้องตรวจซ้ำ → แท็บ Location ตัวกรอง “ต้องทำต่อ”</dd>' +
   '<dt>K4 ไม่ผ่าน</dt><dd>กด กระทบยอดทั้งรอบ ใหม่ หลังทุกเครื่องส่งครบ</dd>' +
   '<dt>ต้องนับเพิ่มหลังปิดการนับ</dt><dd>หน้าหลัก → เปิดการนับอีกครั้ง (ทำได้ก่อนปิดรอบเท่านั้น)</dd>' +
@@ -672,7 +705,8 @@ function render(s) {
   $('rtype').value = r.projectId && r.status !== 'CLOSED' && !r.archived ? r.type || '' : '';   // รอบใหม่หลังปิด ต้องเลือกประเภทใหม่ทุกครั้ง
   $('provTag').style.display = s.master.hasPos && !s.master.hasSap ? '' : 'none';
   $('pid').value = r.projectId || defaultPid(); $('cdate').value = r.countDate || '';
-  $('roundKv').innerHTML = kv([['รหัสรอบ', r.projectId || '-'], ['วันนับ (D)', r.countDate || '-'], ['ยอดตามบัญชี ณ', r.countDate ? 'สิ้นวัน ' + prevDay(r.countDate) : '-'], ['ประเภท', r.typeTh || '-'], ['สถานะ', (r.statusTh || r.status) + ' (' + r.status + ')']]);
+  $('storeIn').value = r.storeName || '';
+  $('roundKv').innerHTML = kv([['ร้าน / สาขา', r.storeName || '-'], ['รหัสรอบ', r.projectId || '-'], ['วันนับ (D)', r.countDate || '-'], ['ยอดตามบัญชี ณ', r.countDate ? 'สิ้นวัน ' + prevDay(r.countDate) : '-'], ['ประเภท', r.typeTh || '-'], ['สถานะ', (r.statusTh || r.status) + ' (' + r.status + ')']]);
   var f = s.files;
   $('filesKv').innerHTML = kv([
     ['POS', f.pos.name ? esc(f.pos.name) + '<br><span class="muted">ไฟล์ลงวันที่ ' + esc(f.pos.date) + ' · อัปโหลด ' + esc(f.pos.at) + '</span>' : '<span class="pill bad">ยังไม่มี</span>'],
@@ -768,7 +802,42 @@ function renderClose(s) {
   var canCheck = !!r.projectId && (r.status === 'COUNTING' || r.status === 'COUNT_CLOSED' || r.status === 'SETUP');
   $('kBox').innerHTML = canCheck ? '<div class="row" style="margin-top:10px"><button class="btn sec" onclick="closeCheck(true)">ตรวจเงื่อนไขปิดรอบ (แบบเต็ม)</button>' +
     '<span class="muted">ดูอย่างเดียว ไม่เปลี่ยนข้อมูล · คำนวณผลสรุปใหม่เพื่อเทียบ K5 (ใช้เวลาครู่หนึ่ง)</span></div><div id="kList">' + (KCHK && KCHK.project === r.projectId ? kHtml(KCHK) : '') + '</div>' : '';
-  if (r.status === 'COUNT_CLOSED') { stepsRender(); fastCheck(); }
+  if (r.status === 'COUNT_CLOSED') { stepsRender(); fastCheck(); k3Watch(); } else k3Stop();
+}
+/** v2.9.0: รอเครื่องหลังปิดการนับ — ตรวจเฉพาะ K3 แบบเบา (ไม่ใช้ล็อก) ทุก 15 วินาที นานสูงสุด 3 นาที · หยุดเมื่อผ่าน / ออกจากหน้าหลัก / สถานะเปลี่ยน */
+var K3W = { timer: 0, until: 0, busy: false };
+function k3Stop() { if (K3W.timer) clearInterval(K3W.timer); K3W.timer = 0; K3W.until = 0; }
+function k3Watch() {
+  if (K3W.timer) return;
+  K3W.until = Date.now() + 3 * 60000;
+  K3W.timer = setInterval(k3Tick, 15000);
+}
+function k3Tick() {
+  var home = $('overview') && $('overview').classList.contains('on');
+  if (!S || S.round.status !== 'COUNT_CLOSED' || !$('stepBox') || Date.now() > K3W.until) { k3Stop(); stepsRender(); return; }
+  if (!home || K3W.busy) return;
+  K3W.busy = true;
+  google.script.run.withSuccessHandler(function (r) {
+    K3W.busy = false;
+    if (!r.k3 || r.project !== S.round.projectId) { k3Stop(); return; }
+    if (KCHK && KCHK.project === r.project) {
+      KCHK.items = KCHK.items.map(function (x) {
+        if (x.id !== 'K3') return x;
+        return { id: 'K3', ok: r.k3.ok, title: x.title, detail: r.k3.detail, fix: r.k3.ok ? '' : r.k3.fix, short: r.k3.short, list: r.k3.list, wait: r.k3.wait };
+      });
+      if ($('kList')) $('kList').innerHTML = kHtml(KCHK);
+    }
+    if (r.k3.ok) { k3Stop(); fastCheck(); toast('✓ ทุกเครื่องส่งสัญญาณแล้ว · ค้างส่ง 0'); }
+    stepsRender();
+  }).withFailureHandler(function () { K3W.busy = false; }).apiK3Status();
+}
+function k3Note() {
+  var x = KCHK && KCHK.project === S.round.projectId ? KCHK.items.filter(function (y) { return y.id === 'K3'; })[0] : null;
+  if (!x || x.ok) return '';
+  var w = (x.wait || []).map(function (t) { return '<div>รอ ' + esc(t) + '</div>'; }).join('');
+  return '<div class="muted" style="margin-top:3px">' + w + 'ปลุกจอเครื่องที่รอแล้วเปิดแอปตรวจนับ (มี Wi-Fi) — ผ่านเองภายในไม่กี่วินาที' +
+    (K3W.timer ? ' · ตรวจให้อัตโนมัติทุก 15 วินาที ถึง ' + new Date(K3W.until).toTimeString().slice(0, 5) : ' · กด "ตรวจอีกครั้ง"') +
+    ' · เครื่องเสีย / ไม่ได้ใช้: ยกเลิกเครื่อง (แท็บเครื่อง TC21)</div>';
 }
 /** ตรวจแบบเร็วอัตโนมัติ (ไม่คำนวณผลสรุปใหม่) — ไม่ทับผลแบบเต็มที่เพิ่งตรวจ ถ้าตัวเลขยังไม่เปลี่ยน */
 function fastCheck(manual) {
@@ -796,7 +865,7 @@ function stepsRender() {
   var st = function (ok, wait) { return '<td class="r ' + (ok ? 'y">✓' : wait ? 'w">…' : 'x">✗') + '</td>'; };
   var ready = !!(K && K.full && K.ok), testOk = !!(K && kOk('K3') && kOk('K6') && kOk('K7'));
   var rows = [
-    ['1', 'ทุกเครื่องส่งสัญญาณหลังปิดการนับ · ค้างส่ง 0 (K3)', K ? kOk('K3') : null, '<button class="btn sec" onclick="fastCheck(true)">ตรวจอีกครั้ง</button>'],
+    ['1', 'ทุกเครื่องส่งสัญญาณหลังปิดการนับ · ค้างส่ง 0 (K3)' + k3Note(), K ? kOk('K3') : null, '<button class="btn sec" onclick="fastCheck(true)">ตรวจอีกครั้ง</button>'],
     ['2', 'ทุก Location ปิดแล้ว · ไม่มีธงต้องตรวจซ้ำ (K1 · K2)', K ? kOk('K1') && kOk('K2') : null, '<span class="muted">ปิดที่เครื่อง / โอนการดูแล / ปิดธง</span>'],
     ['3', 'กระทบยอดทั้งรอบ หลังเครื่องส่งครบ (K4)', K ? kOk('K4') : null, '<button class="btn sec" onclick="reconcile(fastCheck)">กระทบยอดทั้งรอบ</button>'],
     ['4', 'สรุปผลและบันทึก — หลังปรับยอดครั้งสุดท้าย (K5)', K ? kOk('K5') : null, '<button class="btn sec" onclick="saveSummary(closeCheck)">สรุปผลและบันทึก</button>'],
@@ -1018,6 +1087,9 @@ function decide(i) {
   call('apiDecide', [c.key, sel.value], function (s) { setState(s); toast('บันทึกแล้ว'); });
 }
 
+function saveStore() {
+  call('apiSetStoreName', [$('storeIn').value], function (s) { setState(s); toast('บันทึกชื่อร้าน / สาขาแล้ว'); });
+}
 function openRound() {
   if (!$('rtype').value) { errBox('เลือกประเภทรอบก่อน: รอบจริง หรือ รอบทดลอง', 'ยังเปิดรอบไม่ได้'); return; }
   call('apiOpenRound', [$('pid').value, $('cdate').value, $('rtype').value], function (s) { setState(s); toast('บันทึกรอบแล้ว'); });
@@ -1434,7 +1506,64 @@ function walkBuild() {
   $('walkDoc').innerHTML = head + h;
   $('walkInfo').textContent = rows.length + ' SKU · ตรวจหน้าตาแล้วกด "พิมพ์" (A4)';
   $('walkDlg').classList.remove('on');
+  pageSize('A4 landscape');
   $('walk').classList.add('on');
+}
+/** ขนาดกระดาษตอนพิมพ์: ใบเดินตรวจแนวนอน · รายงานผลต่างแนวตั้ง (v2.9.0) */
+function pageSize(sz, footer) {
+  var f = footer ? ' @bottom-right { content:"หน้า " counter(page) " / " counter(pages); font-size:9px; }' : '';
+  $('pageSize').textContent = '@page { size:' + sz + '; margin:' + (footer ? '10mm 10mm 12mm' : '8mm') + ';' + f + ' }';
+}
+/** ตัวเลขแบบรายงาน: ติดลบใส่วงเล็บ (2) · คอมมาหลักพัน · ว่าง = "-" */
+function acc(v, d) {
+  if (v === null || v === undefined || v === '') return '-';
+  var t = Math.abs(Number(v)).toLocaleString('en-US', { minimumFractionDigits: d || 0, maximumFractionDigits: d === undefined ? 3 : d });
+  return Number(v) < 0 ? '(' + t + ')' : t;
+}
+/** ไทย: 2026-11-26 → 26/11/2569 */
+function thDate(d) { var m = String(d || '').match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? m[3] + '/' + m[2] + '/' + (Number(m[1]) + 543) : (d || '-'); }
+function vrepOpen() {
+  call('apiVarianceReport', [], function (R) { vrepBuild(R); }, 'กำลังตรวจผลสรุปที่บันทึกและเตรียมรายงาน…');
+}
+function vrepClose() { $('vrep').classList.remove('on'); pageSize('A4 landscape'); }
+function vrepBuild(R) {
+  var T = R.totals;
+  var ref = 'รายงานผลต่าง · ' + (R.store ? R.store + ' · ' : '') + 'รอบ ' + R.project + ' · ผลสรุปครั้งที่ ' + R.run + ' (' + R.savedAt + ') · อ้างอิง ' + R.sig.slice(0, 8);
+  var h = '<h2>รายงานผลต่างจากการตรวจนับสินค้าคงเหลือ</h2>' +
+    '<div class="hd"><div>ร้าน / สาขา</div><div><b>' + (R.store ? esc(R.store) : '.................................................') + '</b></div><div>รหัสรอบ</div><div><b>' + esc(R.project) + '</b>' + (R.roundType ? ' (' + esc(R.roundType) + ')' : '') + '</div>' +
+    '<div>วันที่ตรวจนับ</div><div>' + thDate(R.countDate) + '</div><div>ยอดคงเหลือทางบัญชี ณ</div><div>สิ้นวัน ' + thDate(prevDay(R.countDate)) + '</div>' +
+    '<div>ที่มายอดบัญชี</div><div>' + (R.bookSource === 'POS' ? 'POS (ยังไม่มีไฟล์ SAP)' : 'SAP ' + esc(R.sap.name || '')) + '</div><div>ผลสรุปครั้งที่</div><div>' + R.run + ' · ' + esc(R.savedAt) + '</div></div>' +
+    '<div class="sm"><div>จำนวนรายการ (SKU)</div><div><b>' + nf(T.skus) + '</b></div><div>ตรงตามบัญชี</div><div>' + nf(T.match) + '</div>' +
+    '<div>ขาด</div><div>' + nf(T.short) + ' รายการ · ' + acc(T.shortQty) + ' ชิ้น · ' + acc(T.shortValue, 2) + ' บาท</div><div>เกิน</div><div>' + nf(T.over) + ' รายการ · ' + acc(T.overQty) + ' ชิ้น · ' + acc(T.overValue, 2) + ' บาท</div>' +
+    '<div>ยอดคงเหลือทางบัญชี</div><div>' + acc(T.book) + ' ชิ้น</div><div>ยอดตรวจนับ</div><div>' + acc(T.count) + ' ชิ้น</div>' +
+    '<div><b>ผลต่างสุทธิ</b></div><div><b>' + acc(T.diff) + ' ชิ้น</b></div><div><b>มูลค่าผลต่างสุทธิ (ราคาทุน)</b></div><div><b>' + acc(T.diffValue, 2) + ' บาท</b></div></div>';
+  var col = '<colgroup><col style="width:7%"><col style="width:17%"><col style="width:30%"><col style="width:9%"><col style="width:9%"><col style="width:8%"><col style="width:9%"><col style="width:11%"></colgroup>';
+  function line(r, i) {
+    return '<tr><td class="n">' + (i + 1) + '</td><td class="mono">' + esc(r[0]) + '</td><td>' + esc(r[1]) + '</td><td class="n">' + acc(r[2]) + '</td><td class="n">' + acc(r[3]) +
+      '</td><td class="n"><b>' + acc(r[4]) + '</b></td><td class="n">' + acc(r[5], 2) + '</td><td class="n">' + acc(r[6], 2) + '</td></tr>';
+  }
+  function sub(label, list, qty, val) {
+    var b = 0, c = 0; list.forEach(function (r) { b += r[2]; c += r[3]; });
+    return '<tr class="tot"><td colspan="3">' + label + ' (' + nf(list.length) + ' รายการ)</td><td class="n">' + acc(Math.round(b * 1000) / 1000) + '</td><td class="n">' + acc(Math.round(c * 1000) / 1000) +
+      '</td><td class="n">' + acc(qty) + '</td><td></td><td class="n">' + acc(val, 2) + '</td></tr>';
+  }
+  var body = '';
+  body += '<tr class="sec"><td colspan="8">ก. รายการขาด (ยอดตรวจนับน้อยกว่ายอดคงเหลือทางบัญชี)</td></tr>' + (R.short.length ? R.short.map(line).join('') : '<tr><td colspan="8">ไม่มี</td></tr>') + sub('รวมรายการขาด', R.short, T.shortQty, T.shortValue);
+  body += '<tr class="sec"><td colspan="8">ข. รายการเกิน (ยอดตรวจนับมากกว่ายอดคงเหลือทางบัญชี)</td></tr>' + (R.over.length ? R.over.map(line).join('') : '<tr><td colspan="8">ไม่มี</td></tr>') + sub('รวมรายการเกิน', R.over, T.overQty, T.overValue);
+  if (R.unmapped.length) body += '<tr class="sec"><td colspan="8">ค. ยิงได้แต่ไม่มีในข้อมูลบัญชี (ไม่รวมในผลต่างข้างต้น)</td></tr>' +
+    R.unmapped.map(function (u, i) { return '<tr><td class="n">' + (i + 1) + '</td><td class="mono">' + esc(u[0]) + '</td><td>บาร์โค้ดไม่มีใน Master</td><td class="n">-</td><td class="n">' + acc(u[1]) + '</td><td></td><td></td><td></td></tr>'; }).join('');
+  h += '<table>' + col + '<thead><tr><th class="cap" colspan="8">' + esc(ref) + '</th></tr><tr><th>ลำดับ</th><th>รหัสสินค้า</th><th>ชื่อสินค้า</th><th class="n">ยอดคงเหลือ<br>ทางบัญชี</th><th class="n">ยอด<br>ตรวจนับ</th><th class="n">ผลต่าง<br>(ชิ้น)</th><th class="n">ราคาทุน<br>ต่อหน่วย</th><th class="n">มูลค่าผลต่าง<br>(บาท)</th></tr></thead>' +
+    '<tfoot><tr><td colspan="8">ลงชื่อย่อ &nbsp; ผู้ตรวจสอบ ________ &nbsp; พนักงานร้าน ________ &nbsp; ผู้จัดการร้าน ________</td></tr></tfoot><tbody>' + body + '</tbody></table>';
+  h += '<div class="note">หมายเหตุ: ผลต่าง = ยอดตรวจนับ − ยอดคงเหลือทางบัญชี · ตัวเลขในวงเล็บ ( ) = ขาด · มูลค่าคิดจากราคาทุนต่อหน่วย ไม่ใช่ราคาขาย' +
+    (T.noCost ? ' · ไม่มีราคาทุน ' + nf(T.noCost) + ' รายการ (แสดง "-" ไม่รวมในมูลค่า)' : '') + (R.complete ? '' : ' · <b>ขณะออกรายงาน Location ยังปิดไม่ครบ</b>') + '</div>';
+  h += '<div class="ack"><div>ข้าพเจ้าได้ร่วมตรวจนับ และรับทราบผลต่างตามรายการข้างต้นแล้ว</div><div class="sig">' +
+    ['ผู้ตรวจสอบ', 'พนักงานร้าน', 'ผู้จัดการร้าน'].map(function (x) {
+      return '<div>ลงชื่อ ...................................<br>( ........................................ )<br>' + x + '<br>วันที่ ........./........./.........</div>';
+    }).join('') + '</div><div class="note" style="margin-top:14px;color:#444">ออกรายงานเมื่อ ' + esc(R.printedAt) + ' · ' + esc(ref) + '</div></div>';
+  $('vrepDoc').innerHTML = h;
+  $('vrepInfo').textContent = 'ขาด ' + T.short + ' · เกิน ' + T.over + ' รายการ · ตรวจหน้าตาแล้วกด "พิมพ์" (A4 แนวตั้ง)';
+  pageSize('A4 portrait', true);
+  $('vrep').classList.add('on');
 }
 /** เรียง Location แบบคน (A2 ก่อน A10) — เหมือน natCmp_ ฝั่งเซิร์ฟเวอร์ */
 function natCmp(a, b) {
@@ -1963,7 +2092,12 @@ function setActive(id, on) {
   var own = mine.filter(function (m) { return m.role === 'OWNER'; });
   var lines = [];
   lines.push('<div>เครื่องจะส่งข้อมูลและยิงสินค้าไม่ได้ (รู้ภายใน 1 นาที) · <b>ข้อมูลในเครื่องไม่หาย</b></div>');
-  if (x.hb) lines.push('<div>ค้างส่งล่าสุดที่เครื่องรายงาน: <b>' + (Number(x.hb.pending) || 0) + '</b> รายการ</div>');
+  if (x.hb) {
+    var hbMin = Math.max(0, Math.floor(((DEV.now || Date.now()) - x.hb.at) / 60000));
+    lines.push('<div>ค้างส่งล่าสุดที่เครื่องรายงาน: <b>' + (Number(x.hb.pending) || 0) + '</b> รายการ <span class="muted">(สัญญาณเมื่อ ' + new Date(x.hb.at).toTimeString().slice(0, 5) +
+      ' · ' + (hbMin < 1 ? 'เมื่อสักครู่' : hbMin + ' นาทีที่แล้ว') + ')</span></div>');
+  } else lines.push('<div>ค้างส่งล่าสุด: <span class="pill warn">ไม่มีสัญญาณจากเครื่อง</span> <span class="muted">(ไม่รู้ว่ามีรายการค้างในเครื่องหรือไม่)</span></div>');
+  lines.push('<div>Seq ขาด: <b>' + nf(Number(x.gaps) || 0) + '</b>' + (Number(x.gaps) ? ' <span class="pill bad">มีรายการที่เซิร์ฟเวอร์ยังไม่ได้รับ</span>' : '') + '</div>');
   if (mine.length) lines.push('<div style="margin-top:6px"><span class="pill warn">ยังนับอยู่</span> ' + mine.map(function (m) {
     return '<b>' + esc(m.location) + '</b> (' + (m.role === 'OWNER' ? 'ผู้ดูแล' : 'เครื่องซ้อน') + ')'; }).join(', ') + '</div>');
   if (own.length) lines.push('<div class="muted">ถ้าเครื่องจะไม่กลับมา ให้ "โอนการดูแล" ' + own.map(function (m) { return esc(m.location); }).join(', ') + ' ให้เครื่องอื่น (ตาราง Location ด้านล่าง)</div>');

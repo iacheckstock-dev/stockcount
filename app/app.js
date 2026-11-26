@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2.8.1';
+  var APP_VERSION = '2.9.0';
   var QTY_CONFIRM = 150;      // จำนวนที่ป้อนเองเกินนี้ต้องยืนยันอีกครั้ง
   var QTY_MAX_DIGITS = 5;     // ยาวกว่านี้ = น่าจะยิงบาร์โค้ดเข้าช่องจำนวน
   var INFO_EVERY = 15000;     // ถามสถานะผู้ช่วย/ผู้ดูแลระหว่างนับร่วมกัน
@@ -2068,6 +2068,8 @@
     // กลับเข้าแอปจากแอปอื่น: วาดใหม่ ขอจอไม่ดับ ล็อกแนวตั้ง แล้วส่งข้อมูลที่ค้าง
     $('splash').classList.add('hidden');
     render(); requestWake(); scheduleSync(200);
+    // v2.9.0: รายงานตัวทันทีเมื่อปลุกจอ / กลับเข้าแอป (เดิมรอรอบถัดไปสูงสุด 1 นาที) — หลังปิดการนับ ขั้นที่ 1 (K3) ผ่านภายในไม่กี่วินาที · กันถี่: ไม่เกิน 1 ครั้งต่อ 5 วินาที
+    if (Date.now() - lastHello > 5000) { lastHello = 0; hello(); }
   }
   document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') resume(); });
   window.addEventListener('pageshow', function (e) { if (e.persisted) resume(); });

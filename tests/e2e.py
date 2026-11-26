@@ -4,6 +4,8 @@ python3 tests/e2e.py
 จำลองการยิงด้วยการพิมพ์ + Enter แบบเดียวกับ DataWedge (keystroke output)
 """
 import json, os, re, sys, time, urllib.request
+# เลขเวอร์ชันปัจจุบันจาก app/config.json (ไม่ฝังเลขในเทสต์ · v2.9.0)
+APPV = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'app', 'config.json')))['appVersion']
 from playwright.sync_api import sync_playwright
 
 PORT = int(os.environ.get('PORT', 8787))
@@ -82,7 +84,7 @@ with sync_playwright() as p:
     pg.wait_for_function("/พร้อมนับ ✓/.test(document.querySelector('#readyHead').textContent)", timeout=10000)
     shot('03-ready-pass')
     check(pg.is_visible('#btnStart'), 'ผ่านทุกข้อ ขึ้นปุ่มเริ่มนับ')
-    check('แอป 2.8.0 · เซิร์ฟเวอร์ 2.8.0' in pg.inner_text('#readyList'), 'แสดงเวอร์ชันแอปและเซิร์ฟเวอร์ตรงกัน')
+    check('แอป %s · เซิร์ฟเวอร์ %s' % (APPV, APPV) in pg.inner_text('#readyList'), 'แสดงเวอร์ชันแอปและเซิร์ฟเวอร์ตรงกัน')
     pg.click('#btnStart'); pg.wait_for_selector('#v-count.on')
     check('นุ่น' in pg.inner_text('#tbStaff'), 'เข้างานเป็น นุ่น')
 
@@ -238,7 +240,7 @@ with sync_playwright() as p:
     check('9.9.9' in pg.inner_text('#readyList'), 'มีเวอร์ชันใหม่ → ขึ้น ✗ พร้อมปุ่ม "อัปเดตแอปตอนนี้"')
     shot('11-update')
     pg.click('#btnUpdate'); pg.wait_for_load_state('load'); pg.wait_for_timeout(1500)
-    get('/debug/version?v=2.8.0')
+    get('/debug/version?v=' + APPV)
     pg.wait_for_selector('.view.on', timeout=10000)
     check('รายการ 38' in pg.inner_text('#syncText'), 'หลังกดอัปเดต แอปโหลดใหม่ ข้อมูลในเครื่องยังครบ 38 รายการ')
 
