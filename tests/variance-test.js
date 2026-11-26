@@ -98,5 +98,19 @@ test('ตัวเลขเปลี่ยนหลังบันทึก (ป
   assert.strictEqual(R.short.concat(R.over).find(r => r[0] === MAT1)[3], 4);
 });
 
+test('v2.9.1 พิมพ์ทั้งหมด: มีรายการที่ตรง (เรียงตามรหัส) · ค่าตั้งต้นไม่มี · บันทึกบอก "ทั้งหมด"', () => {
+  const R = run('apiVarianceReport({ all: true })'), D = run('apiVarianceReport()');
+  assert.ok(R.all && R.match.length === R.totals.match && R.match.every(r => r[4] === 0));
+  assert.ok(!D.all && D.match.length === 0);
+  assert.ok(R.match.every((r, i) => !i || R.match[i - 1][0] <= r[0]));
+  assert.ok(/ทั้งหมด รวมรายการที่ตรง/.test(logs('PRINT_VARIANCE').slice(-2)[0][4]));
+});
+test('v2.9.1 สรุปผลและบันทึกซ้ำโดยตัวเลขไม่เปลี่ยน → ไม่บันทึกชุดใหม่ · รายงานยังเป็นครั้งเดิม', () => {
+  const n = env.sheets.Variance.data.length, before = run('apiVarianceReport()').run;
+  const r = run('apiSummarySave()');
+  assert.ok(r.skipped && r.run === before && env.sheets.Variance.data.length === n);
+  assert.strictEqual(run('apiVarianceReport()').run, before);
+});
+
 console.log('\nผล: ผ่าน ' + pass + ' / ไม่ผ่าน ' + fail);
 process.exit(fail ? 1 : 0);

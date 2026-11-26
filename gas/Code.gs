@@ -12,7 +12,7 @@ var SCHEMA_VERSION = 13;   // 13 = v2.6.1 ชีต Device_Log · 6 = v2.4.1 Var
  * เวอร์ชันของระบบ (ใช้เลขเดียวทั้งแอป TC21 และเซิร์ฟเวอร์ ตาม Semantic Versioning MAJOR.MINOR.PATCH)
  * ต้องตรงกับ APP_VERSION ใน app/app.js และ appVersion ใน app/config.json — ดู CHANGELOG.md
  */
-var SYSTEM_VERSION = '2.9.0';
+var SYSTEM_VERSION = '2.9.1';
 
 var SHEETS = {
   Config: ['Key', 'Value', 'Note'],
@@ -1681,8 +1681,16 @@ function apiSummarySave() {
       if (r[0] === 'SUMMARY_RUN') { run = (Number(r[1]) || 0) + 1; prevAt = r[2]; }
       if (r[0] === 'SUMMARY_SIG') prevSig = String(r[1]);
     });
-    // ลายนิ้วมือของผล (v2.4.1): เหมือนครั้งก่อน = ตัวเลขทุก SKU ไม่เปลี่ยน แจ้งผู้ใช้ว่าบันทึกซ้ำ (ยังบันทึกให้ตามที่กด)
+    // ลายนิ้วมือของผล (v2.4.1): เหมือนครั้งก่อน = ตัวเลขทุก SKU ไม่เปลี่ยน
     var sig = summarySig_(R);
+    // v2.9.1 (UAT G26-7): ตัวเลขเหมือนผลที่บันทึกล่าสุดของรอบนี้ทุกรายการ → ไม่บันทึกชุดซ้ำ (ชีต Variance ไม่มีครั้งที่ซ้ำ) · เซิร์ฟเวอร์ตัดสินตอนกด ไม่ใช้สถานะบนหน้าจอ
+    // ข้อยกเว้น: ผลที่บันทึกไว้ก่อน "ปิดการนับ" ต้องบันทึกใหม่ได้เสมอ (K5 ไม่รับผลที่บันทึกก่อนปิด แม้ตัวเลขเท่าเดิม)
+    var cfg0 = readConfig_(), SV = null; try { SV = JSON.parse(cfg0.SUMMARY_SAVED || 'null'); } catch (e) { }
+    var closedAt = cfg0.COUNT_CLOSED_AT || '';
+    if (SV && SV.project === project && SV.sig === sig && !(closedAt && String(SV.at) < closedAt)) {
+      R.run = SV.run; R.saved = 0; R.same = true; R.skipped = true; R.prevAt = SV.at; R.lastSave = { run: SV.run, at: SV.at };
+      return R;
+    }
     var sapFile = R.sap.name + (R.sap.at ? ' (' + R.sap.at + ')' : '');
     adminAct_('SUMMARY_SAVE', project, 'ครั้งที่ ' + run + ' · ' + (R.complete ? 'นับครบ' : 'ยังนับไม่ครบ') + ' · บัญชี ' + T.book + ' นับ ' + T.final + ' ต่าง ' + T.diff +
       ' (' + (T.pct === null ? '-' : T.pct + '%') + ', ' + T.diffValue + ' บาท) · ' + R.skus.length + ' SKU · ไม่มีใน Master ' + T.unmapped + ' · ไฟล์ SAP ' + sapFile, function () {
@@ -1731,7 +1739,8 @@ function apiSetStoreName(name) {
 }
 
 /** หน้า Admin: ข้อมูลรายงานผลต่าง — ใช้ล็อก (คำนวณผลสรุปใหม่เทียบลายนิ้วมือกับครั้งที่บันทึก) · บันทึก Admin_Log ทุกครั้งที่ออกรายงาน */
-function apiVarianceReport() {
+function apiVarianceReport(opts) {
+  opts = opts || {};
   return withLock_(function () {
     var cfg = readConfig_(), project = cfg.PROJECT_ID;
     if (!project) throw new Error('ยังไม่ได้เปิดรอบนับ');
@@ -1740,35 +1749,36 @@ function apiVarianceReport() {
     if (!SV || SV.project !== project) throw new Error('ยังไม่ได้ "สรุปผลและบันทึก" ในรอบนี้ — กดสรุปผลและบันทึกก่อน แล้วจึงพิมพ์รายงานผลต่าง');
     var R = summary_(project, 'รายงานผลต่าง (หน้า Admin)');
     if (summarySig_(R) !== SV.sig) throw new Error('ตัวเลขเปลี่ยนหลังสรุปผลครั้งที่ ' + SV.run + ' (' + SV.at + ') เช่น มีปรับยอดหรือรายการเข้ามาเพิ่ม — กด "สรุปผลและบันทึก" ใหม่ แล้วจึงพิมพ์');
-    var rep = varianceReport_(R);
+    var rep = varianceReport_(R, !!opts.all);
+    rep.all = !!opts.all;
     rep.store = cfg.STORE_NAME || ''; rep.project = project; rep.countDate = cfg.COUNT_DATE || ''; rep.roundType = ROUND_TYPE_TH[cfg.ROUND_TYPE] || '';
     rep.run = SV.run; rep.savedAt = SV.at; rep.sig = SV.sig; rep.printedAt = now_(); rep.complete = R.complete;
-    logAdmin_('PRINT_VARIANCE', project, 'รายงานผลต่าง ผลสรุปครั้งที่ ' + SV.run + ' (' + SV.at + ') · ขาด ' + rep.totals.short + ' SKU (' + rep.totals.shortQty + ' ชิ้น) · เกิน ' +
+    logAdmin_('PRINT_VARIANCE', project, 'รายงานผลต่าง' + (rep.all ? ' (ทั้งหมด รวมรายการที่ตรง)' : '') + ' ผลสรุปครั้งที่ ' + SV.run + ' (' + SV.at + ') · ขาด ' + rep.totals.short + ' SKU (' + rep.totals.shortQty + ' ชิ้น) · เกิน ' +
       rep.totals.over + ' SKU (' + rep.totals.overQty + ' ชิ้น) · มูลค่าผลต่างสุทธิ ' + rep.totals.diffValue + ' บาท');
     return rep;
   });
 }
 
 /** แยกผลสรุปเป็นรายการขาด / เกิน (เรียงตามรหัสสินค้า) + ยอดรวม · แยกฟังก์ชันไว้ทดสอบ */
-function varianceReport_(R) {
+function varianceReport_(R, all) {
   var r3 = function (v) { return Math.round(v * 1000) / 1000; }, r2 = function (v) { return Math.round(v * 100) / 100; };
   var T = { skus: 0, match: 0, short: 0, over: 0, book: 0, count: 0, diff: 0, shortQty: 0, overQty: 0, shortValue: 0, overValue: 0, diffValue: 0, noCost: 0, unmapped: 0, unmappedQty: 0 };
-  var short = [], over = [];
+  var short = [], over = [], match = [];
   R.skus.forEach(function (x) {
     // [Material, ชื่อ, บัญชี, เครื่อง, ปรับ, สุดท้าย, ต่าง, ต้นทุน, ต่างบาท, ...]
     var diff = x[6], cost = Number(x[7]) || 0, val = cost ? r2(diff * cost) : null;
     T.skus++; T.book = r3(T.book + x[2]); T.count = r3(T.count + x[5]);
-    if (diff === 0) { T.match++; return; }
+    if (diff === 0) { T.match++; if (all) match.push([x[0], x[1], x[2], x[5], 0, cost || null, cost ? 0 : null]); return; }
     if (!cost) T.noCost++;
     var row = [x[0], x[1], x[2], x[5], diff, cost || null, val];
     if (diff < 0) { short.push(row); T.short++; T.shortQty = r3(T.shortQty + diff); T.shortValue = r2(T.shortValue + (val || 0)); }
     else { over.push(row); T.over++; T.overQty = r3(T.overQty + diff); T.overValue = r2(T.overValue + (val || 0)); }
   });
   var byMat = function (a, b) { return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0; };
-  short.sort(byMat); over.sort(byMat);
+  short.sort(byMat); over.sort(byMat); match.sort(byMat);
   T.diff = r3(T.count - T.book); T.diffValue = r2(T.shortValue + T.overValue);
   var unmapped = (R.unmapped || []).map(function (u) { T.unmapped++; T.unmappedQty = r3(T.unmappedQty + u[1]); return [u[0], u[1]]; });
-  return { totals: T, short: short, over: over, unmapped: unmapped, sap: R.sap, bookSource: R.bookSource };
+  return { totals: T, short: short, over: over, match: match, unmapped: unmapped, sap: R.sap, bookSource: R.bookSource };
 }
 
 /** ไล่ย้อน SKU: นับที่ Location ไหน เครื่องไหน ใครนับ เท่าไร */

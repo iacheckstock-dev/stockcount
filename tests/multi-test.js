@@ -913,16 +913,18 @@ console.log('\nสรุปผลนับ / Dashboard (v2.4.0)');
     assert.strictEqual(R2.skus.find(r => r[0] === MAT2)[3], sumLog(r => r[7] === MAT2));
     row[8] = '1'; run('apiSummary()');
   });
-  test('สรุปผลและบันทึก: ชีต Variance ต่อท้าย (ครั้งที่ 1, 2) · Dash_Data · Admin_Log SUMMARY_SAVE', () => {
+  test('สรุปผลและบันทึก: ชีต Variance ต่อท้าย (ครั้งที่ 1) · Dash_Data · Admin_Log SUMMARY_SAVE · v2.9.1 ผลไม่เปลี่ยน → ไม่บันทึกซ้ำ', () => {
     const V = env.sheets.Variance, n0 = V.data.length;
     const a = run('apiSummarySave()');
     assert.strictEqual(a.run, 1);
     assert.strictEqual(V.data.length - n0, a.skus.length + a.unmapped.length);
+    assert.ok(env.sheets.Dash_Data.data.some(r => r[0] === 'SUMMARY_RUN' && String(r[1]) === '1'));
+    assert.ok(env.sheets.Admin_Log.data.some(r => r[2] === 'SUMMARY_SAVE' && /ครั้งที่ 1/.test(r[4])));
+    const nLog = env.sheets.Admin_Log.data.filter(r => r[2] === 'SUMMARY_SAVE').length;
     const b = run('apiSummarySave()');
-    assert.strictEqual(b.run, 2);
-    assert.strictEqual(V.data.length - n0, 2 * (a.skus.length + a.unmapped.length));
-    assert.ok(env.sheets.Dash_Data.data.some(r => r[0] === 'SUMMARY_RUN' && String(r[1]) === '2'));
-    assert.ok(env.sheets.Admin_Log.data.some(r => r[2] === 'SUMMARY_SAVE' && /ครั้งที่ 2/.test(r[4])));
+    assert.ok(b.skipped && b.same && b.run === 1 && b.saved === 0 && b.prevAt === a.at, JSON.stringify({ skipped: b.skipped, run: b.run, saved: b.saved }));
+    assert.strictEqual(V.data.length - n0, a.skus.length + a.unmapped.length, 'ชีต Variance ไม่มีชุดซ้ำ');
+    assert.strictEqual(env.sheets.Admin_Log.data.filter(r => r[2] === 'SUMMARY_SAVE').length, nLog, 'ไม่บันทึก SUMMARY_SAVE ซ้ำ');
   });
   test('โหลด SAP ใหม่ระหว่างวันนับ (ยอด UR เปลี่ยน): ยอดเทียบเปลี่ยนตาม · Master ที่เครื่องใช้ไม่เปลี่ยน (ไม่ต้องอนุมัติใหม่)', () => {
     const cfg0 = run('readConfig_()'), dm0 = JSON.stringify(env.sheets.Device_Master.data);
@@ -977,7 +979,7 @@ console.log('\nรายงาน v2.4.1: บาร์โค้ด · Location=�
   test('ไม่มีใน Master: Location แสดงเป็น F3=4', () => {
     assert.ok(/F3=4/.test(R.unmapped.find(r => r[0] === '9999999999999')[2]));
   });
-  test('Variance มีคอลัมน์ Barcode · Locations = "F2=1, F10=3, …" · บันทึกครั้งถัดไปโดยผลไม่เปลี่ยน → same = true', () => {
+  test('Variance มีคอลัมน์ Barcode · Locations = "F2=1, F10=3, …" · บันทึกครั้งถัดไปโดยผลไม่เปลี่ยน → ไม่บันทึกซ้ำ (v2.9.1)', () => {
     const V = env.sheets.Variance, vh = V.data[0];
     assert.ok(vh.indexOf('Barcode') >= 0);
     const a = run('apiSummarySave()');
@@ -986,10 +988,10 @@ console.log('\nรายงาน v2.4.1: บาร์โค้ด · Location=�
     assert.strictEqual(row[vh.indexOf('Locations')], run('locStr_(_l)', { _l: R.skus.find(r => r[0] === MAT1)[13] }));
     assert.ok(row[vh.indexOf('Barcode')].indexOf(BC1) >= 0);
     const b = run('apiSummarySave()');
-    assert.ok(b.same && b.run === a.run + 1 && b.prevAt === a.at, JSON.stringify({ same: b.same, prevAt: b.prevAt }));
+    assert.ok(b.same && b.skipped && b.run === a.run && b.saved === 0 && b.prevAt === a.at, JSON.stringify({ same: b.same, run: b.run, prevAt: b.prevAt }));
     O.sync([O.scan('F10', BC1, MAT1, 1)]);
     const c = run('apiSummarySave()');
-    assert.ok(!c.same, 'ยิงเพิ่มแล้วผลเปลี่ยน');
+    assert.ok(!c.same && !c.skipped && c.run === a.run + 1, 'ยิงเพิ่มแล้วผลเปลี่ยน → บันทึกครั้งใหม่');
     assert.strictEqual(run('apiSummary()').lastSave.run, c.run);
   });
   test('เครื่องค้นหา SKU ด้วยบาร์โค้ด: ยอดบัญชี · นับ · ต่าง · Location=ชิ้น · ไม่มีต้นทุน/มูลค่า', () => {

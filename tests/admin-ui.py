@@ -162,8 +162,10 @@ with sync_playwright() as p:
     check(pg.is_visible('#walkDlg'), 'พิมพ์ใบเดินตรวจ → กล่องเลือกแบบ')
     pg.click('#walkDlg >> text=ดูตัวอย่าง'); pg.wait_for_timeout(100)
     wd = pg.inner_text('#walkDoc')
-    check(pg.is_visible('#walk') and 'ใบเดินตรวจ' in wd and 'นับทวนได้' in wd and 'Location=ชิ้น' in wd and 'ผลบันทึกครั้งที่ 3' in wd and 'ไม่มีใน Master' in wd and 'ผู้ตรวจสอบ' in wd,
-          'แบบ SKU: มีช่องนับทวน · Location=ชิ้น · อ้างอิงครั้งที่บันทึก · บาร์โค้ดไม่มีใน Master · ช่องลงชื่อ')
+    check(pg.is_visible('#walk') and 'ใบเดินตรวจ' in wd and 'นับทวนได้' not in wd and 'Location=ชิ้น' in wd and 'ผลบันทึกครั้งที่ 3' in wd and 'ไม่มีใน Master' in wd and 'ผู้ตรวจสอบ' not in wd,
+          'แบบ SKU: v2.9.1 ไม่มีช่องนับทวน / ช่องลงชื่อ · Location=ชิ้น · อ้างอิงครั้งที่บันทึก · บาร์โค้ดไม่มีใน Master')
+    one = pg.eval_on_selector_all('#walkDoc td.nm, #walkDoc td.mat', 'ts => ts.slice(0, 60).every(t => t.getBoundingClientRect().height < 30)')
+    check(one, 'v2.9.1 Material / ชื่อ อยู่บรรทัดเดียว (ชื่อยาวตัดเป็น …)')
     check('บาท' not in wd.replace('ต่างตั้งแต่', ''), 'ใบพิมพ์ไม่มีมูลค่า (บาท)')
     pg.pdf(path='/tmp/walk-sku.pdf', prefer_css_page_size=True)
     pg.click('#walk >> text=ปิด'); pg.click('text=พิมพ์ใบเดินตรวจ'); pg.check('input[name=wkSort][value=loc]'); pg.fill('#wkMin', '100')
@@ -174,7 +176,7 @@ with sync_playwright() as p:
     pg.emulate_media(media='print')
     check(pg.is_visible('#walkDoc') and not pg.is_visible('#nav') and not pg.is_visible('#walk .bar'), 'ตอนพิมพ์: เห็นเฉพาะใบเดินตรวจ')
     pg.pdf(path='/tmp/walk-loc.pdf', prefer_css_page_size=True)
-    ws = pg.eval_on_selector_all('#walkDoc .grp table', 'ts => ts.filter(t => t.querySelectorAll("col").length === 9).slice(0, 8).map(t => Array.from(t.querySelectorAll("thead tr:last-child th")).map(th => Math.round(th.getBoundingClientRect().width)).join(","))')
+    ws = pg.eval_on_selector_all('#walkDoc .grp table', 'ts => ts.filter(t => t.querySelectorAll("col").length === 8).slice(0, 8).map(t => Array.from(t.querySelectorAll("thead tr:last-child th")).map(th => Math.round(th.getBoundingClientRect().width)).join(","))')
     check(len(ws) >= 3 and len(set(ws)) == 1, 'แบบ Location: ความกว้างคอลัมน์ทุกกลุ่มเท่ากัน (เส้นตารางตรงกัน · G8-7): ' + ' | '.join(ws))
     pg.emulate_media(media='screen'); pg.click('#walk >> text=ปิด')
     # หน้ากระดาษ A4 แนวนอน + หัวตารางพิมพ์ซ้ำทุกหน้า (v2.4.2)
@@ -186,7 +188,7 @@ with sync_playwright() as p:
     size = re.search(r'Page size:\s+([\d.]+) x ([\d.]+)', info); pages = int(re.search(r'Pages:\s+(\d+)', info).group(1))
     check(size and float(size.group(1)) > float(size.group(2)) and abs(float(size.group(1)) - 841.9) < 2, 'PDF เป็น A4 แนวนอน: ' + (size.group(0) if size else info[:80]))
     heads = [subprocess.run(['pdftotext', '-f', str(i), '-l', str(i), '/tmp/walk-sku-all.pdf', '-'], capture_output=True, text=True).stdout for i in (2, 3)]
-    check(pages >= 3 and all('Material' in t and 'นับทวนได้' in t and 'ใบเดินตรวจ' in t for t in heads), 'หัวตาราง + ชื่อชุดพิมพ์ซ้ำหน้า 2 และ 3 (%d หน้า): ' % pages + heads[0][:150].replace('\n', ' '))
+    check(pages >= 3 and all('Material' in t and 'หมายเหตุ' in t and 'ใบเดินตรวจ' in t for t in heads), 'หัวตาราง + ชื่อชุดพิมพ์ซ้ำหน้า 2 และ 3 (%d หน้า): ' % pages + heads[0][:150].replace('\n', ' '))
     # ปรับยอดด้วยมือ (v2.4.2)
     sb = pg.inner_text('#sumBody')
     check('4. ปรับยอดด้วยมือ' in sb and 'นับทวนกับพนักงานหน้าร้าน:' in sb and 'ถูกกลับโดย' in sb and 'กลับ ADJ-' in sb, 'ส่วนที่ 4 ปรับยอด: ยอดตามเหตุผล + บรรทัดกลับรายการเห็นคู่กัน')

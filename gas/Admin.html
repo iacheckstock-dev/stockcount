@@ -132,6 +132,7 @@
   #walkDoc thead { display:table-header-group; }   /* หัวตารางพิมพ์ซ้ำทุกหน้า (v2.4.2) */
   #walkDoc tr { break-inside:avoid; page-break-inside:avoid; }
   #walkDoc td { overflow-wrap:anywhere; }
+  #walkDoc td.mat, #walkDoc td.nm { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; overflow-wrap:normal; }   /* v2.9.1 (UAT G26-5) บรรทัดเดียว · ชื่อยาวตัดเป็น … */
   #walkDoc th.cap { background:#fff; font-weight:400; text-align:left; border:0; border-bottom:1px solid #999; padding:0 0 3px; }
   #walkDoc th, #walkDoc td { border:1px solid #999; padding:3px 5px; }
   #walkDoc .grp { break-inside:avoid; page-break-inside:avoid; margin-top:10px; }
@@ -149,7 +150,8 @@
   #vrepDoc thead { display:table-header-group; } #vrepDoc tfoot { display:table-footer-group; }
   #vrepDoc tr { break-inside:avoid; page-break-inside:avoid; }
   #vrepDoc th, #vrepDoc td { border:1px solid #000; padding:3px 5px; vertical-align:top; }
-  #vrepDoc th { background:#eee; font-weight:600; }
+  #vrepDoc th { background:#eee; font-weight:600; position:static; }   /* v2.9.1 (UAT G26-5): th ทั่วไปเป็น sticky → Chrome พิมพ์ไม่มีเส้น */
+  #vrepDoc, #walkDoc { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
   #vrepDoc td { overflow-wrap:anywhere; }
   #vrepDoc .n { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
   #vrepDoc tr.sec td { background:#f3f3f3; font-weight:700; }
@@ -804,18 +806,31 @@ function renderClose(s) {
     '<span class="muted">ดูอย่างเดียว ไม่เปลี่ยนข้อมูล · คำนวณผลสรุปใหม่เพื่อเทียบ K5 (ใช้เวลาครู่หนึ่ง)</span></div><div id="kList">' + (KCHK && KCHK.project === r.projectId ? kHtml(KCHK) : '') + '</div>' : '';
   if (r.status === 'COUNT_CLOSED') { stepsRender(); fastCheck(); k3Watch(); } else k3Stop();
 }
-/** v2.9.0: รอเครื่องหลังปิดการนับ — ตรวจเฉพาะ K3 แบบเบา (ไม่ใช้ล็อก) ทุก 15 วินาที นานสูงสุด 3 นาที · หยุดเมื่อผ่าน / ออกจากหน้าหลัก / สถานะเปลี่ยน */
-var K3W = { timer: 0, until: 0, busy: false };
+/**
+ * รอเครื่องหลังปิดการนับ — ตรวจเฉพาะ K3 แบบเบา (ไม่ใช้ล็อก) ทุก 15 วินาที
+ * v2.9.1 (UAT G26-9): งานจริงเก็บเครื่องคืนหลังตรวจผลเป็นชั่วโมง → ไม่จำกัด 3 นาทีแล้ว: ตรวจต่อเนื่องขณะหน้าหลักเปิดอยู่และเห็นบนจอ
+ * พัก = อยู่แท็บอื่น / สลับหน้าต่าง (ไม่เรียกเซิร์ฟเวอร์) · หยุด = ผ่าน / สถานะเปลี่ยน / ไม่มีการใช้งานหน้านี้ 60 นาที (ขยับเมาส์หรือกดปุ่มใด ๆ = เริ่มนับใหม่)
+ */
+var K3W = { timer: 0, until: 0, busy: false }, K3_IDLE = 60 * 60000;
 function k3Stop() { if (K3W.timer) clearInterval(K3W.timer); K3W.timer = 0; K3W.until = 0; }
 function k3Watch() {
+  K3W.until = Date.now() + K3_IDLE;
   if (K3W.timer) return;
-  K3W.until = Date.now() + 3 * 60000;
   K3W.timer = setInterval(k3Tick, 15000);
 }
+function k3Wake() {   // ใช้งานหน้านี้อีกครั้ง → ขยายเวลา / เริ่มตรวจใหม่ถ้าหยุดเพราะไม่มีการใช้งาน
+  if (!S || S.round.status !== 'COUNT_CLOSED' || kOk('K3')) return;
+  var was = !!K3W.timer; k3Watch();
+  if (!was) { stepsRender(); k3Tick(); }
+}
+['click', 'keydown', 'mousemove'].forEach(function (ev) {
+  document.addEventListener(ev, function () { if (Date.now() + K3_IDLE - K3W.until > 30000) k3Wake(); }, true);
+});
+document.addEventListener('visibilitychange', function () { if (!document.hidden) k3Wake(); });
 function k3Tick() {
   var home = $('overview') && $('overview').classList.contains('on');
-  if (!S || S.round.status !== 'COUNT_CLOSED' || !$('stepBox') || Date.now() > K3W.until) { k3Stop(); stepsRender(); return; }
-  if (!home || K3W.busy) return;
+  if (!S || S.round.status !== 'COUNT_CLOSED' || !$('stepBox') || Date.now() > K3W.until) { k3Stop(); if ($('stepBox')) stepsRender(); return; }
+  if (!home || document.hidden || K3W.busy) return;
   K3W.busy = true;
   google.script.run.withSuccessHandler(function (r) {
     K3W.busy = false;
@@ -836,7 +851,7 @@ function k3Note() {
   if (!x || x.ok) return '';
   var w = (x.wait || []).map(function (t) { return '<div>รอ ' + esc(t) + '</div>'; }).join('');
   return '<div class="muted" style="margin-top:3px">' + w + 'ปลุกจอเครื่องที่รอแล้วเปิดแอปตรวจนับ (มี Wi-Fi) — ผ่านเองภายในไม่กี่วินาที' +
-    (K3W.timer ? ' · ตรวจให้อัตโนมัติทุก 15 วินาที ถึง ' + new Date(K3W.until).toTimeString().slice(0, 5) : ' · กด "ตรวจอีกครั้ง"') +
+    (K3W.timer ? ' · ตรวจให้อัตโนมัติทุก 15 วินาที ขณะเปิดหน้านี้' : ' · หยุดตรวจอัตโนมัติ (ไม่มีการใช้งาน 60 นาที) — ขยับเมาส์หรือกด "ตรวจอีกครั้ง"') +
     ' · เครื่องเสีย / ไม่ได้ใช้: ยกเลิกเครื่อง (แท็บเครื่อง TC21)</div>';
 }
 /** ตรวจแบบเร็วอัตโนมัติ (ไม่คำนวณผลสรุปใหม่) — ไม่ทับผลแบบเต็มที่เพิ่งตรวจ ถ้าตัวเลขยังไม่เปลี่ยน */
@@ -1202,6 +1217,12 @@ function saveSummary(then) {
       renderSummary(r);
       // v2.4.1: กล่องผลกลางจอแทน toast — บอกครั้งที่ / จำนวนแถว / เวลา · เตือนถ้าตัวเลขเหมือนครั้งก่อน
       var nU = r.unmapped.length;
+      if (r.skipped) {   // v2.9.1 (UAT G26-7): ตัวเลขไม่เปลี่ยน → เซิร์ฟเวอร์ไม่บันทึกชุดซ้ำ
+        ask({ title: 'ตัวเลขไม่เปลี่ยนตั้งแต่ผลสรุปครั้งที่ ' + r.run, ok: 'ปิด', noCancel: true,
+          body: '<div>ทุก SKU เหมือนผลที่บันทึกครั้งที่ <b>' + r.run + '</b> (' + esc(r.prevAt) + ') — <b>ไม่บันทึกซ้ำ</b> ชีต Variance ไม่มีครั้งใหม่</div>' +
+            '<div class="muted" style="margin-top:6px">พิมพ์รายงานผลต่างได้เลย · ถ้ามีปรับยอดหรือรายการเข้ามาเพิ่ม กดสรุปผลและบันทึกอีกครั้งจะบันทึกเป็นครั้งใหม่ให้เอง</div>' }, function () { if (typeof then === 'function') then(); });
+        return;
+      }
       ask({ title: '✓ บันทึกผลครั้งที่ ' + r.run + ' แล้ว', ok: 'ปิด', noCancel: true,
         body: '<div class="kv"><div>เวลา</div><div>' + esc(r.at) + '</div><div>ชีต Variance</div><div>เพิ่ม ' + nf(r.saved) + ' แถว (SKU ' + nf(r.skus.length) + (nU ? ' + ไม่มีใน Master ' + nU : '') + ') · Run = ' + r.run + '</div>' +
           '<div>Admin_Log</div><div>SUMMARY_SAVE ครั้งที่ ' + r.run + '</div><div>ผลต่าง</div><div>' + sgn(r.totals.diff) + ' ชิ้น · ' + sgn(r.totals.diffValue, 2) + ' บาท</div></div>' +
@@ -1214,6 +1235,7 @@ function renderSummary(R) {
   SUM = R;
   var T = R.totals, L = R.locs;
   $('sumInfo').innerHTML = 'คำนวณเมื่อ ' + esc(R.at) + ' · ยอดบัญชี: ' + esc(R.bookSource === 'POS' ? 'POS (ยังไม่มีไฟล์ SAP)' : 'SAP UR') + ' ไฟล์ ' + esc(R.sap.name || '-') + (R.sap.at ? ' (โหลด ' + esc(R.sap.at) + ')' : '') +
+    (R.lastSave ? ' · <b>บันทึกล่าสุด: ครั้งที่ ' + R.lastSave.run + '</b> (' + esc(R.lastSave.at) + ')' : ' · ยังไม่ได้สรุปผลและบันทึก') +
     ' · กระทบยอด: ' + (R.indexDiffs.length ? '<span class="pill warn">แก้ตามชีต ' + R.indexDiffs.length + ' จุด (INDEX_FIX)</span>' : '<span class="pill ok">ตรง</span>');
   var h = '';
   if (!R.complete) h += '<div class="card" style="border-color:var(--warn);background:var(--warnbg);margin:8px 0"><b>ยังนับไม่ครบ</b> · ปิดแล้ว ' + L.closed + '/' + L.total + ' Location' +
@@ -1446,9 +1468,9 @@ function adjReverse(id) {
 var WCOL = (function () {
   function cg(w) { return '<colgroup>' + w.map(function (x) { return '<col style="width:' + x + '%">'; }).join('') + '</colgroup>'; }
   return {
-    sku: cg([3, 12, 11, 17, 5, 5, 5, 20, 8, 14]),
-    loc: cg([13, 12, 22, 7, 7, 7, 6, 10, 16]),
-    zero: cg([13, 12, 25, 7, 13, 12, 18]),
+    sku: cg([3, 14, 11, 24, 5, 5, 5, 19, 14]),   // v2.9.1: ตัดคอลัมน์ "นับทวนได้"
+    loc: cg([15, 12, 28, 7, 7, 7, 6, 18]),
+    zero: cg([15, 12, 32, 7, 16, 18]),
     un: cg([15, 7, 30, 20, 28])
   };
 })();
@@ -1472,14 +1494,14 @@ function walkBuild() {
     '<div>ตัวเลข ณ ' + esc(SUM.at) + ' · ยอดบัญชี ' + (SUM.bookSource === 'POS' ? 'POS' : 'SAP UR ' + esc(SUM.sap.name || '')) + ' · ' +
     (same ? '<b>ผลบันทึกครั้งที่ ' + L.run + '</b> (ชีต Variance Run = ' + L.run + ')' : 'ยังไม่ได้บันทึกตัวเลขชุดนี้' + (L ? ' (บันทึกล่าสุด ครั้งที่ ' + L.run + ' เมื่อ ' + esc(L.at) + ')' : '')) +
     ' · พิมพ์เมื่อ ' + esc(new Date().toLocaleString('th-TH')) + '</div>' + (SUM.complete ? '' : '<div><b>ยังนับไม่ครบ</b> (ปิดแล้ว ' + SUM.locs.closed + '/' + SUM.locs.total + ' Location)</div>');
-  var blank = '<td></td><td></td>', h = '';
+  var blank = '<td></td>', h = '';
   // แถวบนสุดของหัวตาราง (พิมพ์ซ้ำทุกหน้า): กระดาษหลุดจากกันก็ยังรู้ว่าเป็นชุดไหน
   var tag = 'ใบเดินตรวจ · รอบ ' + SUM.project + ' · ' + (same ? 'ผลบันทึกครั้งที่ ' + L.run : 'ตัวเลข ณ ' + SUM.at);
   function cap(x, n) { return '<tr><th class="cap" colspan="' + n + '">' + esc(tag + (x ? ' · ' + x : '')) + '</th></tr>'; }
   if (by === 'sku') {
-    h += '<table style="margin-top:8px">' + WCOL.sku + '<thead>' + cap('', 10) + '<tr><th>#</th><th>Material</th><th>บาร์โค้ด</th><th>ชื่อ</th><th class="n">บัญชี</th><th class="n">นับ</th><th class="n">ต่าง</th><th>Location=ชิ้น</th><th>นับทวนได้</th><th>หมายเหตุ / เหตุผล</th></tr></thead><tbody>' +
+    h += '<table style="margin-top:8px">' + WCOL.sku + '<thead>' + cap('', 9) + '<tr><th>#</th><th>Material</th><th>บาร์โค้ด</th><th>ชื่อ</th><th class="n">บัญชี</th><th class="n">นับ</th><th class="n">ต่าง</th><th>Location=ชิ้น</th><th>หมายเหตุ / เหตุผล</th></tr></thead><tbody>' +
       rows.map(function (r, i) {
-        return '<tr><td>' + (i + 1) + '</td><td class="mono">' + esc(r[0]) + '</td><td class="mono">' + esc((r[14] || []).join(' ')) + '</td><td>' + esc(r[1]) + '</td><td class="n">' + nf(r[2]) + '</td><td class="n">' + nf(r[5]) +
+        return '<tr><td>' + (i + 1) + '</td><td class="mono mat">' + esc(r[0]) + '</td><td class="mono">' + esc((r[14] || []).join(' ')) + '</td><td class="nm" title="' + esc(r[1]) + '">' + esc(r[1]) + '</td><td class="n">' + nf(r[2]) + '</td><td class="n">' + nf(r[5]) +
           '</td><td class="n"><b>' + sgn(r[6]) + '</b></td><td>' + (r[13] && r[13].length ? esc(locStr(r[13])) : '<i>ไม่พบที่ไหน</i>') + '</td>' + blank + '</tr>';
       }).join('') + '</tbody></table>';
   } else {
@@ -1490,19 +1512,18 @@ function walkBuild() {
     });
     un.forEach(function (u) { (u[3] || []).forEach(function (x) { (g[x[0]] || (g[x[0]] = [])).push({ u: u, q: x[1] }); }); });
     Object.keys(g).sort(natCmp).forEach(function (l) {
-      h += '<div class="grp"><h3>' + esc(l) + ' <span class="muted">(' + g[l].length + ' รายการ)</span></h3><table>' + WCOL.loc + '<thead>' + cap(l, 9) + '<tr><th>Material</th><th>บาร์โค้ด</th><th>ชื่อ</th><th class="n">นับที่นี่</th><th class="n">บัญชีทั้งร้าน</th><th class="n">นับทั้งร้าน</th><th class="n">ต่าง</th><th>นับทวนได้</th><th>หมายเหตุ / เหตุผล</th></tr></thead><tbody>' +
+      h += '<div class="grp"><h3>' + esc(l) + ' <span class="muted">(' + g[l].length + ' รายการ)</span></h3><table>' + WCOL.loc + '<thead>' + cap(l, 8) + '<tr><th>Material</th><th>บาร์โค้ด</th><th>ชื่อ</th><th class="n">นับที่นี่</th><th class="n">บัญชีทั้งร้าน</th><th class="n">นับทั้งร้าน</th><th class="n">ต่าง</th><th>หมายเหตุ / เหตุผล</th></tr></thead><tbody>' +
         g[l].map(function (x) {
           if (x.u) return '<tr><td><i>ไม่มีใน Master</i></td><td class="mono">' + esc(x.u[0]) + '</td><td></td><td class="n"><b>' + nf(x.q) + '</b></td><td></td><td class="n">' + nf(x.u[1]) + '</td><td></td>' + blank + '</tr>';
           var r = x.r;
-          return '<tr><td class="mono">' + esc(r[0]) + '</td><td class="mono">' + esc((r[14] || [])[0] || '') + '</td><td>' + esc(r[1]) + '</td><td class="n"><b>' + nf(x.q) + '</b></td><td class="n">' + nf(r[2]) + '</td><td class="n">' + nf(r[5]) + '</td><td class="n">' + sgn(r[6]) + '</td>' + blank + '</tr>';
+          return '<tr><td class="mono mat">' + esc(r[0]) + '</td><td class="mono">' + esc((r[14] || [])[0] || '') + '</td><td class="nm">' + esc(r[1]) + '</td><td class="n"><b>' + nf(x.q) + '</b></td><td class="n">' + nf(r[2]) + '</td><td class="n">' + nf(r[5]) + '</td><td class="n">' + sgn(r[6]) + '</td>' + blank + '</tr>';
         }).join('') + '</tbody></table></div>';
     });
-    if (zero.length) h += '<div class="grp"><h3>SKU ที่นับได้ 0 — ไม่พบที่ Location ไหน (' + zero.length + ')</h3><table>' + WCOL.zero + '<thead>' + cap('นับได้ 0', 7) + '<tr><th>Material</th><th>บาร์โค้ด</th><th>ชื่อ</th><th class="n">บัญชี</th><th>พบที่</th><th>นับทวนได้</th><th>หมายเหตุ / เหตุผล</th></tr></thead><tbody>' +
-      zero.map(function (r) { return '<tr><td class="mono">' + esc(r[0]) + '</td><td class="mono">' + esc((r[14] || []).join(' ')) + '</td><td>' + esc(r[1]) + '</td><td class="n">' + nf(r[2]) + '</td><td></td>' + blank + '</tr>'; }).join('') + '</tbody></table></div>';
+    if (zero.length) h += '<div class="grp"><h3>SKU ที่นับได้ 0 — ไม่พบที่ Location ไหน (' + zero.length + ')</h3><table>' + WCOL.zero + '<thead>' + cap('นับได้ 0', 6) + '<tr><th>Material</th><th>บาร์โค้ด</th><th>ชื่อ</th><th class="n">บัญชี</th><th>พบที่</th><th>หมายเหตุ / เหตุผล</th></tr></thead><tbody>' +
+      zero.map(function (r) { return '<tr><td class="mono mat">' + esc(r[0]) + '</td><td class="mono">' + esc((r[14] || []).join(' ')) + '</td><td class="nm">' + esc(r[1]) + '</td><td class="n">' + nf(r[2]) + '</td><td></td>' + blank + '</tr>'; }).join('') + '</tbody></table></div>';
   }
   if (by === 'sku' && un.length) h += '<div class="grp"><h3>ยิงแล้วแต่ไม่มีใน Master (' + un.length + ' บาร์โค้ด)</h3><table>' + WCOL.un + '<thead>' + cap('ไม่มีใน Master', 5) + '<tr><th>บาร์โค้ด</th><th class="n">นับ</th><th>Location=ชิ้น</th><th>รหัสสินค้าที่ถูกต้อง</th><th>หมายเหตุ</th></tr></thead><tbody>' +
     un.map(function (u) { return '<tr><td class="mono">' + esc(u[0]) + '</td><td class="n">' + nf(u[1]) + '</td><td>' + esc(u[2]) + '</td><td></td><td></td></tr>'; }).join('') + '</tbody></table></div>';
-  h += '<div class="sign"><div>ผู้ตรวจสอบ ____________________</div><div>พนักงานร้าน ____________________</div><div>วันที่ ____________</div></div>';
   $('walkDoc').innerHTML = head + h;
   $('walkInfo').textContent = rows.length + ' SKU · ตรวจหน้าตาแล้วกด "พิมพ์" (A4)';
   $('walkDlg').classList.remove('on');
@@ -1522,8 +1543,17 @@ function acc(v, d) {
 }
 /** ไทย: 2026-11-26 → 26/11/2569 */
 function thDate(d) { var m = String(d || '').match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? m[3] + '/' + m[2] + '/' + (Number(m[1]) + 543) : (d || '-'); }
+/** v2.9.1 (UAT G26-5): เลือกก่อนพิมพ์ — เฉพาะขาด/เกิน (ค่าตั้งต้น) หรือทั้งหมด (ขาด → เกิน → ตรง) */
 function vrepOpen() {
-  call('apiVarianceReport', [], function (R) { vrepBuild(R); }, 'กำลังตรวจผลสรุปที่บันทึกและเตรียมรายงาน…');
+  var T = SUM && SUM.totals, pages = function (n) { return Math.max(1, Math.ceil((n + 12) / 33)); };
+  ask({ title: 'พิมพ์รายงานผลต่าง', ok: 'ดูตัวอย่าง',
+    body: '<div class="conf"><b>รายการที่พิมพ์</b>' +
+      '<label><input type="radio" name="vrAll" value="0" checked> เฉพาะรายการขาด / เกิน' + (T ? ' — ' + nf(T.short + T.over) + ' รายการ ประมาณ ' + pages(T.short + T.over) + ' หน้า' : '') + '</label>' +
+      '<label><input type="radio" name="vrAll" value="1"> ทั้งหมด รวมรายการที่ตรง (เรียง ขาด → เกิน → ตรง)' + (T ? ' — ' + nf(T.skus) + ' รายการ ประมาณ ' + pages(T.skus) + ' หน้า' : '') + '</label></div>' +
+      '<div class="muted">ตัวเลขมาจากผลสรุปที่บันทึกล่าสุด · ทุกครั้งที่ออกรายงานบันทึก PRINT_VARIANCE</div>' }, function () {
+    var all = radio('vrAll') === '1';
+    call('apiVarianceReport', [{ all: all }], function (R) { vrepBuild(R); }, 'กำลังตรวจผลสรุปที่บันทึกและเตรียมรายงาน…');
+  });
 }
 function vrepClose() { $('vrep').classList.remove('on'); pageSize('A4 landscape'); }
 function vrepBuild(R) {
@@ -1532,10 +1562,11 @@ function vrepBuild(R) {
   var h = '<h2>รายงานผลต่างจากการตรวจนับสินค้าคงเหลือ</h2>' +
     '<div class="hd"><div>ร้าน / สาขา</div><div><b>' + (R.store ? esc(R.store) : '.................................................') + '</b></div><div>รหัสรอบ</div><div><b>' + esc(R.project) + '</b>' + (R.roundType ? ' (' + esc(R.roundType) + ')' : '') + '</div>' +
     '<div>วันที่ตรวจนับ</div><div>' + thDate(R.countDate) + '</div><div>ยอดคงเหลือทางบัญชี ณ</div><div>สิ้นวัน ' + thDate(prevDay(R.countDate)) + '</div>' +
-    '<div>ที่มายอดบัญชี</div><div>' + (R.bookSource === 'POS' ? 'POS (ยังไม่มีไฟล์ SAP)' : 'SAP ' + esc(R.sap.name || '')) + '</div><div>ผลสรุปครั้งที่</div><div>' + R.run + ' · ' + esc(R.savedAt) + '</div></div>' +
+    '<div>ที่มายอดบัญชี</div><div>' + (R.bookSource === 'POS' ? 'POS' : 'SAP') + '</div><div>ผลสรุปครั้งที่</div><div>' + R.run + ' · ' + esc(R.savedAt) + '</div></div>' +
     '<div class="sm"><div>จำนวนรายการ (SKU)</div><div><b>' + nf(T.skus) + '</b></div><div>ตรงตามบัญชี</div><div>' + nf(T.match) + '</div>' +
     '<div>ขาด</div><div>' + nf(T.short) + ' รายการ · ' + acc(T.shortQty) + ' ชิ้น · ' + acc(T.shortValue, 2) + ' บาท</div><div>เกิน</div><div>' + nf(T.over) + ' รายการ · ' + acc(T.overQty) + ' ชิ้น · ' + acc(T.overValue, 2) + ' บาท</div>' +
     '<div>ยอดคงเหลือทางบัญชี</div><div>' + acc(T.book) + ' ชิ้น</div><div>ยอดตรวจนับ</div><div>' + acc(T.count) + ' ชิ้น</div>' +
+    (!T.short && !T.over ? '<div style="grid-column:1/-1"><b>ตรงตามบัญชีทุกรายการ</b> — ไม่มีรายการขาด / เกิน</div>' : '') +
     '<div><b>ผลต่างสุทธิ</b></div><div><b>' + acc(T.diff) + ' ชิ้น</b></div><div><b>มูลค่าผลต่างสุทธิ (ราคาทุน)</b></div><div><b>' + acc(T.diffValue, 2) + ' บาท</b></div></div>';
   var col = '<colgroup><col style="width:7%"><col style="width:17%"><col style="width:30%"><col style="width:9%"><col style="width:9%"><col style="width:8%"><col style="width:9%"><col style="width:11%"></colgroup>';
   function line(r, i) {
@@ -1550,10 +1581,11 @@ function vrepBuild(R) {
   var body = '';
   body += '<tr class="sec"><td colspan="8">ก. รายการขาด (ยอดตรวจนับน้อยกว่ายอดคงเหลือทางบัญชี)</td></tr>' + (R.short.length ? R.short.map(line).join('') : '<tr><td colspan="8">ไม่มี</td></tr>') + sub('รวมรายการขาด', R.short, T.shortQty, T.shortValue);
   body += '<tr class="sec"><td colspan="8">ข. รายการเกิน (ยอดตรวจนับมากกว่ายอดคงเหลือทางบัญชี)</td></tr>' + (R.over.length ? R.over.map(line).join('') : '<tr><td colspan="8">ไม่มี</td></tr>') + sub('รวมรายการเกิน', R.over, T.overQty, T.overValue);
-  if (R.unmapped.length) body += '<tr class="sec"><td colspan="8">ค. ยิงได้แต่ไม่มีในข้อมูลบัญชี (ไม่รวมในผลต่างข้างต้น)</td></tr>' +
+  if (R.all) body += '<tr class="sec"><td colspan="8">ค. รายการที่ตรงตามบัญชี</td></tr>' + (R.match.length ? R.match.map(line).join('') : '<tr><td colspan="8">ไม่มี</td></tr>') + sub('รวมรายการที่ตรง', R.match, 0, 0);
+  if (R.unmapped.length) body += '<tr class="sec"><td colspan="8">' + (R.all ? 'ง.' : 'ค.') + ' ยิงได้แต่ไม่มีในข้อมูลบัญชี (ไม่รวมในผลต่างข้างต้น)</td></tr>' +
     R.unmapped.map(function (u, i) { return '<tr><td class="n">' + (i + 1) + '</td><td class="mono">' + esc(u[0]) + '</td><td>บาร์โค้ดไม่มีใน Master</td><td class="n">-</td><td class="n">' + acc(u[1]) + '</td><td></td><td></td><td></td></tr>'; }).join('');
   h += '<table>' + col + '<thead><tr><th class="cap" colspan="8">' + esc(ref) + '</th></tr><tr><th>ลำดับ</th><th>รหัสสินค้า</th><th>ชื่อสินค้า</th><th class="n">ยอดคงเหลือ<br>ทางบัญชี</th><th class="n">ยอด<br>ตรวจนับ</th><th class="n">ผลต่าง<br>(ชิ้น)</th><th class="n">ราคาทุน<br>ต่อหน่วย</th><th class="n">มูลค่าผลต่าง<br>(บาท)</th></tr></thead>' +
-    '<tfoot><tr><td colspan="8">ลงชื่อย่อ &nbsp; ผู้ตรวจสอบ ________ &nbsp; พนักงานร้าน ________ &nbsp; ผู้จัดการร้าน ________</td></tr></tfoot><tbody>' + body + '</tbody></table>';
+    '<tbody>' + body + '</tbody></table>';
   h += '<div class="note">หมายเหตุ: ผลต่าง = ยอดตรวจนับ − ยอดคงเหลือทางบัญชี · ตัวเลขในวงเล็บ ( ) = ขาด · มูลค่าคิดจากราคาทุนต่อหน่วย ไม่ใช่ราคาขาย' +
     (T.noCost ? ' · ไม่มีราคาทุน ' + nf(T.noCost) + ' รายการ (แสดง "-" ไม่รวมในมูลค่า)' : '') + (R.complete ? '' : ' · <b>ขณะออกรายงาน Location ยังปิดไม่ครบ</b>') + '</div>';
   h += '<div class="ack"><div>ข้าพเจ้าได้ร่วมตรวจนับ และรับทราบผลต่างตามรายการข้างต้นแล้ว</div><div class="sig">' +
@@ -1561,7 +1593,7 @@ function vrepBuild(R) {
       return '<div>ลงชื่อ ...................................<br>( ........................................ )<br>' + x + '<br>วันที่ ........./........./.........</div>';
     }).join('') + '</div><div class="note" style="margin-top:14px;color:#444">ออกรายงานเมื่อ ' + esc(R.printedAt) + ' · ' + esc(ref) + '</div></div>';
   $('vrepDoc').innerHTML = h;
-  $('vrepInfo').textContent = 'ขาด ' + T.short + ' · เกิน ' + T.over + ' รายการ · ตรวจหน้าตาแล้วกด "พิมพ์" (A4 แนวตั้ง)';
+  $('vrepInfo').textContent = (R.all ? 'ทั้งหมด ' + nf(T.skus) + ' รายการ' : 'ขาด ' + T.short + ' · เกิน ' + T.over + ' รายการ') + ' · ตรวจหน้าตาแล้วกด "พิมพ์" (A4 แนวตั้ง) · ในกล่องพิมพ์: ปิด "ส่วนหัวและส่วนท้าย" · เปิด "กราฟิกพื้นหลัง"';
   pageSize('A4 portrait', true);
   $('vrep').classList.add('on');
 }
