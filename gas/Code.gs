@@ -12,7 +12,7 @@ var SCHEMA_VERSION = 13;   // 13 = v2.6.1 ชีต Device_Log · 6 = v2.4.1 Var
  * เวอร์ชันของระบบ (ใช้เลขเดียวทั้งแอป TC21 และเซิร์ฟเวอร์ ตาม Semantic Versioning MAJOR.MINOR.PATCH)
  * ต้องตรงกับ APP_VERSION ใน app/app.js และ appVersion ใน app/config.json — ดู CHANGELOG.md
  */
-var SYSTEM_VERSION = '2.9.3';
+var SYSTEM_VERSION = '2.9.4';
 
 var SHEETS = {
   Config: ['Key', 'Value', 'Note'],
@@ -1764,6 +1764,24 @@ function apiVarianceReport(opts) {
 function logPrintVariance_(project, SV, all, T) {
   logAdmin_('PRINT_VARIANCE', project, 'รายงานผลต่าง' + (all ? ' (ทั้งหมด รวมรายการที่ตรง)' : '') + ' ผลสรุปครั้งที่ ' + SV.run + ' (' + SV.at + ') · ขาด ' + T.short + ' SKU (' + T.shortQty + ' ชิ้น) · เกิน ' +
     T.over + ' SKU (' + T.overQty + ' ชิ้น) · มูลค่าผลต่างสุทธิ ' + T.diffValue + ' บาท');
+}
+
+/**
+ * หน้า Admin: รายงานผลต่างที่พิมพ์เทียบกับผลสรุปที่บันทึกล่าสุด (v2.9.4 · UAT G29) — เตือนในกล่องปิดรอบ ไม่บังคับ
+ * saved = ครั้งที่ของ SUMMARY_SAVED · printed = ครั้งที่ของ PRINT_VARIANCE ล่าสุดของรอบนี้ (0 = ยังไม่เคยพิมพ์) · อ่านอย่างเดียว ไม่ล็อก
+ */
+function apiPrintStatus() {
+  var cfg = readConfig_(), project = cfg.PROJECT_ID, SV = null;
+  try { SV = JSON.parse(cfg.SUMMARY_SAVED || 'null'); } catch (e) { }
+  var saved = SV && SV.project === project ? Number(SV.run) || 0 : 0, printed = 0, printedAt = '', n = 0;
+  var lg = readRaw_('Admin_Log');
+  for (var i = 1; i < lg.length; i++) {
+    var r = lg[i];
+    if (r[2] !== 'PRINT_VARIANCE' || String(r[5]) !== project) continue;
+    var m = String(r[4]).match(/ผลสรุปครั้งที่ (\d+)/);
+    n++; printed = m ? Number(m[1]) : 0; printedAt = String(r[0]);
+  }
+  return { project: project, saved: saved, savedAt: SV && SV.project === project ? SV.at : '', printed: printed, printedAt: printedAt, prints: n };
 }
 
 /** หน้า Admin: Location ที่ยังไม่ปิด — แสดงในกล่องยืนยัน "ปิดการนับ" (v2.9.3 · UAT G28) · อ่านชีต Locations อย่างเดียว ไม่ล็อก */

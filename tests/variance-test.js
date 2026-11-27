@@ -135,5 +135,17 @@ test('v2.9.3 ยอดตรวจนับ = นับจากเครื่�
   open.forEach(o => assert.ok(!/ปิดแล้ว/.test(o[1])));
 });
 
+test('v2.9.4 apiPrintStatus: พิมพ์ครั้งล่าสุดเทียบผลสรุปที่บันทึก · บันทึกใหม่หลังพิมพ์ → printed < saved', () => {
+  let P = run('apiPrintStatus()');
+  const R = run('apiVarianceReport({ all: false })');   // บันทึก PRINT_VARIANCE ของผลครั้งปัจจุบัน
+  P = run('apiPrintStatus()');
+  assert.strictEqual(P.printed, R.run); assert.strictEqual(P.saved, R.run); assert.ok(P.prints >= 1 && P.printedAt);
+  const sku = run('summary_(readConfig_().PROJECT_ID, "t")').skus[0][0];
+  run('apiAdjust(_o)', { _o: { material: sku, qty: 1, reason: 'OTHER', staff: 'EMP-K', note: 'ทดสอบ', location: '' } });
+  run('apiSummarySave()');
+  P = run('apiPrintStatus()');
+  assert.strictEqual(P.saved, R.run + 1); assert.strictEqual(P.printed, R.run, 'ยังเป็นรายงานของผลครั้งก่อน');
+});
+
 console.log('\nผล: ผ่าน ' + pass + ' / ไม่ผ่าน ' + fail);
 process.exit(fail ? 1 : 0);

@@ -962,14 +962,26 @@ function stepsRender() {
   $('stepBox').innerHTML = h;
 }
 function closeRound(test) {
+  if (S.round.status === 'CLOSING') return closeRoundAsk(test, null);
+  // v2.9.4 (UAT G29): บอกถ้ารายงานผลต่างที่พิมพ์ไม่ใช่ผลสรุปครั้งสุดท้าย — เตือน ไม่บังคับ
+  call('apiPrintStatus', [], function (P) { closeRoundAsk(test, P); }, 'กำลังตรวจรายงานผลต่างที่พิมพ์…');
+}
+function printWarn(P) {
+  if (!P || !P.saved || P.printed === P.saved) return '';
+  var t = !P.prints ? 'ยังไม่ได้พิมพ์รายงานผลต่างในรอบนี้ — ผลสุดท้ายคือผลสรุปครั้งที่ ' + P.saved
+    : 'รายงานผลต่างที่พิมพ์ล่าสุดเป็นผลสรุปครั้งที่ ' + P.printed + ' (' + P.printedAt + ') แต่ผลสุดท้ายคือ<b>ครั้งที่ ' + P.saved + '</b> — ถ้าให้ร้านลงชื่อไปแล้ว ต้องพิมพ์ใหม่ให้ลงชื่ออีกครั้ง';
+  return '<div class="card" style="border-color:var(--warn);background:var(--warnbg);margin-bottom:10px"><b>⚠ </b>' + t +
+    '<div class="muted" style="margin-top:4px">ยกเลิก → แท็บสรุปผลนับ → พิมพ์รายงานผลต่าง · หรือกดปิดรอบต่อได้ (ไม่บังคับ)</div></div>';
+}
+function closeRoundAsk(test, P) {
   var r = S.round, must = test ? 'ล้างข้อมูลทดสอบ ' + r.projectId : r.projectId, resume = r.status === 'CLOSING';
   ask({ title: resume ? 'ปิดรอบ ' + r.projectId + ' ต่อจากที่ค้าง' : test ? 'ล้างข้อมูลทดสอบ รอบ ' + r.projectId + '?' : 'ปิดรอบ ' + r.projectId + '?', ok: resume ? 'ปิดรอบต่อ' : test ? 'ล้างข้อมูลทดสอบ' : 'ปิดรอบ',
     staff: true, why: must, must: must,
-    body: resume ? '<div>ไฟล์สำรองตรวจผ่านแล้ว ระบบจะล้างชีตงานที่เหลือ แล้วเปลี่ยนสถานะเป็น "ปิดรอบแล้ว"</div>' :
+    body: (resume ? '' : printWarn(P)) + (resume ? '<div>ไฟล์สำรองตรวจผ่านแล้ว ระบบจะล้างชีตงานที่เหลือ แล้วเปลี่ยนสถานะเป็น "ปิดรอบแล้ว"</div>' :
       '<div>ระบบจะทำต่อเองตามลำดับ (1–3 นาที ห้ามปิดหน้านี้):</div><ol style="margin:4px 0 0 18px;padding:0">' +
       '<li>ตรวจเงื่อนไข' + (test ? ' K3 K6 K7' : ' K1–K7') + ' อีกครั้ง</li><li>สำเนาไฟล์ทั้งไฟล์ไปโฟลเดอร์ Archive</li><li>ตรวจไฟล์สำเนา: จำนวนแถวทุกชีต + checksum — ไม่ตรง = หยุด ไม่ล้างอะไร</li>' +
       '<li>บันทึก Count_History</li><li><b>ล้างชีตงาน</b> (Count_Log · Adjustments · Variance · Locations · ไฟล์นำเข้า ฯลฯ) — เก็บ Staff · Devices · Admin_Log · Count_History</li></ol>' +
-      '<div style="margin-top:8px">พิมพ์ <b>' + esc(must) + '</b> เพื่อยืนยัน</div>' }, function (why, st) {
+      '<div style="margin-top:8px">พิมพ์ <b>' + esc(must) + '</b> เพื่อยืนยัน</div>') }, function (why, st) {
     call('apiCloseRound', [st, why, test], function (res) {
       KCHK = null; setState(res.state);
       var C = res.closed;
