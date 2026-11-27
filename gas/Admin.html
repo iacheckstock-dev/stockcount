@@ -145,6 +145,7 @@
   #vrepDoc h2 { font-size:17px; text-align:center; margin:0 0 8px; }
   #vrepDoc .hd { display:grid; grid-template-columns:auto 1fr auto 1fr; gap:2px 10px; margin-bottom:8px; }
   #vrepDoc .hd div:nth-child(odd) { color:#444; }
+  #vrepDoc .sm2 { font-size:10px; color:#333; }
   #vrepDoc .sm { border:1px solid #000; padding:6px 8px; margin-bottom:8px; display:grid; grid-template-columns:repeat(4, auto); gap:2px 14px; justify-content:start; }
   #vrepDoc table { width:100%; border-collapse:collapse; font-size:11px; table-layout:fixed; }
   #vrepDoc thead { display:table-header-group; } #vrepDoc tfoot { display:table-footer-group; }
@@ -481,6 +482,11 @@
     <div class="row">ต่างตั้งแต่ <input type="text" id="wkMinQ" style="width:110px" placeholder="0" inputmode="decimal"> ชิ้นขึ้นไป <span class="muted">(เว้นว่าง = ทุกจำนวน · ใส่ทั้งสองช่อง = ต้องเข้าทั้งสองเกณฑ์)</span></div>
     <label><input type="checkbox" id="wkUn" checked> รวมบาร์โค้ดที่ไม่มีใน Master</label>
   </div>
+  <div class="conf"><b>เฉพาะ Location</b> <span class="muted">(เว้นว่าง = ทุก Location)</span>
+    <div class="row"><input type="text" id="wkLoc" style="width:100%" placeholder="เช่น A1 A5 B12 C50 หรือช่วง A1-A10 (คั่นด้วยเว้นวรรคหรือ ,)" oninput="walkLocCheck()"></div>
+    <label><input type="checkbox" id="wkZero"> รวม SKU ที่ไม่พบที่ไหน (นับได้ 0 ทุก Location) — ใช้เมื่อใส่ Location</label>
+    <div id="wkLocInfo" class="muted"></div>
+  </div>
   <div class="muted">ใบพิมพ์ไม่มีต้นทุนและมูลค่า (บาท) — ใช้มูลค่าเป็นเกณฑ์เลือกเท่านั้น</div>
   <div class="row" style="margin-top:12px;justify-content:flex-end">
     <button class="btn sec" onclick="$('walkDlg').classList.remove('on')">ยกเลิก</button>
@@ -764,11 +770,73 @@ function logQuery(offset, more) {
     drawLog();
   }, 'กำลังโหลดบันทึก…');
 }
+/**
+ * v2.9.3: ชื่อไทย + คำอธิบายของรหัสการกระทำใน Admin_Log (แสดงใต้รหัส · ชี้เมาส์ดูคำอธิบาย) — ตารางเดียวกับภาคผนวกในคู่มือ
+ * [ชื่อไทย, เกิดเมื่อไร / ใช้ตรวจอะไร] · ลงท้าย _FAILED = ทำไม่สำเร็จ (บันทึกก่อนทำ แล้วบันทึกผลล้มเหลวตามหลัง)
+ */
+var ACT_TH = {
+  SETUP: ['ตั้งค่าระบบ', 'เมนู ระบบตรวจนับ → ตั้งค่าระบบ · สร้าง/ตรวจชีตครบ'],
+  CONFIG_DEDUP: ['ลบค่าตั้งที่ซ้ำ', 'ระบบพบแถวชื่อซ้ำในชีต Config แล้วรวมให้'],
+  SET_API_URL: ['บันทึกที่อยู่ระบบ', 'การ์ดที่อยู่ระบบ — ตรวจว่า URL เปลี่ยนเมื่อไร จากอะไรเป็นอะไร'],
+  ADMIN_LOG_WARN_ACK: ['รับทราบบันทึกไม่สำเร็จ', 'หัวหน้าทีมกดรับทราบคำเตือนว่าเขียน Admin_Log ไม่ติด'],
+  OPEN_ROUND: ['เปิด / แก้รอบ', 'รหัสรอบ ประเภทรอบ วันนับ'],
+  SET_STORE_NAME: ['บันทึกชื่อร้าน', 'ชื่อร้านที่พิมพ์บนรายงานผลต่าง · ค่าเดิม'],
+  UPLOAD_SAP: ['นำเข้าไฟล์ SAP', 'ชื่อไฟล์ จำนวนรหัส ไฟล์ลงวันที่ — ยอดบัญชีมาจากไฟล์ไหน'],
+  UPLOAD_POS: ['นำเข้าไฟล์ POS', 'ชื่อไฟล์ จำนวนรหัส — บาร์โค้ดที่ส่งลงเครื่องมาจากไฟล์ไหน'],
+  DECIDE_CONFLICT: ['ตัดสินข้อมูลสินค้าขัดกัน', 'แท็บตรวจข้อมูลสินค้า — เลือกข้อมูลฝั่งไหนเมื่อ SAP / POS ไม่ตรงกัน'],
+  ACK_WARNING: ['รับทราบคำเตือน Master', 'คำเตือนที่หัวหน้าทีมยอมรับก่อนอนุมัติ'],
+  APPROVE_MASTER: ['อนุมัติ Master', 'ข้อมูลสินค้าที่ส่งลงเครื่อง เวอร์ชันไหน กี่รายการ'],
+  RESET_ROUND: ['ล้างข้อมูลเตรียมรอบ', 'ล้างไฟล์นำเข้าและ Master ของรอบที่ยังไม่เริ่มนับ'],
+  STAFF_ADD: ['เพิ่มพนักงาน', 'รหัส ชื่อ บทบาท ผู้กด'],
+  STAFF_EDIT: ['แก้ข้อมูลพนักงาน', 'แก้อะไร จากอะไรเป็นอะไร ผู้กด'],
+  STAFF_ON: ['เปิดใช้พนักงาน', 'เหตุผลและผู้กด'],
+  STAFF_OFF: ['ปิดใช้พนักงาน', 'เหตุผลและผู้กด — รหัสนี้เข้าเครื่องไม่ได้'],
+  DEVICE_ADD: ['เพิ่มเครื่อง', 'สร้างรายชื่อเครื่อง TC21'],
+  DEVICE_PAIR_CODE: ['สร้างรหัสจับคู่', 'รหัสจับคู่เครื่อง (ใช้ได้ชั่วคราว)'],
+  DEVICE_PAIRED: ['เครื่องจับคู่สำเร็จ', 'เครื่องใส่รหัสจับคู่ถูกต้อง'],
+  DEVICE_REPAIRED: ['จับคู่ใหม่หลังยกเลิก', 'เครื่องที่เคยยกเลิกกลับมาใช้'],
+  DEVICE_REVOKE: ['ยกเลิกเครื่อง', 'เครื่องเสีย / หาย / เลิกใช้ — เหตุผล เวลาสัญญาณล่าสุด Seq ที่ขาด'],
+  DEVICE_ENABLE: ['เปิดใช้เครื่องอีกครั้ง', 'เครื่องที่ยกเลิกกลับมาใช้'],
+  DEVICE_UNPAIRED: ['เครื่องยกเลิกการจับคู่เอง', 'ผู้ใช้กดยกเลิกการจับคู่ที่ตัวเครื่อง'],
+  REVOKED_DEVICE_DATA: ['รับข้อมูลจากเครื่องที่ยกเลิก', 'รายการที่ยิงก่อนถูกยกเลิกแต่ส่งมาทีหลัง — Seq ช่วงไหน'],
+  ROUND_COUNTING: ['เริ่มนับ', 'เครื่องแรกส่งรายการเข้ามา — เวลาเริ่มนับจริง'],
+  LOC_TRANSFER: ['โอนการดูแล Location', 'ย้าย Location จากเครื่องหนึ่งไปอีกเครื่อง (เช่น เครื่องเสีย)'],
+  LOC_RELEASE: ['ปล่อย Location คืน', 'เครื่องออกจาก Location โดยยังไม่ได้ยิงสินค้า'],
+  LOC_DOUBLE_OPEN: ['Location เปิดซ้อน', 'สองเครื่องเปิด Location เดียวกัน — ตรวจว่านับซ้ำหรือไม่'],
+  LOC_FLAG_RESOLVE: ['ปิดธงต้องตรวจซ้ำ', 'หัวหน้าทีมตัดสินธงด้วยเหตุผล'],
+  LOC_FLAG_CLEARED: ['ธงหายเพราะล้างนับใหม่', 'เครื่องล้าง Location ที่ติดธงแล้วนับใหม่'],
+  IMPORT_FILE: ['นำเข้าไฟล์จากเครื่อง', 'ไฟล์ Export ของเครื่องที่ส่งไม่ได้ — รับกี่รายการ ซ้ำกี่รายการ'],
+  QUARANTINE: ['กักรายการ', 'รายการจากรอบอื่น / รอบที่ปิดแล้ว ไม่นับรวม — ตรวจว่ามีเครื่องตั้งรอบผิด'],
+  COUNT_CLOSE: ['ปิดการนับ', 'เวลาที่หยุดทุกเครื่อง ผู้กด'],
+  COUNT_REOPEN: ['เปิดการนับอีกครั้ง', 'เหตุผลที่ต้องนับเพิ่ม ผู้กด'],
+  SYNC_AFTER_COUNT_CLOSE: ['รับข้อมูลหลังปิดการนับ', 'เครื่องส่งรายการค้างเข้ามาหลังปิด — มีรายการที่ยิงหลังเวลาปิดหรือไม่'],
+  RECONCILE: ['กระทบยอดทั้งรอบ', 'ผลเทียบดัชนีกับชีต Count_Log ตรงหรือพบจุดต่าง'],
+  INDEX_FIX: ['ระบบแก้ตัวเลขตามชีต', 'ดัชนีไม่ตรง Count_Log แล้วระบบยึดตามชีต — ตรวจว่ามีคนแก้ชีตเองหรือไม่'],
+  INDEX_REBUILD: ['สร้างดัชนีใหม่', 'ระบบอ่าน Count_Log ทั้งชีตใหม่'],
+  INDEX_SAVE_FAIL: ['บันทึกดัชนีไม่สำเร็จ', 'ระบบจะอ่านชีตใหม่ครั้งถัดไป'],
+  MIGRATE_MEMBERS: ['ย้ายข้อมูลผู้ดูแล', 'แปลงข้อมูลรุ่นเก่า (ครั้งเดียว)'],
+  ADJUST: ['ปรับยอดด้วยมือ', 'SKU ยอด ± เหตุผล ผู้คีย์ · ป้าย "ปรับเท่ายอดบัญชีพอดี" ควรตรวจทุกรายการ'],
+  ADJUST_REVERSE: ['กลับรายการปรับยอด', 'ยกเลิกบรรทัดปรับยอดเดิม — เหตุผล ผู้คีย์'],
+  SUMMARY_SAVE: ['สรุปผลและบันทึก', 'ผลสรุปครั้งที่ n ผลต่างชิ้น / บาท — เทียบกับรายงานที่พิมพ์'],
+  PRINT_VARIANCE: ['พิมพ์รายงานผลต่าง', 'ผลสรุปครั้งไหนที่พิมพ์ให้ร้านลงชื่อ — ต้องเป็นครั้งล่าสุด'],
+  CLOSE_ROUND_START: ['เริ่มปิดรอบ', 'เริ่มทำไฟล์สำรอง'],
+  ARCHIVE_VERIFY: ['ตรวจไฟล์สำรอง', 'จำนวนแถวทุกชีตตรงกับไฟล์งาน · ลายนิ้วมือข้อมูล'],
+  ARCHIVE_VERIFY_FAILED: ['ตรวจไฟล์สำรองไม่ผ่าน', 'ไม่ล้างชีตใด ๆ — ดูชีตที่ไม่ตรง'],
+  CLOSE_ROUND_CLEAR: ['ล้างชีตงาน', 'ชีตที่ถูกล้างหลังสำรองผ่าน'],
+  CLOSE_ROUND: ['ปิดรอบเสร็จ', 'ไฟล์สำรอง ยอดบัญชี ยอดสุดท้าย ผลต่าง ผู้กด'],
+  ARCHIVE_CHECK: ['ตรวจไฟล์สำรองย้อนหลัง', 'ไฟล์สำรองยังตรงกับตอนปิดรอบหรือมีคนแก้']
+};
+function actCell(a) {
+  a = String(a || '');
+  var fail = /_FAILED$/.test(a) && !ACT_TH[a], base = fail ? a.replace(/_FAILED$/, '') : a, t = ACT_TH[base];
+  if (!t) return esc(a);
+  return '<span title="' + esc(t[1]) + '">' + esc(a) + '<div class="muted" style="font-size:12px">' + esc(t[0]) + (fail ? ' — <b style="color:var(--bad)">ไม่สำเร็จ</b>' : '') + '</div></span>';
+}
 function drawLog() {
   var Q = LOGQ, head = $('logTbl').querySelector('colgroup').outerHTML;
   $('logInfo').textContent = (Q.round === '*' ? 'ทุกรอบ' : 'รอบ ' + logRoundLabel(Q.round)) + (Q.q ? ' · ค้น "' + Q.q + '"' : '') + ' · ' + nf(Q.total) + ' รายการ · แสดง ' + nf(Q.rows.length);
   $('logTbl').innerHTML = head + '<tr><th>เวลา</th><th>ผู้ทำ</th><th>การกระทำ</th><th>สิ่งที่ถูกกระทำ</th><th>รายละเอียด</th><th>รอบ</th></tr>' +
-    (Q.rows.length ? Q.rows.map(function (l) { return '<tr>' + l.map(function (c) { return '<td>' + esc(c) + '</td>'; }).join('') + '</tr>'; }).join('') :
+    (Q.rows.length ? Q.rows.map(function (l) { return '<tr>' + l.map(function (c, i) { return '<td>' + (i === 2 ? actCell(c) : esc(c)) + '</td>'; }).join('') + '</tr>'; }).join('') :
       '<tr><td colspan="6" class="muted">ไม่พบรายการ</td></tr>');
   $('logMore').style.display = Q.rows.length < Q.total ? '' : 'none';
   $('logMore').textContent = 'แสดงเพิ่ม (เหลือ ' + nf(Q.total - Q.rows.length) + ')';
@@ -974,8 +1042,15 @@ function kItems(list) {
   }).join('') + '</table>';
 }
 function countClose() {
+  // v2.9.3 (UAT G28): บอก Location ที่ยังไม่ปิดก่อนกด — เตือน ไม่บังคับ (เครื่องเสีย / แบตหมด ต้องปิดการนับได้เสมอ · K1 กันที่ปิดรอบ)
+  call('apiOpenLocations', [], function (open) { countCloseAsk(open || []); }, 'กำลังตรวจ Location ที่ยังไม่ปิด…');
+}
+function countCloseAsk(open) {
+  var warn = open.length ? '<div class="card" style="border-color:var(--warn);background:var(--warnbg);margin-bottom:10px"><b>⚠ ยังไม่ปิด ' + open.length + ' Location:</b> ' +
+    open.map(function (o) { var dv = String(o[2] || '').split(' ')[0]; return esc(o[0]) + ' (' + (dv ? esc(dv) + ' · ' : '') + esc(o[1]) + ')'; }).join(', ') +
+    '<div style="margin-top:4px">แนะนำให้ผู้ตรวจสอบกด "ปิด Location" ที่เครื่องก่อน · ถ้ากดปิดการนับเลย เครื่องยังปิด Location ได้ แต่ขั้นที่ 2 จะไม่ผ่านจนกว่าจะปิดครบ</div></div>' : '';
   ask({ title: 'ปิดการนับ รอบ ' + S.round.projectId + '?', ok: 'ปิดการนับ', staff: true,
-    body: '<div>หลังกด:</div><ul style="margin:4px 0 0 18px;padding:0"><li>เครื่องทุกเครื่องยิงสินค้าและเปิด Location ใหม่ไม่ได้ (รู้ภายใน 1 นาที)</li>' +
+    body: warn + '<div>หลังกด:</div><ul style="margin:4px 0 0 18px;padding:0"><li>เครื่องทุกเครื่องยิงสินค้าและเปิด Location ใหม่ไม่ได้ (รู้ภายใน 1 นาที)</li>' +
       '<li>รายการที่ค้างส่งในเครื่องยังส่งเข้ามาได้ตามปกติ</li><li>เครื่องยังกด "ปิด Location" ที่ค้างได้</li>' +
       '<li>หน้านี้ยังปรับยอด สรุปผล และพิมพ์ใบเดินตรวจได้</li><li>ต้องนับเพิ่ม: กด "เปิดการนับอีกครั้ง" พร้อมเหตุผล</li></ul>' }, function (why, st) {
     call('apiCountClose', [st], function (r) { KCHK = r.check; setState(r.state); closeDoneBox(r.check, true); }, 'กำลังปิดการนับ…');
@@ -1478,7 +1553,41 @@ var WCOL = (function () {
 })();
 function walkOpen() {
   if (!SUM) { toast('กด "รีเฟรช" ก่อน', true); return; }
+  walkLocCheck();
   $('walkDlg').classList.add('on');
+}
+/** v2.9.3 (UAT G28-10): Location ทั้งหมดที่มีรายการในผลสรุป (+ ที่ยังเปิดอยู่) — ใช้ตรวจชื่อที่พิมพ์ */
+function walkKnownLocs() {
+  var k = {};
+  (SUM.skus || []).forEach(function (r) { (r[13] || []).forEach(function (x) { k[String(x[0]).toUpperCase()] = x[0]; }); });
+  (SUM.unmapped || []).forEach(function (u) { (u[3] || []).forEach(function (x) { k[String(x[0]).toUpperCase()] = x[0]; }); });
+  ((SUM.locs && SUM.locs.open) || []).forEach(function (o) { k[String(o[0]).toUpperCase()] = o[0]; });
+  return k;
+}
+/** "A1 a5, B12 C1-C10" → { sel: {A1:1,...}, bad: [คำที่ไม่พบ], names: [ชื่อจริงเรียงแล้ว], typed } · ช่วงต้องขึ้นต้นตัวอักษรเดียวกัน */
+function walkLocParse() {
+  var txt = String($('wkLoc').value || '').trim(), known = walkKnownLocs(), sel = {}, bad = [];
+  if (!txt) return { typed: false, sel: sel, bad: bad, names: [] };
+  txt.split(/[\s,]+/).filter(Boolean).forEach(function (t) {
+    var u = t.toUpperCase(), m = u.match(/^([A-Z]*)(\d+)-([A-Z]*)(\d+)$/);
+    if (m && (!m[3] || m[3] === m[1])) {
+      var a = Number(m[2]), b = Number(m[4]), hit = 0;
+      if (a > b) { var t2 = a; a = b; b = t2; }
+      for (var i = a; i <= b && i - a < 2000; i++) { var k = m[1] + i; if (known[k]) { sel[k] = 1; hit++; } }
+      if (!hit) bad.push(t);
+    } else if (known[u]) sel[u] = 1;
+    else bad.push(t);
+  });
+  var names = Object.keys(sel).map(function (k) { return known[k]; }).sort(natCmp);
+  return { typed: true, sel: sel, bad: bad, names: names };
+}
+function walkLocCheck() {
+  var P = walkLocParse(), el = $('wkLocInfo');
+  $('wkZero').disabled = !P.typed;
+  if (!P.typed) { el.innerHTML = ''; return P; }
+  el.innerHTML = (P.names.length ? 'เลือก ' + P.names.length + ' Location: ' + esc(P.names.join(', ')) : '<span style="color:var(--bad)">ยังไม่ตรงกับ Location ใดในรอบนี้</span>') +
+    (P.bad.length ? '<div style="color:var(--bad)">ไม่พบในรอบนี้ (ไม่มีรายการ): ' + esc(P.bad.join(', ')) + '</div>' : '');
+  return P;
 }
 function radio(name) { var x = document.querySelector('input[name=' + name + ']:checked'); return x ? x.value : ''; }
 function walkBuild() {
@@ -1490,9 +1599,24 @@ function walkBuild() {
     return ok && (!min || Math.abs(r[8]) >= min || book0(r)) && (!minQ || Math.abs(r[6]) >= minQ);
   });
   var un = withUn ? SUM.unmapped.filter(function (u) { return !minQ || Math.abs(u[1]) >= minQ; }) : [];
+  // v2.9.3 (UAT G28-10): เฉพาะ Location ที่เลือก — กรองในเบราว์เซอร์จากผลสรุปที่โหลดแล้ว ไม่เรียกเซิร์ฟเวอร์
+  var P = walkLocParse(), LS = P.sel, onLoc = function (list) { return (list || []).some(function (x) { return LS[String(x[0]).toUpperCase()]; }); }, zeroOut = 0;
+  if (P.typed) {
+    if (!P.names.length) { toast('Location ที่ใส่ไม่ตรงกับรอบนี้ — แก้หรือเว้นว่าง', true); return; }
+    var withZero = $('wkZero').checked;
+    rows = rows.filter(function (r) {
+      if (!r[13] || !r[13].length) { if (!withZero) zeroOut++; return withZero; }
+      return onLoc(r[13]);
+    });
+    un = un.filter(function (u) { return onLoc(u[3]); });
+  }
+  function locCell(list) {
+    return (list || []).map(function (x) { var t = esc(x[0] + '=' + nf(x[1])); return P.typed && LS[String(x[0]).toUpperCase()] ? '<b>' + t + '</b>' : t; }).join(', ');
+  }
   var L = SUM.lastSave, same = L && L.at === SUM.at;
   var head = '<h2>ใบเดินตรวจ — รอบ ' + esc(SUM.project) + '</h2><div>เรียงตาม ' + (by === 'sku' ? 'SKU (มูลค่าผลต่างมากก่อน)' : 'Location') + ' · เลือก: ' + fl + (min ? ' · ต่างตั้งแต่ ' + nf(min, 0) + ' บาท' : '') + (minQ ? ' · ต่างตั้งแต่ ' + nf(minQ) + ' ชิ้น' : '') +
     ' · ' + nf(rows.length) + ' SKU' + (un.length ? ' + ไม่มีใน Master ' + un.length + ' บาร์โค้ด' : '') + '</div>' +
+    (P.typed ? '<div><b>เฉพาะ Location: ' + esc(P.names.join(', ')) + '</b>' + (zeroOut ? ' · ไม่รวม ' + nf(zeroOut) + ' SKU ที่ไม่พบที่ไหน' : '') + '</div>' : '') +
     '<div>ตัวเลข ณ ' + esc(SUM.at) + ' · ยอดบัญชี ' + (SUM.bookSource === 'POS' ? 'POS' : 'SAP UR ' + esc(SUM.sap.name || '')) + ' · ' +
     (same ? '<b>ผลบันทึกครั้งที่ ' + L.run + '</b> (ชีต Variance Run = ' + L.run + ')' : 'ยังไม่ได้บันทึกตัวเลขชุดนี้' + (L ? ' (บันทึกล่าสุด ครั้งที่ ' + L.run + ' เมื่อ ' + esc(L.at) + ')' : '')) +
     ' · พิมพ์เมื่อ ' + esc(new Date().toLocaleString('th-TH')) + '</div>' + (SUM.complete ? '' : '<div><b>ยังนับไม่ครบ</b> (ปิดแล้ว ' + SUM.locs.closed + '/' + SUM.locs.total + ' Location)</div>');
@@ -1504,7 +1628,7 @@ function walkBuild() {
     h += '<table style="margin-top:8px">' + WCOL.sku + '<thead>' + cap('', 9) + '<tr><th>#</th><th>Material</th><th>บาร์โค้ด</th><th>ชื่อ</th><th class="n">บัญชี</th><th class="n">นับ</th><th class="n">ต่าง</th><th>Location=ชิ้น</th><th>หมายเหตุ / เหตุผล</th></tr></thead><tbody>' +
       rows.map(function (r, i) {
         return '<tr><td>' + (i + 1) + '</td><td class="mono mat">' + esc(r[0]) + '</td><td class="mono">' + esc((r[14] || []).join(' ')) + '</td><td class="nm" title="' + esc(r[1]) + '">' + esc(r[1]) + '</td><td class="n">' + nf(r[2]) + '</td><td class="n">' + nf(r[5]) +
-          '</td><td class="n"><b>' + sgn(r[6]) + '</b></td><td>' + (r[13] && r[13].length ? esc(locStr(r[13])) : '<i>ไม่พบที่ไหน</i>') + '</td>' + blank + '</tr>';
+          '</td><td class="n"><b>' + sgn(r[6]) + '</b></td><td>' + (r[13] && r[13].length ? locCell(r[13]) : '<i>ไม่พบที่ไหน</i>') + '</td>' + blank + '</tr>';
       }).join('') + '</tbody></table>';
   } else {
     var g = {}, zero = [];
@@ -1513,7 +1637,7 @@ function walkBuild() {
       r[13].forEach(function (x) { (g[x[0]] || (g[x[0]] = [])).push({ r: r, q: x[1] }); });
     });
     un.forEach(function (u) { (u[3] || []).forEach(function (x) { (g[x[0]] || (g[x[0]] = [])).push({ u: u, q: x[1] }); }); });
-    Object.keys(g).sort(natCmp).forEach(function (l) {
+    Object.keys(g).sort(natCmp).filter(function (l) { return !P.typed || LS[String(l).toUpperCase()]; }).forEach(function (l) {
       h += '<div class="grp"><h3>' + esc(l) + ' <span class="muted">(' + g[l].length + ' รายการ)</span></h3><table>' + WCOL.loc + '<thead>' + cap(l, 8) + '<tr><th>Material</th><th>บาร์โค้ด</th><th>ชื่อ</th><th class="n">นับที่นี่</th><th class="n">บัญชีทั้งร้าน</th><th class="n">นับทั้งร้าน</th><th class="n">ต่าง</th><th>หมายเหตุ / เหตุผล</th></tr></thead><tbody>' +
         g[l].map(function (x) {
           if (x.u) return '<tr><td><i>ไม่มีใน Master</i></td><td class="mono">' + esc(x.u[0]) + '</td><td></td><td class="n"><b>' + nf(x.q) + '</b></td><td></td><td class="n">' + nf(x.u[1]) + '</td><td></td>' + blank + '</tr>';
@@ -1525,7 +1649,7 @@ function walkBuild() {
       zero.map(function (r) { return '<tr><td class="mono mat">' + esc(r[0]) + '</td><td class="mono">' + esc((r[14] || []).join(' ')) + '</td><td class="nm">' + esc(r[1]) + '</td><td class="n">' + nf(r[2]) + '</td><td></td>' + blank + '</tr>'; }).join('') + '</tbody></table></div>';
   }
   if (by === 'sku' && un.length) h += '<div class="grp"><h3>ยิงแล้วแต่ไม่มีใน Master (' + un.length + ' บาร์โค้ด)</h3><table>' + WCOL.un + '<thead>' + cap('ไม่มีใน Master', 5) + '<tr><th>บาร์โค้ด</th><th class="n">นับ</th><th>Location=ชิ้น</th><th>รหัสสินค้าที่ถูกต้อง</th><th>หมายเหตุ</th></tr></thead><tbody>' +
-    un.map(function (u) { return '<tr><td class="mono">' + esc(u[0]) + '</td><td class="n">' + nf(u[1]) + '</td><td>' + esc(u[2]) + '</td><td></td><td></td></tr>'; }).join('') + '</tbody></table></div>';
+    un.map(function (u) { return '<tr><td class="mono">' + esc(u[0]) + '</td><td class="n">' + nf(u[1]) + '</td><td>' + (P.typed ? locCell(u[3]) : esc(u[2])) + '</td><td></td><td></td></tr>'; }).join('') + '</tbody></table></div>';
   $('walkDoc').innerHTML = head + h;
   $('walkInfo').textContent = rows.length + ' SKU · ตรวจหน้าตาแล้วกด "พิมพ์" (A4)';
   $('walkDlg').classList.remove('on');
@@ -1558,6 +1682,8 @@ function vrepOpen() {
       body: '<div class="conf"><b>รายการที่พิมพ์</b>' +
         '<label><input type="radio" name="vrAll" value="0" checked> เฉพาะรายการขาด / เกิน — ' + nf(nd) + ' รายการ ประมาณ ' + pages(nd) + ' หน้า</label>' +
         '<label><input type="radio" name="vrAll" value="1"> ทั้งหมด รวมรายการที่ตรง (เรียง ขาด → เกิน → ตรง) — ' + nf(T.skus) + ' รายการ ประมาณ ' + pages(T.skus) + ' หน้า</label></div>' +
+        (R.locs && R.locs.closed < R.locs.total ? '<div class="card" style="border-color:var(--warn);background:var(--warnbg);margin-top:8px"><b>⚠ Location ยังปิดไม่ครบ ' + R.locs.closed + '/' + R.locs.total +
+          '</b> — รายงานนี้ยังไม่ใช่ผลสุดท้าย ไม่ควรให้ร้านลงชื่อ (ดูตัวอย่างได้ตามปกติ)</div>' : '') +
         '<div class="muted">ผลสรุปครั้งที่ ' + R.run + ' (' + esc(R.savedAt) + ') · ทุกครั้งที่ดูตัวอย่างบันทึก PRINT_VARIANCE</div>' }, function () {
       var all = radio('vrAll') === '1', V = Object.assign({}, VREP, { all: all, match: all ? VREP.match : [] });
       call('apiVarianceLog', [{ run: V.run, sig: V.sig, all: all, totals: V.totals }], function () { vrepBuild(V); });
@@ -1574,7 +1700,8 @@ function vrepBuild(R) {
     '<div>ที่มายอดบัญชี</div><div>' + (R.bookSource === 'POS' ? 'POS' : 'SAP') + '</div><div>ผลสรุปครั้งที่</div><div>' + R.run + ' · ' + esc(R.savedAt) + '</div></div>' +
     '<div class="sm"><div>จำนวนรายการ (SKU)</div><div><b>' + nf(T.skus) + '</b></div><div>ตรงตามบัญชี</div><div>' + nf(T.match) + ' รายการ</div>' +
     '<div>ขาด</div><div>' + nf(T.short) + ' รายการ · ' + acc(T.shortQty) + ' ชิ้น · ' + acc(T.shortValue, 2) + ' บาท</div><div>เกิน</div><div>' + nf(T.over) + ' รายการ · ' + acc(T.overQty) + ' ชิ้น · ' + acc(T.overValue, 2) + ' บาท</div>' +
-    '<div>ยอดคงเหลือทางบัญชี</div><div>' + acc(T.book) + ' ชิ้น</div><div>ยอดตรวจนับ</div><div>' + acc(T.count) + ' ชิ้น</div>' +
+    '<div>ยอดคงเหลือทางบัญชี</div><div>' + acc(T.book) + ' ชิ้น</div><div>ยอดตรวจนับ (รวมปรับยอด)</div><div>' + acc(T.count) + ' ชิ้น' +
+      (T.dev !== undefined ? '<div class="sm2">นับจากเครื่อง ' + acc(T.dev) + ' · ปรับด้วยมือ ' + (T.adj > 0 ? '+' : '') + acc(T.adj) + '</div>' : '') + '</div>' +
     (!T.short && !T.over ? '<div style="grid-column:1/-1"><b>ตรงตามบัญชีทุกรายการ</b> — ไม่มีรายการขาด / เกิน</div>' : '') +
     '<div><b>ผลต่างสุทธิ</b></div><div><b>' + acc(T.diff) + ' ชิ้น</b></div><div><b>มูลค่าผลต่างสุทธิ (ราคาทุน)</b></div><div><b>' + acc(T.diffValue, 2) + ' บาท</b></div></div>';
   var col = '<colgroup><col style="width:7%"><col style="width:17%"><col style="width:30%"><col style="width:9%"><col style="width:9%"><col style="width:8%"><col style="width:9%"><col style="width:11%"></colgroup>';

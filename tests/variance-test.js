@@ -123,5 +123,17 @@ test('v2.9.2 ตรวจก่อน (check) ไม่บันทึก · api
   assert.throws(() => run('apiVarianceLog(_o)', { _o: { run: R.run, sig: 'xxxx', all: true, totals: R.totals } }), /ผลสรุปที่บันทึกเปลี่ยนไปแล้ว/);
 });
 
+test('v2.9.3 ยอดตรวจนับ = นับจากเครื่อง + ปรับด้วยมือ (แยกในรายงาน) · locs บอก Location ที่ยังไม่ปิด · apiOpenLocations', () => {
+  const R = run('apiVarianceReport({ all: true, check: true })');
+  const T = R.totals;
+  assert.ok(typeof T.dev === 'number' && typeof T.adj === 'number');
+  assert.strictEqual(Math.round((T.dev + T.adj) * 1000) / 1000, T.count);
+  assert.ok(R.locs && typeof R.locs.closed === 'number' && typeof R.locs.total === 'number' && Array.isArray(R.locs.open));
+  const open = run('apiOpenLocations()');
+  assert.ok(Array.isArray(open));
+  assert.strictEqual(open.length, R.locs.total - R.locs.closed, 'จำนวนที่ยังไม่ปิดตรงกับผลสรุป');
+  open.forEach(o => assert.ok(!/ปิดแล้ว/.test(o[1])));
+});
+
 console.log('\nผล: ผ่าน ' + pass + ' / ไม่ผ่าน ' + fail);
 process.exit(fail ? 1 : 0);

@@ -12,7 +12,7 @@ var SCHEMA_VERSION = 13;   // 13 = v2.6.1 ชีต Device_Log · 6 = v2.4.1 Var
  * เวอร์ชันของระบบ (ใช้เลขเดียวทั้งแอป TC21 และเซิร์ฟเวอร์ ตาม Semantic Versioning MAJOR.MINOR.PATCH)
  * ต้องตรงกับ APP_VERSION ใน app/app.js และ appVersion ใน app/config.json — ดู CHANGELOG.md
  */
-var SYSTEM_VERSION = '2.9.2';
+var SYSTEM_VERSION = '2.9.3';
 
 var SHEETS = {
   Config: ['Key', 'Value', 'Note'],
@@ -1754,6 +1754,7 @@ function apiVarianceReport(opts) {
     rep.all = !!opts.all;
     rep.store = cfg.STORE_NAME || ''; rep.project = project; rep.countDate = cfg.COUNT_DATE || ''; rep.roundType = ROUND_TYPE_TH[cfg.ROUND_TYPE] || '';
     rep.run = SV.run; rep.savedAt = SV.at; rep.sig = SV.sig; rep.printedAt = now_(); rep.complete = R.complete;
+    rep.locs = { closed: R.locs.closed, total: R.locs.total, open: R.locs.open };   // v2.9.3: เตือนในกล่องเลือกแบบพิมพ์ ถ้า Location ยังปิดไม่ครบ
     // v2.9.2 (UAT G27-3): หน้า Admin ตรวจก่อน (check = ไม่บันทึก) แล้วค่อยให้เลือกแบบพิมพ์ → บันทึกด้วย apiVarianceLog (เบา ไม่คำนวณใหม่)
     if (!opts.check) logPrintVariance_(project, SV, rep.all, rep.totals);
     return rep;
@@ -1763,6 +1764,18 @@ function apiVarianceReport(opts) {
 function logPrintVariance_(project, SV, all, T) {
   logAdmin_('PRINT_VARIANCE', project, 'รายงานผลต่าง' + (all ? ' (ทั้งหมด รวมรายการที่ตรง)' : '') + ' ผลสรุปครั้งที่ ' + SV.run + ' (' + SV.at + ') · ขาด ' + T.short + ' SKU (' + T.shortQty + ' ชิ้น) · เกิน ' +
     T.over + ' SKU (' + T.overQty + ' ชิ้น) · มูลค่าผลต่างสุทธิ ' + T.diffValue + ' บาท');
+}
+
+/** หน้า Admin: Location ที่ยังไม่ปิด — แสดงในกล่องยืนยัน "ปิดการนับ" (v2.9.3 · UAT G28) · อ่านชีต Locations อย่างเดียว ไม่ล็อก */
+function apiOpenLocations() {
+  var lt = table_('Locations'), out = [];
+  lt.rows.forEach(function (r) {
+    var L = rowObj_(lt, r); if (!L.Location) return;
+    var st = String(L.Status || '');
+    if (!/ปิดแล้ว/.test(st)) out.push([String(L.Location), st, String(L.Owner || '')]);
+  });
+  out.sort(function (a, b) { return natCmp_(a[0], b[0]); });
+  return out;
 }
 
 /** หน้า Admin: บันทึกการออกรายงานผลต่าง (v2.9.2) — ตรวจแค่ว่ายังเป็นผลสรุปครั้งเดียวกับที่ตรวจไว้ (ไม่คำนวณผลสรุปใหม่) */
@@ -1778,12 +1791,13 @@ function apiVarianceLog(o) {
 /** แยกผลสรุปเป็นรายการขาด / เกิน (เรียงตามรหัสสินค้า) + ยอดรวม · แยกฟังก์ชันไว้ทดสอบ */
 function varianceReport_(R, all) {
   var r3 = function (v) { return Math.round(v * 1000) / 1000; }, r2 = function (v) { return Math.round(v * 100) / 100; };
-  var T = { skus: 0, match: 0, short: 0, over: 0, book: 0, count: 0, diff: 0, shortQty: 0, overQty: 0, shortValue: 0, overValue: 0, diffValue: 0, noCost: 0, unmapped: 0, unmappedQty: 0 };
+  var T = { skus: 0, match: 0, short: 0, over: 0, book: 0, count: 0, dev: 0, adj: 0, diff: 0, shortQty: 0, overQty: 0, shortValue: 0, overValue: 0, diffValue: 0, noCost: 0, unmapped: 0, unmappedQty: 0 };
   var short = [], over = [], match = [];
   R.skus.forEach(function (x) {
     // [Material, ชื่อ, บัญชี, เครื่อง, ปรับ, สุดท้าย, ต่าง, ต้นทุน, ต่างบาท, ...]
     var diff = x[6], cost = Number(x[7]) || 0, val = cost ? r2(diff * cost) : null;
     T.skus++; T.book = r3(T.book + x[2]); T.count = r3(T.count + x[5]);
+    T.dev = r3(T.dev + (Number(x[3]) || 0)); T.adj = r3(T.adj + (Number(x[4]) || 0));   // v2.9.3: ยอดตรวจนับ = นับจากเครื่อง + ปรับด้วยมือ (แสดงแยกในรายงาน)
     if (diff === 0) { T.match++; if (all) match.push([x[0], x[1], x[2], x[5], 0, cost || null, cost ? 0 : null]); return; }
     if (!cost) T.noCost++;
     var row = [x[0], x[1], x[2], x[5], diff, cost || null, val];
