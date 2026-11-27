@@ -584,7 +584,7 @@ var HELP = {
     '<li>ให้ทุกเครื่อง ⋮ → ตรวจความพร้อมใหม่</li></ol>' +
     '<h4>ปิดการนับ และปิดรอบ</h4><ol><li>ทุกเครื่อง: ปิด Location สุดท้าย · รอ “ค้าง 0”</li>' +
     '<li>กด <b>ปิดการนับ</b> → เครื่องยิงสินค้าไม่ได้แล้ว (ย้อนได้ด้วย “เปิดการนับอีกครั้ง”)</li>' +
-    '<li>ทำขั้นที่ 1–5 ทีละขั้นจน K1–K7 ✓ · ขั้นที่ 1 (K3) ปลุกจอทุกเครื่องแล้วเปิดแอป ผ่านเองภายในไม่กี่วินาที (หน้านี้ตรวจให้ทุก 15 วินาที 3 นาที)</li>' +
+    '<li>ทำขั้นที่ 1–5 ทีละขั้นจน K1–K7 ✓ · ขั้นที่ 1 (K3) ปลุกจอทุกเครื่องแล้วเปิดแอป ผ่านเองภายในไม่กี่วินาที (หน้านี้ตรวจให้ทุก 15 วินาที ขณะเปิดหน้าหลัก)</li>' +
     '<li>ขั้นที่ 6 <b>ปิดรอบ</b> → พิมพ์รหัสรอบ → รอ 1–3 นาที (ทำไฟล์สำรอง แล้วล้างชีตงาน) · <b>ย้อนกลับไม่ได้</b></li>' +
     '<li>การ์ด “รอบที่ปิดแล้ว” → <b>ตรวจไฟล์สำรอง</b> → ✓ ทุกชีต</li></ol>'],
   staff: ['พนักงาน', '<ul><li><b>+ เพิ่มพนักงาน</b> — รหัสผู้ตรวจสอบ + ชื่อ · ใช้กับบัตร EMP:รหัส</li>' +
@@ -626,10 +626,27 @@ var HELP_FAQ = '<dl><dt>เครื่องขึ้น “เป็นขอ�
 function helpRender() {
   var t = (document.querySelector('#nav button[data-t].on') || {}).dataset || {};
   var h = HELP[t.t] || HELP.overview;
-  $('helpPanel').innerHTML = '<button class="x" onclick="helpToggle()" aria-label="ปิด">✕</button><h2>วิธีใช้ — ' + h[0] + '</h2>' +
+  $('helpPanel').innerHTML = '<button class="x" onclick="helpToggle()" aria-label="ปิด">✕</button><h2>วิธีใช้ — ' + h[0] + '</h2>' + manualBox() +
     '<div class="muted">เปลี่ยนแท็บ = เปลี่ยนหัวข้อ · ไม่ติดต่อเซิร์ฟเวอร์</div>' + h[1] +
     '<details><summary>ลำดับงานทั้งรอบ</summary>' + HELP_FLOW + '</details>' +
     '<details><summary>ปัญหาที่พบบ่อย</summary>' + HELP_FAQ + '</details>';
+}
+/** v2.9.5: ปุ่มคู่มือฉบับเต็ม PDF (ลิงก์ Google Drive เก็บใน Config — ไม่อยู่ในโค้ด) · ตั้ง / เปลี่ยน / ลบ ได้จากแผงวิธีใช้ */
+function manualBox() {
+  var r = (S && S.round) || {}, u = r.manualUrl || '';
+  return '<div class="card" style="margin:8px 0;display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px">' + (u
+    ? '<a class="btn" style="text-decoration:none;display:inline-block" href="' + esc(u) + '" target="_blank" rel="noopener">📄 เปิดคู่มือฉบับเต็ม (PDF)</a>' + (r.manualLabel ? '<span class="muted">' + esc(r.manualLabel) + '</span>' : '')
+    : '<span class="muted">ยังไม่ได้ตั้งลิงก์คู่มือฉบับเต็ม (PDF)</span>') +
+    '<button class="btn sec" onclick="manualSet()">' + (u ? 'เปลี่ยนลิงก์' : 'ตั้งลิงก์คู่มือ') + '</button></div>';
+}
+function manualSet() {
+  var r = (S && S.round) || {};
+  ask({ title: 'ลิงก์คู่มือฉบับเต็ม (PDF)', ok: 'บันทึก',
+    body: '<div class="muted">อัปโหลด PDF ไว้ใน Google Drive ของ Gmail ระบบ → แชร์ให้คนที่ต้องใช้ → คัดลอกลิงก์มาวาง · อัปเดตคู่มือ = Drive → จัดการเวอร์ชัน → อัปโหลดเวอร์ชันใหม่ (ลิงก์เดิมใช้ต่อได้) · เว้นว่าง = ซ่อนปุ่ม</div>' +
+      '<div style="margin-top:8px"><b>ลิงก์ Google Drive</b><input id="manUrl" type="text" style="width:100%" placeholder="https://drive.google.com/file/d/…/view" value="' + esc(r.manualUrl || '') + '"></div>' +
+      '<div style="margin-top:8px"><b>คำอธิบาย</b> <span class="muted">(ไม่บังคับ)</span><input id="manLabel" type="text" style="width:100%" maxlength="80" placeholder="เช่น ฉบับร่าง 26 พ.ย. 2569" value="' + esc(r.manualLabel || '') + '"></div>' }, function () {
+    call('apiSetManual', [{ url: $('manUrl').value, label: $('manLabel').value }], function (s) { setState(s); helpRender(); toast('บันทึกลิงก์คู่มือแล้ว'); });
+  });
 }
 function helpToggle() {
   var on = !$('helpPanel').classList.contains('on');
@@ -780,6 +797,7 @@ var ACT_TH = {
   SET_API_URL: ['บันทึกที่อยู่ระบบ', 'การ์ดที่อยู่ระบบ — ตรวจว่า URL เปลี่ยนเมื่อไร จากอะไรเป็นอะไร'],
   ADMIN_LOG_WARN_ACK: ['รับทราบบันทึกไม่สำเร็จ', 'หัวหน้าทีมกดรับทราบคำเตือนว่าเขียน Admin_Log ไม่ติด'],
   OPEN_ROUND: ['เปิด / แก้รอบ', 'รหัสรอบ ประเภทรอบ วันนับ'],
+  SET_MANUAL_URL: ['ตั้งลิงก์คู่มือ PDF', 'ลิงก์คู่มือฉบับเต็มในแผงวิธีใช้ (เก็บใน Config)'],
   SET_STORE_NAME: ['บันทึกชื่อร้าน', 'ชื่อร้านที่พิมพ์บนรายงานผลต่าง · ค่าเดิม'],
   UPLOAD_SAP: ['นำเข้าไฟล์ SAP', 'ชื่อไฟล์ จำนวนรหัส ไฟล์ลงวันที่ — ยอดบัญชีมาจากไฟล์ไหน'],
   UPLOAD_POS: ['นำเข้าไฟล์ POS', 'ชื่อไฟล์ จำนวนรหัส — บาร์โค้ดที่ส่งลงเครื่องมาจากไฟล์ไหน'],
@@ -844,6 +862,21 @@ function drawLog() {
 
 // ---------- ปิดการนับ / เงื่อนไขปิดรอบ (เฟส 4 · v2.5.0) ----------
 var KCHK = null;
+/**
+ * v2.9.5 (UAT G30-5): ผลตรวจแบบเต็มบนหน้าหลัก "ล้าสมัย" เมื่อมีการปรับยอด / กลับรายการ / สรุปผลและบันทึก หลังตรวจ
+ * → ขั้นที่ 5 เป็น ✗ + บอกเหตุ · ปุ่มปิดรอบกดไม่ได้จนตรวจใหม่ (ปิดรอบยังตรวจ K1–K7 ซ้ำที่เซิร์ฟเวอร์เสมอ)
+ * รู้จากเบราว์เซอร์นี้ (kStale) และจากเซิร์ฟเวอร์ (ver ของ fastCheck ต่างจากตอนตรวจเต็ม — เช่น ปรับจากอีกเครื่อง)
+ */
+var KSTALE = null;
+function kStale(why, k5) {
+  if (!KCHK || !KCHK.full) return;
+  KSTALE = { at: KCHK.at, why: why };
+  KCHK = Object.assign({}, KCHK, { full: false, ok: false, items: KCHK.items.map(function (x) {
+    return x.id === 'K5' && k5 ? Object.assign({}, x, { ok: k5.ok, detail: k5.detail, fix: k5.ok ? '' : k5.detail }) : x;
+  }) });
+  if ($('kList')) $('kList').innerHTML = kHtml(KCHK);
+  stepsRender();
+}
 function renderClose(s) {
   var r = s.round, h = '';
   if (r.archived) { $('closeBox').innerHTML = '<div class="muted">ไฟล์สำรอง — ดูอย่างเดียว</div>'; $('kBox').innerHTML = ''; return; }
@@ -927,7 +960,8 @@ function fastCheck(manual) {
   var done = function (K) {
     var k4 = function (X) { return (X.items.filter(function (y) { return y.id === 'K4'; })[0] || {}).detail; };
     // ผลแบบเต็มล่าสุดยังใช้ K5 ได้ถ้า Count_Log ไม่เปลี่ยน (K4 เหมือนเดิม) — ปุ่มปิดรอบตรวจซ้ำแบบเต็มที่เซิร์ฟเวอร์อีกครั้งเสมอ
-    if (KCHK && KCHK.full && KCHK.project === K.project && k4(KCHK) === k4(K)) {
+    if (KCHK && KCHK.full && KCHK.project === K.project && KCHK.ver && KCHK.ver !== K.ver && !KSTALE) KSTALE = { at: KCHK.at, why: 'มีการปรับยอดหรือบันทึกผลใหม่ (อาจจากอีกเครื่อง)' };
+    if (KCHK && KCHK.full && KCHK.project === K.project && k4(KCHK) === k4(K) && KCHK.ver === K.ver && !KSTALE) {
       K.items = K.items.map(function (x) { return x.id === 'K5' ? KCHK.items.filter(function (y) { return y.id === 'K5'; })[0] || x : x; });
       K.full = true; K.ok = K.items.every(function (x) { return x.ok; });
     }
@@ -952,8 +986,8 @@ function stepsRender() {
     ['2', 'ทุก Location ปิดแล้ว · ไม่มีธงต้องตรวจซ้ำ (K1 · K2)', K ? kOk('K1') && kOk('K2') : null, '<span class="muted">ปิดที่เครื่อง / โอนการดูแล / ปิดธง</span>'],
     ['3', 'กระทบยอดทั้งรอบ หลังเครื่องส่งครบ (K4)', K ? kOk('K4') : null, '<button class="btn sec" onclick="reconcile(fastCheck)">กระทบยอดทั้งรอบ</button>'],
     ['4', 'สรุปผลและบันทึก — หลังปรับยอดครั้งสุดท้าย (K5)', K ? kOk('K5') : null, '<button class="btn sec" onclick="saveSummary(closeCheck)">สรุปผลและบันทึก</button>'],
-    ['5', 'ตรวจเงื่อนไขแบบเต็ม — เทียบตัวเลขผลสรุป', K ? ready : null, '<button class="btn sec" onclick="closeCheck(true)">ตรวจเงื่อนไข</button>'],
-    ['6', 'ปิดรอบ — สำรองไฟล์ → ตรวจไฟล์สำรอง → ล้างชีตงาน', ready, '<button class="btn" ' + (ready ? '' : 'disabled title="ทำข้อ 1–5 ให้ครบก่อน"') + ' onclick="closeRound(false)">ปิดรอบ</button>']
+    ['5', 'ตรวจเงื่อนไขแบบเต็ม — เทียบตัวเลขผลสรุป' + (KSTALE && K ? '<div style="color:var(--warn);font-size:12px">⚠ ข้อมูลเปลี่ยนหลังตรวจเมื่อ ' + esc(KSTALE.at) + ' (' + esc(KSTALE.why) + ') — กด "ตรวจเงื่อนไข" ใหม่</div>' : ''), K ? ready : null, '<button class="btn sec" onclick="closeCheck(true)">ตรวจเงื่อนไข</button>'],
+    ['6', 'ปิดรอบ — สำรองไฟล์ → ตรวจไฟล์สำรอง → ล้างชีตงาน', ready, '<button class="btn" ' + (ready ? '' : 'disabled title="' + (KSTALE ? 'ข้อมูลเปลี่ยนหลังตรวจ — กดตรวจเงื่อนไข (ข้อ 5) ใหม่ก่อน' : 'ทำข้อ 1–5 ให้ครบก่อน') + '"') + ' onclick="closeRound(false)">ปิดรอบ</button>']
   ];
   var h = '<table class="steps">' + rows.map(function (x) { return '<tr><td class="n">' + x[0] + '</td>' + st(x[2], x[2] === null) + '<td>' + x[1] + '</td><td class="b">' + x[3] + '</td></tr>'; }).join('') + '</table>';
   if (S.round.testAllowed) h += '<div class="card" style="margin-top:10px;border-color:var(--warn);background:var(--warnbg)"><b>โหมดรอบทดสอบ (เฉพาะรอบ ' + esc(S.round.projectId) + ')</b> — ล้างข้อมูลทดสอบก่อนใช้งานจริง · ' +
@@ -983,7 +1017,7 @@ function closeRoundAsk(test, P) {
       '<li>บันทึก Count_History</li><li><b>ล้างชีตงาน</b> (Count_Log · Adjustments · Variance · Locations · ไฟล์นำเข้า ฯลฯ) — เก็บ Staff · Devices · Admin_Log · Count_History</li></ol>' +
       '<div style="margin-top:8px">พิมพ์ <b>' + esc(must) + '</b> เพื่อยืนยัน</div>') }, function (why, st) {
     call('apiCloseRound', [st, why, test], function (res) {
-      KCHK = null; setState(res.state);
+      KCHK = null; KSTALE = null; setState(res.state);
       var C = res.closed;
       ask({ title: '✓ ปิดรอบ ' + C.project + ' แล้ว', ok: 'ปิด', noCancel: true,
         body: '<div class="kv"><div>ประเภท</div><div>' + esc({ REAL: 'รอบจริง', PILOT: 'รอบทดลอง', TEST: 'รอบทดสอบ (ล้างข้อมูล)' }[C.type]) + '</div>' +
@@ -1033,12 +1067,13 @@ function kHtml(K) {
   var bad = K.items.filter(function (x) { return !x.ok; }).length;
   return '<div style="margin-top:8px"><b>' + (K.ok ? '<span class="y" style="color:var(--ok)">✓ ครบทุกเงื่อนไข</span> พร้อมปิดรอบ' : '<span style="color:var(--bad)">✗ ยังไม่ครบ ' + bad + ' ข้อ</span>') + '</b> <span class="muted">ตรวจเมื่อ ' + esc(K.at) +
     (K.full ? '' : ' · ยังไม่ได้เทียบตัวเลข K5 กด "ตรวจเงื่อนไขปิดรอบ"') + '</span>' +
+    (KSTALE ? '<div class="card" style="margin-top:6px;border-color:var(--warn);background:var(--warnbg)">⚠ ข้อมูลเปลี่ยนหลังตรวจเมื่อ ' + esc(KSTALE.at) + ' (' + esc(KSTALE.why) + ') — ผลด้านล่างอาจไม่ตรงแล้ว กด "ตรวจเงื่อนไข" ใหม่</div>' : '') +
     (K.after && K.after.n ? '<div class="card" style="margin-top:6px;border-color:var(--warn);background:var(--warnbg)">หลังปิดการนับ รับรายการเพิ่ม ' + K.after.n + ' รายการ' +
       (K.after.late ? ' · <b>ยิงหลังเวลาปิด ' + K.after.late + ' รายการ</b> (เครื่องยังไม่รู้ว่าปิด เช่น ออฟไลน์) — ดูรายละเอียดใน บันทึก Admin (SYNC_AFTER_COUNT_CLOSE)' : ' (ค้างส่งจากก่อนปิด)') + '</div>' : '') +
     kItems(K.items) + '</div>';
 }
 function closeCheck(box) {
-  call('apiCloseCheck', [], function (K) { KCHK = K; if ($('kList')) $('kList').innerHTML = kHtml(K); stepsRender(); if (box === true) kResultBox(K); }, 'กำลังตรวจเงื่อนไขปิดรอบ…');
+  call('apiCloseCheck', [], function (K) { KCHK = K; KSTALE = null; if ($('kList')) $('kList').innerHTML = kHtml(K); stepsRender(); if (box === true) kResultBox(K); }, 'กำลังตรวจเงื่อนไขปิดรอบ…');
 }
 /** v2.6.0 (UAT G17-7): กดปุ่มตรวจเองแล้วต้องเห็นผลกลางจอ — ตารางที่เป็น ✓ อยู่แล้วดูไม่ออกว่าตรวจเสร็จ */
 function kResultBox(K) {
@@ -1065,13 +1100,13 @@ function countCloseAsk(open) {
     body: warn + '<div>หลังกด:</div><ul style="margin:4px 0 0 18px;padding:0"><li>เครื่องทุกเครื่องยิงสินค้าและเปิด Location ใหม่ไม่ได้ (รู้ภายใน 1 นาที)</li>' +
       '<li>รายการที่ค้างส่งในเครื่องยังส่งเข้ามาได้ตามปกติ</li><li>เครื่องยังกด "ปิด Location" ที่ค้างได้</li>' +
       '<li>หน้านี้ยังปรับยอด สรุปผล และพิมพ์ใบเดินตรวจได้</li><li>ต้องนับเพิ่ม: กด "เปิดการนับอีกครั้ง" พร้อมเหตุผล</li></ul>' }, function (why, st) {
-    call('apiCountClose', [st], function (r) { KCHK = r.check; setState(r.state); closeDoneBox(r.check, true); }, 'กำลังปิดการนับ…');
+    call('apiCountClose', [st], function (r) { KCHK = r.check; KSTALE = null; setState(r.state); closeDoneBox(r.check, true); }, 'กำลังปิดการนับ…');
   });
 }
 function countReopen() {
   ask({ title: 'เปิดการนับอีกครั้ง รอบ ' + S.round.projectId + '?', ok: 'เปิดการนับอีกครั้ง', staff: true, why: 'เช่น นับทวน C12 ไม่ตรงกับพนักงานหน้าร้าน ต้องนับใหม่',
     body: '<div>เครื่องจะยิงได้อีกครั้ง (รู้ภายใน 1 นาที) · ผลสรุปที่บันทึกไว้แล้วต้องบันทึกใหม่หลังปิดการนับครั้งถัดไป · บันทึกเหตุผลใน Admin_Log (COUNT_REOPEN)</div>' }, function (why, st) {
-    call('apiCountReopen', [st, why], function (r) { KCHK = r.check; setState(r.state); closeDoneBox(r.check, false); }, 'กำลังเปิดการนับอีกครั้ง…');
+    call('apiCountReopen', [st, why], function (r) { KCHK = r.check; KSTALE = null; setState(r.state); closeDoneBox(r.check, false); }, 'กำลังเปิดการนับอีกครั้ง…');
   });
 }
 // v2.5.6: อนุมัติแล้วบอกขั้นต่อไป + สถานะจะเปลี่ยนเมื่อไร (UAT 14: อนุมัติแล้วสถานะยัง "เตรียมรอบ" ทำให้สงสัย)
@@ -1302,6 +1337,7 @@ function saveSummary(then) {
   ask({ title: 'สรุปผลและบันทึก', ok: 'บันทึก', body: '<div>กระทบยอดทั้งรอบ แล้วเก็บผลราย SKU ตอนนี้ลงชีต Variance (ต่อท้าย ไม่เขียนทับ) และบันทึกใน Admin_Log</div>' }, function () {
     call('apiSummarySave', [], function (r) {
       renderSummary(r);
+      if (!r.skipped) kStale('สรุปผลและบันทึกครั้งที่ ' + r.run, { ok: true, detail: 'บันทึกครั้งที่ ' + r.run + ' แล้ว — กด "ตรวจเงื่อนไข" เพื่อยืนยัน' });
       // v2.4.1: กล่องผลกลางจอแทน toast — บอกครั้งที่ / จำนวนแถว / เวลา · เตือนถ้าตัวเลขเหมือนครั้งก่อน
       var nU = r.unmapped.length;
       if (r.skipped) {   // v2.9.1 (UAT G26-7): ตัวเลขไม่เปลี่ยน → เซิร์ฟเวอร์ไม่บันทึกชุดซ้ำ
@@ -1532,7 +1568,7 @@ function adjSave() {
   ADJ_STAFF = $('adjStaff').value;
   var o = { material: $('adjMat').value.trim(), qty: $('adjQty').value, reason: radio('adjR'), note: $('adjNote').value.trim(), location: $('adjLoc').value.trim(), staff: ADJ_STAFF };
   $('adjDlg').classList.remove('on');
-  call('apiAdjust', [o], function (R) { renderSummary(R); adjDoneBox(R.adjDone, 'บันทึกปรับยอด'); }, 'กำลังบันทึกปรับยอด…');
+  call('apiAdjust', [o], function (R) { renderSummary(R); adjDoneBox(R.adjDone, 'บันทึกปรับยอด'); kStale('ปรับยอด ' + R.adjDone.id, { ok: false, detail: 'ปรับยอด ' + R.adjDone.id + ' หลังสรุปผลครั้งล่าสุด — กด "สรุปผลและบันทึก" ใหม่' }); }, 'กำลังบันทึกปรับยอด…');
 }
 function adjDoneBox(a, what) {
   ask({ title: '✓ ' + what + ' ' + a.id + ' แล้ว', ok: 'ปิด', noCancel: true,
@@ -1548,7 +1584,7 @@ function adjReverse(id) {
     var st = $('revStaff') ? $('revStaff').value : '';
     if (!st) { toast('เลือกผู้คีย์ก่อน', true); setTimeout(function () { adjReverse(id); }, 50); return; }
     ADJ_STAFF = st;
-    call('apiAdjustReverse', [id, st, why], function (R) { renderSummary(R); adjDoneBox(R.adjDone, 'กลับรายการ'); }, 'กำลังกลับรายการ ' + id + '…');
+    call('apiAdjustReverse', [id, st, why], function (R) { renderSummary(R); adjDoneBox(R.adjDone, 'กลับรายการ'); kStale('กลับรายการ ' + id, { ok: false, detail: 'กลับรายการ ' + id + ' หลังสรุปผลครั้งล่าสุด — กด "สรุปผลและบันทึก" ใหม่' }); }, 'กำลังกลับรายการ ' + id + '…');
   });
 }
 

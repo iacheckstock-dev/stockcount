@@ -12,7 +12,7 @@ var SCHEMA_VERSION = 13;   // 13 = v2.6.1 ชีต Device_Log · 6 = v2.4.1 Var
  * เวอร์ชันของระบบ (ใช้เลขเดียวทั้งแอป TC21 และเซิร์ฟเวอร์ ตาม Semantic Versioning MAJOR.MINOR.PATCH)
  * ต้องตรงกับ APP_VERSION ใน app/app.js และ appVersion ใน app/config.json — ดู CHANGELOG.md
  */
-var SYSTEM_VERSION = '2.9.4';
+var SYSTEM_VERSION = '2.9.5';
 
 var SHEETS = {
   Config: ['Key', 'Value', 'Note'],
@@ -98,7 +98,9 @@ var CONFIG_DEFAULTS = [
   ['SUMMARY_SAVED', '', 'ผลสรุปที่บันทึกล่าสุด (JSON: project, run, at, sig) — ใช้ตรวจเงื่อนไขปิดรอบ K5'],
   ['ROUND_TYPE', '', 'ประเภทรอบ REAL = รอบจริง · PILOT = รอบทดลอง (เลือกตอนเปิดรอบ · v2.5.2)'],
   ['CLOSE_STATE', '', 'ข้อมูลระหว่างปิดรอบ (JSON) — ใช้ทำต่อเมื่อปิดรอบค้างกลางทาง · ว่าง = ไม่มีค้าง'],
-  ['STORE_NAME', '', 'ชื่อร้าน / สาขา บนรายงานผลต่าง (v2.9.0) · คงไว้ข้ามรอบ แก้ได้ที่การ์ดรอบนับ']
+  ['STORE_NAME', '', 'ชื่อร้าน / สาขา บนรายงานผลต่าง (v2.9.0) · คงไว้ข้ามรอบ แก้ได้ที่การ์ดรอบนับ'],
+  ['MANUAL_URL', '', 'ลิงก์คู่มือฉบับเต็ม PDF ใน Google Drive (v2.9.5) · ไม่เก็บในโค้ด (repo สาธารณะ) · ตั้งที่ปุ่ม วิธีใช้'],
+  ['MANUAL_LABEL', '', 'คำอธิบายคู่มือ เช่น ฉบับร่าง 26 พ.ย. 2569 (v2.9.5)']
 ];
 
 // ---------- เมนูและหน้า Admin ----------
@@ -451,7 +453,7 @@ function apiGetState() {
     spreadsheetUrl: SpreadsheetApp.getActive().getUrl(),
     round: { projectId: cfg.PROJECT_ID, countDate: cfg.COUNT_DATE, status: cfg.ROUND_STATUS || 'NONE',
       statusTh: ROUND_STATUS_TH[cfg.ROUND_STATUS || 'NONE'] || cfg.ROUND_STATUS, closedAt: cfg.COUNT_CLOSED_AT || '', closedBy: cfg.COUNT_CLOSED_BY || '',
-      storeName: cfg.STORE_NAME || '',
+      storeName: cfg.STORE_NAME || '', manualUrl: cfg.MANUAL_URL || '', manualLabel: cfg.MANUAL_LABEL || '',
       type: cfg.ROUND_TYPE || '', typeTh: ROUND_TYPE_TH[cfg.ROUND_TYPE] || '', testAllowed: TEST_ROUND_IDS.indexOf(cfg.PROJECT_ID) >= 0,
       archived: cfg.ROUND_STATUS === 'ARCHIVED', archivedType: cfg.ARCHIVED_TYPE || '',
       closeType: (function () { try { return (JSON.parse(cfg.CLOSE_STATE || 'null') || {}).type || ''; } catch (e) { return ''; } })() },
@@ -1339,8 +1341,10 @@ function closeCheck_(full) {
     'ตรวจรายการในชีต Loc_Checks (ADMIN_LOG_FAIL) แล้วกด "ตรวจแล้ว รับทราบ" ที่แถบแดงด้านบน');
   add('K7', st === 'COUNT_CLOSED', 'สถานะ "ปิดการนับแล้ว"', (ROUND_STATUS_TH[st] || st) + (cfg.COUNT_CLOSED_AT ? ' · เมื่อ ' + cfg.COUNT_CLOSED_AT + ' โดย ' + cfg.COUNT_CLOSED_BY : ''),
     'กด "ปิดการนับ" ก่อน');
+  // v2.9.5 (UAT G30-5): ตัวบอกว่าตัวเลขเปลี่ยนหลังตรวจแบบเต็มหรือไม่ — จำนวนแถว Adjustments + ผลสรุปที่บันทึก (หน้า Admin ไม่ใช้ K5 เก่าถ้าค่านี้ต่าง)
+  var adjSh = SpreadsheetApp.getActive().getSheetByName('Adjustments'), ver = (adjSh ? adjSh.getLastRow() : 0) + '|' + (cfg.SUMMARY_SAVED || '');
   return { at: now_(), project: project, status: st, statusTh: ROUND_STATUS_TH[st] || st, closedAt: cfg.COUNT_CLOSED_AT || '', closedBy: cfg.COUNT_CLOSED_BY || '',
-    after: st === 'COUNT_CLOSED' ? afterClose_() : null, full: !!full, ok: items.every(function (x) { return x.ok; }), items: items };
+    after: st === 'COUNT_CLOSED' ? afterClose_() : null, full: !!full, ver: ver, ok: items.every(function (x) { return x.ok; }), items: items };
 }
 
 
@@ -1734,6 +1738,26 @@ function apiSetStoreName(name) {
     if (name !== old) {
       logAdmin_('SET_STORE_NAME', name || '(ว่าง)', old ? 'เดิม: ' + old : '');
       setConfig_({ STORE_NAME: name });
+    }
+    return apiGetState();
+  });
+}
+
+/**
+ * หน้า Admin: ลิงก์คู่มือฉบับเต็ม PDF (v2.9.5) — รับเฉพาะลิงก์ Google Drive / Docs (https) กันลิงก์ภายนอก · ว่าง = ซ่อนปุ่ม
+ * เก็บใน Config ไม่ใส่ในโค้ด เพราะ repo เป็นสาธารณะ (ห้ามมีรหัสไฟล์ Google ใน repo)
+ */
+function apiSetManual(o) {
+  return withLock_(function () {
+    o = o || {};
+    var url = String(o.url || '').trim(), label = String(o.label || '').replace(/\s+/g, ' ').trim();
+    if (url && !/^https:\/\/(drive|docs)\.google\.com\/\S+$/.test(url)) throw new Error('ลิงก์คู่มือต้องเป็นลิงก์ Google Drive (ขึ้นต้น https://drive.google.com/ หรือ https://docs.google.com/)');
+    if (url.length > 500) throw new Error('ลิงก์ยาวเกิน 500 ตัวอักษร');
+    if (label.length > 80) throw new Error('คำอธิบายยาวเกิน 80 ตัวอักษร');
+    var cfg = readConfig_();
+    if (url !== (cfg.MANUAL_URL || '') || label !== (cfg.MANUAL_LABEL || '')) {
+      logAdmin_('SET_MANUAL_URL', label || (url ? 'คู่มือ PDF' : '(ลบลิงก์)'), url ? 'ตั้งลิงก์คู่มือ' + (cfg.MANUAL_URL ? ' (แทนลิงก์เดิม)' : '') : 'ลบลิงก์คู่มือ');
+      setConfig_({ MANUAL_URL: url, MANUAL_LABEL: label });
     }
     return apiGetState();
   });

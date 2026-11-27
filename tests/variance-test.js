@@ -147,5 +147,25 @@ test('v2.9.4 apiPrintStatus: พิมพ์ครั้งล่าสุดเ
   assert.strictEqual(P.saved, R.run + 1); assert.strictEqual(P.printed, R.run, 'ยังเป็นรายงานของผลครั้งก่อน');
 });
 
+test('v2.9.5 closeCheck_.ver เปลี่ยนเมื่อปรับยอด / บันทึกผล · ไม่เปลี่ยนถ้าไม่มีอะไรเกิดขึ้น', () => {
+  const v1 = run('closeCheck_(false)').ver, v1b = run('closeCheck_(false)').ver;
+  assert.ok(v1 && v1 === v1b);
+  run('apiAdjust(_o)', { _o: { material: MAT1, qty: 1, reason: 'OTHER', staff: 'EMP-K', note: 'ทดสอบ ver', location: '' } });
+  const v2 = run('closeCheck_(false)').ver; assert.notStrictEqual(v2, v1, 'ปรับยอดแล้ว ver ต้องเปลี่ยน');
+  run('apiSummarySave()');
+  const v3 = run('closeCheck_(false)').ver; assert.notStrictEqual(v3, v2, 'บันทึกผลแล้ว ver ต้องเปลี่ยน');
+});
+test('v2.9.5 apiSetManual: รับเฉพาะลิงก์ Google Drive · ว่าง = ลบ · บันทึก SET_MANUAL_URL · state มี manualUrl', () => {
+  assert.throws(() => run('apiSetManual({ url: "https://evil.example.com/x.pdf" })'), /Google Drive/);
+  assert.throws(() => run('apiSetManual({ url: "http://drive.google.com/file/d/x" })'), /Google Drive/);
+  const n = logs('SET_MANUAL_URL').length;
+  let st = run('apiSetManual({ url: "https://drive.google.com/file/d/TESTID/view", label: "ฉบับร่าง" })');
+  assert.strictEqual(st.round.manualUrl, 'https://drive.google.com/file/d/TESTID/view'); assert.strictEqual(st.round.manualLabel, 'ฉบับร่าง');
+  assert.strictEqual(logs('SET_MANUAL_URL').length, n + 1);
+  run('apiSetManual({ url: "https://drive.google.com/file/d/TESTID/view", label: "ฉบับร่าง" })');
+  assert.strictEqual(logs('SET_MANUAL_URL').length, n + 1, 'ไม่เปลี่ยน = ไม่บันทึกซ้ำ');
+  st = run('apiSetManual({ url: "" })'); assert.strictEqual(st.round.manualUrl, '');
+});
+
 console.log('\nผล: ผ่าน ' + pass + ' / ไม่ผ่าน ' + fail);
 process.exit(fail ? 1 : 0);
