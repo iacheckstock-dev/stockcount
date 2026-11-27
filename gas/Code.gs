@@ -12,7 +12,7 @@ var SCHEMA_VERSION = 13;   // 13 = v2.6.1 ชีต Device_Log · 6 = v2.4.1 Var
  * เวอร์ชันของระบบ (ใช้เลขเดียวทั้งแอป TC21 และเซิร์ฟเวอร์ ตาม Semantic Versioning MAJOR.MINOR.PATCH)
  * ต้องตรงกับ APP_VERSION ใน app/app.js และ appVersion ใน app/config.json — ดู CHANGELOG.md
  */
-var SYSTEM_VERSION = '2.9.1';
+var SYSTEM_VERSION = '2.9.2';
 
 var SHEETS = {
   Config: ['Key', 'Value', 'Note'],
@@ -1687,7 +1687,8 @@ function apiSummarySave() {
     // ข้อยกเว้น: ผลที่บันทึกไว้ก่อน "ปิดการนับ" ต้องบันทึกใหม่ได้เสมอ (K5 ไม่รับผลที่บันทึกก่อนปิด แม้ตัวเลขเท่าเดิม)
     var cfg0 = readConfig_(), SV = null; try { SV = JSON.parse(cfg0.SUMMARY_SAVED || 'null'); } catch (e) { }
     var closedAt = cfg0.COUNT_CLOSED_AT || '';
-    if (SV && SV.project === project && SV.sig === sig && !(closedAt && String(SV.at) < closedAt)) {
+    var resave = !!(SV && SV.project === project && SV.sig === sig && closedAt && String(SV.at) < closedAt);   // v2.9.2: ตัวเลขเท่าเดิมแต่ต้องบันทึกใหม่เพราะผลเดิมมาก่อนปิดการนับ
+    if (SV && SV.project === project && SV.sig === sig && !resave) {
       R.run = SV.run; R.saved = 0; R.same = true; R.skipped = true; R.prevAt = SV.at; R.lastSave = { run: SV.run, at: SV.at };
       return R;
     }
@@ -1708,7 +1709,7 @@ function apiSummarySave() {
       // ชีต Config เป็นข้อความ อ่านเวลา/ลายนิ้วมือกลับได้ตรงตามที่เขียน (Dash_Data อาจถูก Sheets แปลงเป็นวันที่) — ใช้ตรวจ K5 (v2.5.0)
       setConfig_({ SUMMARY_SAVED: JSON.stringify({ project: project, run: run, at: R.at, sig: sig }) });
     });
-    R.run = run; R.saved = saved; R.same = !!prevSig && prevSig === sig; R.prevAt = prevAt;
+    R.run = run; R.saved = saved; R.same = !!prevSig && prevSig === sig && !resave; R.resave = resave; R.prevAt = prevAt;
     R.lastSave = { run: run, at: R.at };
     return R;
   });
@@ -1753,10 +1754,25 @@ function apiVarianceReport(opts) {
     rep.all = !!opts.all;
     rep.store = cfg.STORE_NAME || ''; rep.project = project; rep.countDate = cfg.COUNT_DATE || ''; rep.roundType = ROUND_TYPE_TH[cfg.ROUND_TYPE] || '';
     rep.run = SV.run; rep.savedAt = SV.at; rep.sig = SV.sig; rep.printedAt = now_(); rep.complete = R.complete;
-    logAdmin_('PRINT_VARIANCE', project, 'รายงานผลต่าง' + (rep.all ? ' (ทั้งหมด รวมรายการที่ตรง)' : '') + ' ผลสรุปครั้งที่ ' + SV.run + ' (' + SV.at + ') · ขาด ' + rep.totals.short + ' SKU (' + rep.totals.shortQty + ' ชิ้น) · เกิน ' +
-      rep.totals.over + ' SKU (' + rep.totals.overQty + ' ชิ้น) · มูลค่าผลต่างสุทธิ ' + rep.totals.diffValue + ' บาท');
+    // v2.9.2 (UAT G27-3): หน้า Admin ตรวจก่อน (check = ไม่บันทึก) แล้วค่อยให้เลือกแบบพิมพ์ → บันทึกด้วย apiVarianceLog (เบา ไม่คำนวณใหม่)
+    if (!opts.check) logPrintVariance_(project, SV, rep.all, rep.totals);
     return rep;
   });
+}
+
+function logPrintVariance_(project, SV, all, T) {
+  logAdmin_('PRINT_VARIANCE', project, 'รายงานผลต่าง' + (all ? ' (ทั้งหมด รวมรายการที่ตรง)' : '') + ' ผลสรุปครั้งที่ ' + SV.run + ' (' + SV.at + ') · ขาด ' + T.short + ' SKU (' + T.shortQty + ' ชิ้น) · เกิน ' +
+    T.over + ' SKU (' + T.overQty + ' ชิ้น) · มูลค่าผลต่างสุทธิ ' + T.diffValue + ' บาท');
+}
+
+/** หน้า Admin: บันทึกการออกรายงานผลต่าง (v2.9.2) — ตรวจแค่ว่ายังเป็นผลสรุปครั้งเดียวกับที่ตรวจไว้ (ไม่คำนวณผลสรุปใหม่) */
+function apiVarianceLog(o) {
+  o = o || {};
+  var cfg = readConfig_(), project = cfg.PROJECT_ID, SV = null;
+  try { SV = JSON.parse(cfg.SUMMARY_SAVED || 'null'); } catch (e) { }
+  if (!SV || SV.project !== project || SV.run !== o.run || SV.sig !== o.sig) throw new Error('ผลสรุปที่บันทึกเปลี่ยนไปแล้ว (มีการสรุปผลและบันทึกใหม่) — ปิดหน้านี้แล้วกดพิมพ์รายงานผลต่างอีกครั้ง');
+  logPrintVariance_(project, SV, !!o.all, o.totals || {});
+  return true;
 }
 
 /** แยกผลสรุปเป็นรายการขาด / เกิน (เรียงตามรหัสสินค้า) + ยอดรวม · แยกฟังก์ชันไว้ทดสอบ */

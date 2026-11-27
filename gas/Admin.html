@@ -1226,6 +1226,8 @@ function saveSummary(then) {
       ask({ title: '✓ บันทึกผลครั้งที่ ' + r.run + ' แล้ว', ok: 'ปิด', noCancel: true,
         body: '<div class="kv"><div>เวลา</div><div>' + esc(r.at) + '</div><div>ชีต Variance</div><div>เพิ่ม ' + nf(r.saved) + ' แถว (SKU ' + nf(r.skus.length) + (nU ? ' + ไม่มีใน Master ' + nU : '') + ') · Run = ' + r.run + '</div>' +
           '<div>Admin_Log</div><div>SUMMARY_SAVE ครั้งที่ ' + r.run + '</div><div>ผลต่าง</div><div>' + sgn(r.totals.diff) + ' ชิ้น · ' + sgn(r.totals.diffValue, 2) + ' บาท</div></div>' +
+          (r.resave ? '<div class="card" style="margin-top:10px">ตัวเลขเท่าผลครั้งที่ ' + (r.run - 1) + ' แต่ครั้งนั้นบันทึก<b>ก่อนปิดการนับ</b> จึงบันทึกใหม่เป็นครั้งที่ ' + r.run +
+            ' — จำเป็นสำหรับขั้นที่ 4 (K5) ปิดรอบ</div>' : '') +
           (r.same ? '<div class="card" style="margin-top:10px;border-color:var(--warn);background:var(--warnbg)"><b>ตัวเลขเหมือนครั้งที่ ' + (r.run - 1) + '</b> (' + esc(r.prevAt) + ') ทุก SKU — ' +
             'ไม่ต้องกดบันทึกซ้ำ ถ้าไม่มีการนับหรือโหลดไฟล์ SAP เพิ่ม</div>' : '') }, function () { if (typeof then === 'function') then(); });
     }, 'กำลังกระทบยอดและบันทึกผล…');
@@ -1468,7 +1470,7 @@ function adjReverse(id) {
 var WCOL = (function () {
   function cg(w) { return '<colgroup>' + w.map(function (x) { return '<col style="width:' + x + '%">'; }).join('') + '</colgroup>'; }
   return {
-    sku: cg([3, 14, 11, 24, 5, 5, 5, 19, 14]),   // v2.9.1: ตัดคอลัมน์ "นับทวนได้"
+    sku: cg([3, 13, 11, 20, 5, 5, 5, 28, 10]),   // v2.9.1 ตัดคอลัมน์ "นับทวนได้" · v2.9.2 (G27-8) Location=ชิ้นกว้างขึ้น ชื่อ/หมายเหตุแคบลง
     loc: cg([15, 12, 28, 7, 7, 7, 6, 18]),
     zero: cg([15, 12, 32, 7, 16, 18]),
     un: cg([15, 7, 30, 20, 28])
@@ -1543,17 +1545,24 @@ function acc(v, d) {
 }
 /** ไทย: 2026-11-26 → 26/11/2569 */
 function thDate(d) { var m = String(d || '').match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? m[3] + '/' + m[2] + '/' + (Number(m[1]) + 543) : (d || '-'); }
-/** v2.9.1 (UAT G26-5): เลือกก่อนพิมพ์ — เฉพาะขาด/เกิน (ค่าตั้งต้น) หรือทั้งหมด (ขาด → เกิน → ตรง) */
+/**
+ * v2.9.2 (UAT G27-3): กดปุ่ม → ตรวจกับเซิร์ฟเวอร์ก่อน 1 ครั้ง (บันทึกผลแล้ว · ตัวเลขไม่เปลี่ยน) ได้ข้อมูลทั้งหมดของผลครั้งที่บันทึก
+ * ไม่ผ่าน = แจ้งทันที ไม่ต้องเลือกแบบ · ผ่าน = เลือกแบบพิมพ์ (จำนวนจริง) → สร้างหน้าในเบราว์เซอร์ ไม่คำนวณใหม่ · บันทึก PRINT_VARIANCE ด้วยการเรียกแบบเบา
+ */
+var VREP = null;
 function vrepOpen() {
-  var T = SUM && SUM.totals, pages = function (n) { return Math.max(1, Math.ceil((n + 12) / 33)); };
-  ask({ title: 'พิมพ์รายงานผลต่าง', ok: 'ดูตัวอย่าง',
-    body: '<div class="conf"><b>รายการที่พิมพ์</b>' +
-      '<label><input type="radio" name="vrAll" value="0" checked> เฉพาะรายการขาด / เกิน' + (T ? ' — ' + nf(T.short + T.over) + ' รายการ ประมาณ ' + pages(T.short + T.over) + ' หน้า' : '') + '</label>' +
-      '<label><input type="radio" name="vrAll" value="1"> ทั้งหมด รวมรายการที่ตรง (เรียง ขาด → เกิน → ตรง)' + (T ? ' — ' + nf(T.skus) + ' รายการ ประมาณ ' + pages(T.skus) + ' หน้า' : '') + '</label></div>' +
-      '<div class="muted">ตัวเลขมาจากผลสรุปที่บันทึกล่าสุด · ทุกครั้งที่ออกรายงานบันทึก PRINT_VARIANCE</div>' }, function () {
-    var all = radio('vrAll') === '1';
-    call('apiVarianceReport', [{ all: all }], function (R) { vrepBuild(R); }, 'กำลังตรวจผลสรุปที่บันทึกและเตรียมรายงาน…');
-  });
+  call('apiVarianceReport', [{ all: true, check: true }], function (R) {
+    VREP = R;
+    var T = R.totals, nd = T.short + T.over, pages = function (n) { return Math.max(1, Math.ceil((n + 12) / 33)); };
+    ask({ title: 'พิมพ์รายงานผลต่าง — ผลสรุปครั้งที่ ' + R.run, ok: 'ดูตัวอย่าง',
+      body: '<div class="conf"><b>รายการที่พิมพ์</b>' +
+        '<label><input type="radio" name="vrAll" value="0" checked> เฉพาะรายการขาด / เกิน — ' + nf(nd) + ' รายการ ประมาณ ' + pages(nd) + ' หน้า</label>' +
+        '<label><input type="radio" name="vrAll" value="1"> ทั้งหมด รวมรายการที่ตรง (เรียง ขาด → เกิน → ตรง) — ' + nf(T.skus) + ' รายการ ประมาณ ' + pages(T.skus) + ' หน้า</label></div>' +
+        '<div class="muted">ผลสรุปครั้งที่ ' + R.run + ' (' + esc(R.savedAt) + ') · ทุกครั้งที่ดูตัวอย่างบันทึก PRINT_VARIANCE</div>' }, function () {
+      var all = radio('vrAll') === '1', V = Object.assign({}, VREP, { all: all, match: all ? VREP.match : [] });
+      call('apiVarianceLog', [{ run: V.run, sig: V.sig, all: all, totals: V.totals }], function () { vrepBuild(V); });
+    });
+  }, 'กำลังตรวจผลสรุปที่บันทึก…');
 }
 function vrepClose() { $('vrep').classList.remove('on'); pageSize('A4 landscape'); }
 function vrepBuild(R) {
@@ -1563,7 +1572,7 @@ function vrepBuild(R) {
     '<div class="hd"><div>ร้าน / สาขา</div><div><b>' + (R.store ? esc(R.store) : '.................................................') + '</b></div><div>รหัสรอบ</div><div><b>' + esc(R.project) + '</b>' + (R.roundType ? ' (' + esc(R.roundType) + ')' : '') + '</div>' +
     '<div>วันที่ตรวจนับ</div><div>' + thDate(R.countDate) + '</div><div>ยอดคงเหลือทางบัญชี ณ</div><div>สิ้นวัน ' + thDate(prevDay(R.countDate)) + '</div>' +
     '<div>ที่มายอดบัญชี</div><div>' + (R.bookSource === 'POS' ? 'POS' : 'SAP') + '</div><div>ผลสรุปครั้งที่</div><div>' + R.run + ' · ' + esc(R.savedAt) + '</div></div>' +
-    '<div class="sm"><div>จำนวนรายการ (SKU)</div><div><b>' + nf(T.skus) + '</b></div><div>ตรงตามบัญชี</div><div>' + nf(T.match) + '</div>' +
+    '<div class="sm"><div>จำนวนรายการ (SKU)</div><div><b>' + nf(T.skus) + '</b></div><div>ตรงตามบัญชี</div><div>' + nf(T.match) + ' รายการ</div>' +
     '<div>ขาด</div><div>' + nf(T.short) + ' รายการ · ' + acc(T.shortQty) + ' ชิ้น · ' + acc(T.shortValue, 2) + ' บาท</div><div>เกิน</div><div>' + nf(T.over) + ' รายการ · ' + acc(T.overQty) + ' ชิ้น · ' + acc(T.overValue, 2) + ' บาท</div>' +
     '<div>ยอดคงเหลือทางบัญชี</div><div>' + acc(T.book) + ' ชิ้น</div><div>ยอดตรวจนับ</div><div>' + acc(T.count) + ' ชิ้น</div>' +
     (!T.short && !T.over ? '<div style="grid-column:1/-1"><b>ตรงตามบัญชีทุกรายการ</b> — ไม่มีรายการขาด / เกิน</div>' : '') +

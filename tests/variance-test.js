@@ -112,5 +112,16 @@ test('v2.9.1 สรุปผลและบันทึกซ้ำโดยต�
   assert.strictEqual(run('apiVarianceReport()').run, before);
 });
 
+test('v2.9.2 ตรวจก่อน (check) ไม่บันทึก · apiVarianceLog บันทึกเมื่อยังเป็นผลครั้งเดิม · ผลเปลี่ยน → ไม่ให้บันทึก', () => {
+  const n = logs('PRINT_VARIANCE').length;
+  const R = run('apiVarianceReport({ all: true, check: true })');
+  assert.strictEqual(logs('PRINT_VARIANCE').length, n, 'check ไม่บันทึก');
+  assert.ok(R.match.length === R.totals.match && R.sig && R.run);
+  run('apiVarianceLog(_o)', { _o: { run: R.run, sig: R.sig, all: false, totals: R.totals } });
+  assert.strictEqual(logs('PRINT_VARIANCE').length, n + 1);
+  assert.ok(!/ทั้งหมด/.test(logs('PRINT_VARIANCE').slice(-1)[0][4]) && new RegExp('ผลสรุปครั้งที่ ' + R.run).test(logs('PRINT_VARIANCE').slice(-1)[0][4]));
+  assert.throws(() => run('apiVarianceLog(_o)', { _o: { run: R.run, sig: 'xxxx', all: true, totals: R.totals } }), /ผลสรุปที่บันทึกเปลี่ยนไปแล้ว/);
+});
+
 console.log('\nผล: ผ่าน ' + pass + ' / ไม่ผ่าน ' + fail);
 process.exit(fail ? 1 : 0);

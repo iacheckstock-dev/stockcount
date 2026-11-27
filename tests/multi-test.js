@@ -1292,7 +1292,8 @@ console.log('\nปิดการนับ / เงื่อนไขปิด�
     run('apiSummarySave()');
     run('setConfig_({ SUMMARY_SAVED: _v })', { _v: JSON.stringify(Object.assign(JSON.parse(cfg().SUMMARY_SAVED), { at: '2000-01-01 00:00:00' })) });
     assert.ok(/บันทึกก่อนปิดการนับ/.test(item(K(), 'K5').detail));
-    run('apiSummarySave()');
+    const rs = run('apiSummarySave()');
+    assert.ok(rs.resave && !rs.skipped && !rs.same, 'v2.9.2 ผลเดิมมาก่อนปิดการนับ → บันทึกใหม่ · บอก resave ไม่ใช่ "ไม่ต้องบันทึกซ้ำ"');
     assert.ok(item(K(), 'K5').ok);
   });
   test('K6: Admin_Log เขียนไม่ติดค้างอยู่ → ✗ · กดรับทราบ → ✓', () => {
